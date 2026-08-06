@@ -1,0 +1,36 @@
+{
+  "name": "astro-yandex-cloud-adapter-workspace",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "pnpm --filter @astro-yandex-cloud/adapter build",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "test": "pnpm build && vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pack:check": "pnpm --filter @astro-yandex-cloud/adapter pack --pack-destination .artifacts"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.29.7",
+    "@eslint/js": "^9.32.0",
+    "@types/node": "^24.2.0",
+    "astro": "^7.1.0",
+    "eslint": "^9.32.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.6.2",
+    "sharp": "^0.34.0",
+    "tsdown": "^0.15.1",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.39.0",
+    "vite": "^8.0.13",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "name": "@astro-yandex-cloud/adapter",
+  "version": "0.1.0",
+  "description": "Astro adapter for Yandex Cloud Object Storage and Cloud Functions",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/astro-yandex-cloud/adapter.git",
+    "directory": "packages/adapter"
+  },
+  "homepage": "https://github.com/astro-yandex-cloud/adapter#readme",
+  "bugs": "https://github.com/astro-yandex-cloud/adapter/issues",
+  "keywords": [
+    "astro",
+    "adapter",
+    "yandex-cloud",
+    "serverless",
+    "cloud-functions"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsdown",
+    "prepack": "pnpm build"
+  },
+  "peerDependencies": {
+    "astro": "^6.4.0 || ^7.1.0"
+  },
+  "devDependencies": {
+    "astro": "^7.1.0",
+    "tsdown": "^0.15.1",
+    "typescript": "^5.9.2",
+    "vite": "^8.0.13"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

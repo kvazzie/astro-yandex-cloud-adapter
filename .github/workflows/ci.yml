@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm test
+      - run: pnpm pack:check
+      - name: Validate packed exports
+        run: node scripts/validate-pack.mjs
+      - name: Verify publish payload
+        working-directory: packages/adapter
+        run: npm publish --dry-run
+
+  astro-compatibility:
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - astro: ^6.4.0
+            experimental: false
+          - astro: 7.1.0
+            experimental: false
+          - astro: ^7.1.0
+            experimental: false
+          - astro: next
+            experimental: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --recursive update "astro@${{ matrix.astro }}"
+      - run: pnpm test

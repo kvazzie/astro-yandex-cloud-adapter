@@ -1,0 +1,12 @@
+{
+  "name": "fixture-astro-6",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "astro build"
+  },
+  "dependencies": {
+    "@astro-yandex-cloud/adapter": "workspace:*",
+    "astro": "^6.4.0"
+  }
+}

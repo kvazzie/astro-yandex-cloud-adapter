@@ -1,0 +1,13 @@
+{
+  "name": "example-mixed",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "astro build",
+    "dev": "astro dev"
+  },
+  "dependencies": {
+    "@astro-yandex-cloud/adapter": "workspace:*",
+    "astro": "^7.1.0"
+  }
+}

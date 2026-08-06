@@ -1,0 +1,10 @@
+---
+export const prerender = false;
+const invocation = Astro.locals.runtime.context.requestId ?? 'local development';
+---
+
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Function route</title></head>
+  <body><h1>Rendered by Cloud Functions</h1><p>Invocation: {invocation}</p></body>
+</html>

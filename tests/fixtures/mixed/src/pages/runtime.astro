@@ -1,0 +1,8 @@
+---
+export const prerender = false;
+const requestId = Astro.locals.runtime.context.requestId ?? 'none';
+const clientAddress = Astro.clientAddress;
+Astro.cookies.set('runtime', 'true', { path: '/', httpOnly: true });
+---
+
+<!doctype html><title>Runtime</title><p>{requestId}:{clientAddress}</p>
