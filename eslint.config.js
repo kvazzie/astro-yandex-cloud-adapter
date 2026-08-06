@@ -1,4 +1,5 @@
 import eslint from '@eslint/js';
+import { defineConfig, globalIgnores } from 'eslint/config';
 import prettier from 'eslint-config-prettier';
 import tseslint from 'typescript-eslint';
 
@@ -10,14 +11,17 @@ const typedFiles = [
   '*.ts',
 ];
 
-export default tseslint.config(
-  { ignores: ['**/dist/**', '**/.astro/**', '**/node_modules/**', '.artifacts/**'] },
+export default defineConfig(
+  globalIgnores(['**/dist/**', '**/.astro/**', '**/node_modules/**', '.artifacts/**']),
   eslint.configs.recommended,
-  ...tseslint.configs.recommendedTypeChecked.map((config) => ({ ...config, files: typedFiles })),
-  ...tseslint.configs.recommended.map((config) => ({
-    ...config,
+  {
+    files: typedFiles,
+    extends: tseslint.configs.recommendedTypeChecked,
+  },
+  {
     files: ['tests/fixtures/**/*.ts', 'examples/**/*.ts'],
-  })),
+    extends: tseslint.configs.recommended,
+  },
   prettier,
   {
     files: typedFiles,
