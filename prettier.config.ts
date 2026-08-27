@@ -1,7 +1,7 @@
-import type { Config } from 'prettier';
+import type { Config } from "prettier";
 
 export default {
   singleQuote: false,
-  trailingComma: 'all',
+  trailingComma: "all",
   printWidth: 83,
 } satisfies Config;

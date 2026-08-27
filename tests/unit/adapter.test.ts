@@ -1,32 +1,34 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest";
 
-import yandexCloud from '../../packages/adapter/src/index.js';
+import yandexCloud from "../../packages/adapter/src/index.js";
 
-describe('adapter options and routes', () => {
-  it('defaults to object-storage', () => {
-    expect(yandexCloud().name).toBe('@astro-yandex-cloud/adapter');
+describe("adapter options and routes", () => {
+  it("defaults to object-storage", () => {
+    expect(yandexCloud().name).toBe("@astro-yandex-cloud/adapter");
   });
 
-  it('rejects unknown targets', () => {
-    expect(() => yandexCloud({ target: 'vm' as never })).toThrow(/Unknown.*target/);
+  it("rejects unknown targets", () => {
+    expect(() => yandexCloud({ target: "vm" as never })).toThrow(
+      /Unknown.*target/,
+    );
   });
 
-  it('rejects on-demand routes for object storage', () => {
-    const hook = yandexCloud().hooks['astro:routes:resolved'];
+  it("rejects on-demand routes for object storage", () => {
+    const hook = yandexCloud().hooks["astro:routes:resolved"];
     expect(() =>
       hook?.({
         routes: [
           {
-            type: 'page',
-            origin: 'project',
-            params: ['id'],
+            type: "page",
+            origin: "project",
+            params: ["id"],
             segments: [],
-            pattern: '/api/[id]',
+            pattern: "/api/[id]",
             patternRegex: /^\/api\/([^/]+?)$/,
-            entrypoint: 'src/pages/api/[id].ts',
+            entrypoint: "src/pages/api/[id].ts",
             isPrerendered: false,
             fallbackRoutes: [],
-            generate: () => '/api/id',
+            generate: () => "/api/id",
           },
         ],
         logger: {} as never,

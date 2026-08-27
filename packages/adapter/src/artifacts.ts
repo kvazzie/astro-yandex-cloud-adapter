@@ -1,12 +1,12 @@
-import { builtinModules, createRequire } from 'node:module';
-import { dirname, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { builtinModules, createRequire } from "node:module";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 
-import type { AstroConfig } from 'astro';
+import type { AstroConfig } from "astro";
 
-import { ADAPTER_NAME, ADAPTER_VERSION } from './constants.js';
-import type { Target, YandexCloudManifestV1 } from './types.js';
+import { ADAPTER_NAME, ADAPTER_VERSION } from "./constants.js";
+import type { Target, YandexCloudManifestV1 } from "./types.js";
 
 const allowedBuiltins = new Set([
   ...builtinModules,
@@ -27,19 +27,23 @@ async function javascriptFiles(directory: string): Promise<string[]> {
 }
 
 function barePackage(specifier: string): string | undefined {
-  if (specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('file:')) {
+  if (
+    specifier.startsWith(".") ||
+    specifier.startsWith("/") ||
+    specifier.startsWith("file:")
+  ) {
     return undefined;
   }
   if (allowedBuiltins.has(specifier)) return undefined;
-  return specifier.startsWith('@')
-    ? specifier.split('/').slice(0, 2).join('/')
-    : specifier.split('/')[0];
+  return specifier.startsWith("@")
+    ? specifier.split("/").slice(0, 2).join("/")
+    : specifier.split("/")[0];
 }
 
 async function unresolvedPackages(directory: string): Promise<Set<string>> {
   const packages = new Set<string>();
   for (const file of await javascriptFiles(directory)) {
-    const source = await readFile(file, 'utf8');
+    const source = await readFile(file, "utf8");
     for (const match of source.matchAll(importPattern)) {
       const dependency = match[1] && barePackage(match[1]);
       if (dependency) packages.add(dependency);
@@ -49,20 +53,25 @@ async function unresolvedPackages(directory: string): Promise<Set<string>> {
 }
 
 async function installedVersion(root: URL, packageName: string): Promise<string> {
-  const require = createRequire(new URL('package.json', root));
+  const require = createRequire(new URL("package.json", root));
   try {
     const packagePath = require.resolve(`${packageName}/package.json`);
-    const packageJson = JSON.parse(await readFile(packagePath, 'utf8')) as { version?: string };
+    const packageJson = JSON.parse(await readFile(packagePath, "utf8")) as {
+      version?: string;
+    };
     if (packageJson.version) return packageJson.version;
   } catch {
     let directory = dirname(require.resolve(packageName));
     for (;;) {
       try {
-        const packageJson = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8')) as {
+        const packageJson = JSON.parse(
+          await readFile(join(directory, "package.json"), "utf8"),
+        ) as {
           name?: string;
           version?: string;
         };
-        if (packageJson.name === packageName && packageJson.version) return packageJson.version;
+        if (packageJson.name === packageName && packageJson.version)
+          return packageJson.version;
       } catch {
         // Keep walking until the package root is found.
       }
@@ -74,33 +83,37 @@ async function installedVersion(root: URL, packageName: string): Promise<string>
   throw new Error(`Could not determine the installed ${packageName} version.`);
 }
 
-export async function writeFunctionPackage(functionDirectory: URL, root: URL): Promise<void> {
+async function writeFunctionPackage(
+  functionDirectory: URL,
+  root: URL,
+): Promise<void> {
   const path = fileURLToPath(functionDirectory);
   const packages = await unresolvedPackages(path);
-  const unsupported = [...packages].filter((name) => name !== 'sharp');
+  const unsupported = [...packages].filter((name) => name !== "sharp");
   if (unsupported.length) {
     throw new Error(
-      `The function artifact contains unsupported external package imports: ${unsupported.join(', ')}. ` +
-        'V1 supports only the limited Sharp external.',
+      `The function artifact contains unsupported external package imports: ${unsupported.join(", ")}. ` +
+        "V1 supports only the limited Sharp external.",
     );
   }
 
   const dependencies: Record<string, string> = {};
-  if (packages.has('sharp')) dependencies.sharp = await installedVersion(root, 'sharp');
+  if (packages.has("sharp"))
+    dependencies.sharp = await installedVersion(root, "sharp");
   const packageJson = {
     private: true,
-    type: 'module',
-    engines: { node: '>=22.12.0' },
+    type: "module",
+    engines: { node: ">=22.12.0" },
     dependencies,
   };
   await writeFile(
-    new URL('package.json', functionDirectory),
+    new URL("package.json", functionDirectory),
     `${JSON.stringify(packageJson, null, 2)}\n`,
   );
 }
 
-export async function validateFunctionArtifact(functionDirectory: URL): Promise<void> {
-  const entrypoint = new URL('index.js', functionDirectory);
+async function validateFunctionArtifact(functionDirectory: URL): Promise<void> {
+  const entrypoint = new URL("index.js", functionDirectory);
   try {
     await readFile(entrypoint);
   } catch (error) {
@@ -113,20 +126,30 @@ export async function validateFunctionArtifact(functionDirectory: URL): Promise<
   }
 
   const packages = await unresolvedPackages(fileURLToPath(functionDirectory));
-  const unsupported = [...packages].filter((name) => name !== 'sharp');
+  const unsupported = [...packages].filter((name) => name !== "sharp");
   if (unsupported.length) {
     throw new Error(
-      `Unresolved imports remain in the function artifact: ${unsupported.join(', ')}.`,
+      `Unresolved imports remain in the function artifact: ${unsupported.join(", ")}.`,
     );
   }
 }
 
+export async function prepareFunctionArtifact(
+  functionDirectory: URL,
+  root: URL,
+): Promise<void> {
+  await writeFunctionPackage(functionDirectory, root);
+  await validateFunctionArtifact(functionDirectory);
+}
+
 export async function readAstroVersion(root: URL): Promise<string> {
-  return installedVersion(root, 'astro');
+  return installedVersion(root, "astro");
 }
 
 export function artifactPath(outDir: URL, artifact: URL): string {
-  return relative(fileURLToPath(outDir), fileURLToPath(artifact)).split(sep).join('/');
+  return relative(fileURLToPath(outDir), fileURLToPath(artifact))
+    .split(sep)
+    .join("/");
 }
 
 export async function writeDeploymentManifest(
@@ -139,25 +162,27 @@ export async function writeDeploymentManifest(
     hasFunction: boolean;
   },
 ): Promise<YandexCloudManifestV1> {
-  const client = new URL('client/', outDir);
-  const functionDirectory = new URL('function/', outDir);
+  const client = new URL("client/", outDir);
+  const functionDirectory = new URL("function/", outDir);
   const manifest: YandexCloudManifestV1 = {
     schemaVersion: 1,
     adapter: { name: ADAPTER_NAME, version: ADAPTER_VERSION },
     astro: { version: await readAstroVersion(config.root) },
     target: input.target,
-    buildOutput: input.hasFunction ? 'server' : 'static',
+    buildOutput: input.hasFunction ? "server" : "static",
     artifacts: {
       client: artifactPath(outDir, client),
-      ...(input.hasFunction ? { function: artifactPath(outDir, functionDirectory) } : {}),
+      ...(input.hasFunction
+        ? { function: artifactPath(outDir, functionDirectory) }
+        : {}),
     },
     ...(input.hasFunction
       ? {
           function: {
-            runtime: 'nodejs22' as const,
-            format: 'esm' as const,
-            entrypoint: 'index.handler' as const,
-            support: { sharp: 'limited' as const },
+            runtime: "nodejs22" as const,
+            format: "esm" as const,
+            entrypoint: "index.handler" as const,
+            support: { sharp: "limited" as const },
           },
         }
       : {}),
@@ -167,6 +192,9 @@ export async function writeDeploymentManifest(
     },
   };
   await mkdir(fileURLToPath(outDir), { recursive: true });
-  await writeFile(new URL('yandex-cloud.json', outDir), `${JSON.stringify(manifest, null, 2)}\n`);
+  await writeFile(
+    new URL("yandex-cloud.json", outDir),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+  );
   return manifest;
 }

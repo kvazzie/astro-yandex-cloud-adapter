@@ -1,0 +1,3 @@
+# Version the deployment manifest contract
+
+The deployment manifest is a supported, provider-neutral public contract for humans and deployment tools, not diagnostic output or an imperative resource-allocation script. It contains only requirements and statements inferred from application source, Astro configuration, and the completed build; it never invents cache policy, routing topology, concrete SST links, or other deployer choices. Each deployment product decides how to satisfy the declared requirements. Every schema version has a published JSON Schema used to validate generated manifests and by their consumers: additive evolution may retain the version, while a breaking field or invariant change requires a new schema version.

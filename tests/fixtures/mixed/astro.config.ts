@@ -1,7 +1,7 @@
-import yandexCloud from '@astro-yandex-cloud/adapter';
-import { defineConfig } from 'astro/config';
+import yandexCloud from "@astro-yandex-cloud/adapter";
+import { defineConfig } from "astro/config";
 
 export default defineConfig({
-  adapter: yandexCloud({ target: 'object-storage-functions' }),
-  site: 'https://fixture.example',
+  adapter: yandexCloud({ target: "object-storage-functions" }),
+  site: "https://fixture.example",
 });

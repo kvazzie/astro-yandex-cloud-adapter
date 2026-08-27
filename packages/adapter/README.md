@@ -4,11 +4,11 @@ Build Astro applications for Yandex Cloud Object Storage, optionally with a Node
 Cloud Function for on-demand routes.
 
 ```js
-import yandexCloud from '@astro-yandex-cloud/adapter';
-import { defineConfig } from 'astro/config';
+import yandexCloud from "@astro-yandex-cloud/adapter";
+import { defineConfig } from "astro/config";
 
 export default defineConfig({
-  adapter: yandexCloud({ target: 'object-storage-functions' }),
+  adapter: yandexCloud({ target: "object-storage-functions" }),
 });
 ```
 

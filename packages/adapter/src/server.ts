@@ -1,6 +1,6 @@
-import { createApp } from 'astro/app/entrypoint';
-import { setGetEnv } from 'astro/env/setup';
-import { site } from 'virtual:yandex-cloud-runtime-config';
+import { createApp } from "astro/app/entrypoint";
+import { setGetEnv } from "astro/env/setup";
+import { site } from "virtual:yandex-cloud-runtime-config";
 
 import {
   fromWebResponse,
@@ -10,7 +10,7 @@ import {
   type YandexCloudHttpEvent,
   type YandexCloudHttpResult,
   type YandexCloudInvocationContext,
-} from './runtime.js';
+} from "./runtime.js";
 
 setGetEnv((key) => process.env[key]);
 const app = createApp({ streaming: false });

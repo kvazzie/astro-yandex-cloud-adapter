@@ -1,4 +1,4 @@
-export type Target = 'object-storage' | 'object-storage-functions';
+export type Target = "object-storage" | "object-storage-functions";
 
 export interface AdapterOptions {
   target?: Target;
@@ -42,24 +42,24 @@ export interface YandexCloudRuntime {
 export interface YandexCloudManifestV1 {
   schemaVersion: 1;
   adapter: {
-    name: '@astro-yandex-cloud/adapter';
+    name: "@astro-yandex-cloud/adapter";
     version: string;
   };
   astro: {
     version: string;
   };
   target: Target;
-  buildOutput: 'static' | 'server';
+  buildOutput: "static" | "server";
   artifacts: {
     client: string;
     function?: string;
   };
   function?: {
-    runtime: 'nodejs22';
-    format: 'esm';
-    entrypoint: 'index.handler';
+    runtime: "nodejs22";
+    format: "esm";
+    entrypoint: "index.handler";
     support: {
-      sharp: 'limited';
+      sharp: "limited";
     };
   };
   routes: {
