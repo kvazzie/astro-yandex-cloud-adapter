@@ -5,8 +5,8 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
-- **Read an issue**: `gh issue view <number> --comments`, filtering comments by `jq` and also fetching labels.
-- **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
+- **Read an issue**: `gh issue view <number> --json number,title,body,state,labels,comments --jq '{number, title, body, state, labels: [.labels[].name], comments: [.comments[].body]}'`.
+- **List issues**: `gh issue list --state open --limit 1000 --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
 - **Apply or remove labels**: `gh issue edit <number> --add-label "..."` or `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
@@ -19,8 +19,8 @@ Infer the repo from `git remote -v`; `gh` does this automatically when run insid
 
 When set to `yes`, PRs run through the same labels and states as issues, using the `gh pr` equivalents:
 
-- **Read a PR**: `gh pr view <number> --comments` and `gh pr diff <number>` for the diff.
-- **List external PRs for triage**: `gh pr list --state open --json number,title,body,labels,author,authorAssociation,comments` then keep only `authorAssociation` of `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, or `NONE`.
+- **Read a PR**: `gh pr view <number> --json number,title,body,state,labels,comments,reviews --jq '.'` and `gh pr diff <number>` for the diff.
+- **List external PRs for triage**: `gh pr list --state open --limit 1000 --json number,title,body,labels,author,authorAssociation,comments` then keep only `authorAssociation` of `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, or `NONE`.
 - **Comment, label, or close**: `gh pr comment`, `gh pr edit --add-label` or `--remove-label`, and `gh pr close`.
 
 GitHub shares one number space across issues and PRs. Resolve a bare `#42` with `gh pr view 42`, then fall back to `gh issue view 42`.
@@ -31,7 +31,7 @@ Create a GitHub issue.
 
 ## When a skill says "fetch the relevant ticket"
 
-Run `gh issue view <number> --comments`.
+Run `gh issue view <number> --json number,title,body,state,labels,comments --jq '.'`.
 
 ## Wayfinding operations
 

@@ -19,7 +19,12 @@ async function javascriptFiles(directory: string): Promise<string[]> {
     entries.map(async (entry) => {
       const path = resolve(directory, entry.name);
       if (entry.isDirectory()) return javascriptFiles(path);
-      return /\.[cm]?js$/.test(entry.name) ? [path] : [];
+      if (entry.name.endsWith(".cjs")) {
+        throw new Error(
+          `The function artifact contains the unsupported CommonJS module ${entry.name}. V1 function artifacts must use ESM.`,
+        );
+      }
+      return /\.m?js$/.test(entry.name) ? [path] : [];
     }),
   );
   return files.flat();
