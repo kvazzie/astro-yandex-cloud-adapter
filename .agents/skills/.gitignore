@@ -1,0 +1,6 @@
+*
+!.gitignore
+
+# To commit a repo-owned skill, add both rules with its directory name:
+# !<skill-name>/
+# !<skill-name>/**
