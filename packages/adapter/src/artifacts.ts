@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 
 import type { AstroConfig } from "astro";
+import { init, parse } from "es-module-lexer";
 
 import { ADAPTER_NAME, ADAPTER_VERSION } from "./constants.js";
 import type { Target, YandexCloudManifestV1 } from "./types.js";
@@ -12,8 +13,6 @@ const allowedBuiltins = new Set([
   ...builtinModules,
   ...builtinModules.map((name) => `node:${name}`),
 ]);
-const importPattern = /(?:from\s*|import\s*\(\s*|import\s*)['"]([^'"\n]+)['"]/g;
-
 async function javascriptFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = await Promise.all(
@@ -42,10 +41,12 @@ function barePackage(specifier: string): string | undefined {
 
 async function unresolvedPackages(directory: string): Promise<Set<string>> {
   const packages = new Set<string>();
+  await init;
   for (const file of await javascriptFiles(directory)) {
     const source = await readFile(file, "utf8");
-    for (const match of source.matchAll(importPattern)) {
-      const dependency = match[1] && barePackage(match[1]);
+    const [imports] = parse(source, file);
+    for (const specifier of imports) {
+      const dependency = specifier.n && barePackage(specifier.n);
       if (dependency) packages.add(dependency);
     }
   }

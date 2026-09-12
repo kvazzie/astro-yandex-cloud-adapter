@@ -53,5 +53,19 @@ jobs:
           node-version: 22.12.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --recursive update "astro@${{ matrix.astro }}"
-      - run: pnpm test
+      - name: Check experimental Astro release
+        if: ${{ matrix.experimental }}
+        id: experimental-release
+        run: |
+          if pnpm view "astro@${{ matrix.astro }}" version >/dev/null 2>&1; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::astro@${{ matrix.astro }} is not currently published; compatibility check skipped"
+          fi
+      - name: Update Astro
+        if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
+        run: pnpm --recursive --filter '!fixture-astro-6' update "astro@${{ matrix.astro }}"
+      - name: Test
+        if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
+        run: pnpm test
