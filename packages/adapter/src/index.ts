@@ -4,7 +4,6 @@ import type {
   IntegrationResolvedRoute,
 } from "astro";
 
-import { readAstroVersion } from "./artifacts.js";
 import { ADAPTER_NAME } from "./constants.js";
 import {
   assertSupportedUserExternals,
@@ -47,7 +46,6 @@ export default function yandexCloud(options?: AdapterOptions): AstroIntegration 
   const driver = createDriver(options);
   let config: AstroConfig;
   let routes: IntegrationResolvedRoute[] = [];
-  let astroMajor = 6;
 
   return {
     name: ADAPTER_NAME,
@@ -74,10 +72,6 @@ export default function yandexCloud(options?: AdapterOptions): AstroIntegration 
         setAdapter,
       }) => {
         config = resolvedConfig;
-        astroMajor = Number.parseInt(
-          (await readAstroVersion(config.root)).split(".")[0] ?? "6",
-          10,
-        );
         const hasOnDemand = routes.some((route) => !route.isPrerendered);
         setAdapter(driver.adapter(hasOnDemand));
         injectTypes({
@@ -87,7 +81,7 @@ export default function yandexCloud(options?: AdapterOptions): AstroIntegration 
       },
       "astro:build:setup": ({ target: buildTarget, vite, updateConfig }) => {
         if (buildTarget !== "server") return;
-        updateConfig(serverViteConfig(astroMajor, vite));
+        updateConfig(serverViteConfig(vite));
       },
       "astro:build:done": async ({ pages }) => {
         const onDemand = routes

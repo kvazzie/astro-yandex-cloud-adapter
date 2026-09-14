@@ -46,11 +46,11 @@ jobs:
             node: 22.15.0
             astro: 7
             experimental: false
-          - name: Node 24 / latest Astro 7
+          - name: Node 24 LTS / latest Astro 7
             node: 24
             astro: 7
             experimental: false
-          - name: Node 24 / Astro next
+          - name: Node 24 LTS / Astro next
             node: 24
             astro: next
             experimental: true
@@ -77,6 +77,11 @@ jobs:
       - name: Update Astro
         if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
         run: pnpm --recursive update "astro@${{ matrix.astro }}"
+      - name: Report tested versions
+        if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
+        run: |
+          node --version
+          pnpm exec astro --version
       - name: Build adapter package
         if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
         run: pnpm build
