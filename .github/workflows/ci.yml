@@ -76,7 +76,7 @@ jobs:
           fi
       - name: Update Astro
         if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
-        run: pnpm --recursive update "astro@${{ matrix.astro }}"
+        run: pnpm --include-workspace-root --recursive update "astro@${{ matrix.astro }}"
       - name: Report tested versions
         if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
         run: |
