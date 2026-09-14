@@ -4,7 +4,6 @@ import type {
   IntegrationResolvedRoute,
 } from "astro";
 
-import { readAstroVersion } from "./artifacts.js";
 import { ADAPTER_NAME } from "./constants.js";
 import {
   assertSupportedUserExternals,
@@ -43,11 +42,11 @@ function injectedRuntimeTypes(): string {
 `;
 }
 
+/** Creates the Bare Adapter integration for the selected Yandex Cloud Target. */
 export default function yandexCloud(options?: AdapterOptions): AstroIntegration {
   const driver = createDriver(options);
   let config: AstroConfig;
   let routes: IntegrationResolvedRoute[] = [];
-  let astroMajor = 6;
 
   return {
     name: ADAPTER_NAME,
@@ -68,27 +67,23 @@ export default function yandexCloud(options?: AdapterOptions): AstroIntegration 
         const onDemand = routes.filter((route) => !route.isPrerendered);
         driver.assertRoutesSupported(onDemand.map(routePattern));
       },
-      "astro:config:done": async ({
-        config: resolvedConfig,
-        injectTypes,
-        setAdapter,
-      }) => {
-        config = resolvedConfig;
-        astroMajor = Number.parseInt(
-          (await readAstroVersion(config.root)).split(".")[0] ?? "6",
-          10,
-        );
-        const hasOnDemand = routes.some((route) => !route.isPrerendered);
-        setAdapter(driver.adapter(hasOnDemand));
-        injectTypes({
-          filename: "yandex-cloud.d.ts",
-          content: injectedRuntimeTypes(),
-        });
-      },
-      "astro:build:setup": ({ target: buildTarget, vite, updateConfig }) => {
-        if (buildTarget !== "server") return;
-        updateConfig(serverViteConfig(astroMajor, vite));
-      },
+      "astro:config:done":
+        /** Finalizes adapter metadata and generated runtime types. */
+        ({ config: resolvedConfig, injectTypes, setAdapter }) => {
+          config = resolvedConfig;
+          const hasOnDemand = routes.some((route) => !route.isPrerendered);
+          setAdapter(driver.adapter(hasOnDemand));
+          injectTypes({
+            filename: "yandex-cloud.d.ts",
+            content: injectedRuntimeTypes(),
+          });
+        },
+      "astro:build:setup":
+        /** Applies Function Artifact bundling only to Astro's server build. */
+        ({ target: buildTarget, vite, updateConfig }) => {
+          if (buildTarget !== "server") return;
+          updateConfig(serverViteConfig(vite));
+        },
       "astro:build:done": async ({ pages }) => {
         const onDemand = routes
           .filter((route) => !route.isPrerendered)

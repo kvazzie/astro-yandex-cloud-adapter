@@ -35,4 +35,45 @@ describe("adapter options and routes", () => {
       }),
     ).toThrow(/cannot serve on-demand routes.*\/api\/\[id\]/);
   });
+
+  it("preserves every configured Rolldown output for a Runtime Build", () => {
+    const hook = yandexCloud({
+      target: "object-storage-functions",
+    }).hooks["astro:build:setup"];
+    let updatedConfig: unknown;
+
+    void hook?.({
+      target: "server",
+      vite: {
+        build: {
+          rolldownOptions: {
+            output: [
+              { entryFileNames: "first.js" },
+              { entryFileNames: "second.js" },
+            ],
+          },
+        },
+      },
+      updateConfig: (config: unknown) => {
+        updatedConfig = config;
+      },
+    } as never);
+
+    expect(updatedConfig).toMatchObject({
+      build: {
+        rolldownOptions: {
+          output: [
+            {
+              entryFileNames: "first.js",
+              chunkFileNames: "chunks/[name]-[hash].js",
+            },
+            {
+              entryFileNames: "second.js",
+              chunkFileNames: "chunks/[name]-[hash].js",
+            },
+          ],
+        },
+      },
+    });
+  });
 });

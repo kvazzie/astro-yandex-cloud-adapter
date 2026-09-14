@@ -164,31 +164,11 @@ export function assertSupportedUserExternals(config: AstroConfig): void {
   }
 }
 
-export function serverViteConfig(
-  astroMajor: number,
-  vite: InlineConfig,
-): InlineConfig {
+/** Applies Function Artifact bundling requirements to Astro's server Vite configuration. */
+export function serverViteConfig(vite: InlineConfig): InlineConfig {
   const currentBuild = vite.build ?? {};
   const output = { chunkFileNames: "chunks/[name]-[hash].js" };
-  const bundlerOptions =
-    astroMajor >= 7
-      ? {
-          rolldownOptions: {
-            ...currentBuild.rolldownOptions,
-            output: { ...currentBuild.rolldownOptions?.output, ...output },
-          },
-        }
-      : {
-          rollupOptions: {
-            ...currentBuild.rollupOptions,
-            output: Array.isArray(currentBuild.rollupOptions?.output)
-              ? currentBuild.rollupOptions.output.map((item) => ({
-                  ...item,
-                  ...output,
-                }))
-              : { ...currentBuild.rollupOptions?.output, ...output },
-          },
-        };
+  const currentOutput = currentBuild.rolldownOptions?.output;
   return {
     ssr: {
       ...vite.ssr,
@@ -197,7 +177,15 @@ export function serverViteConfig(
     },
     build: {
       ...currentBuild,
-      ...bundlerOptions,
+      rolldownOptions: {
+        ...currentBuild.rolldownOptions,
+        output: Array.isArray(currentOutput)
+          ? currentOutput.map(
+              /** Adds the required chunk name without collapsing multiple outputs. */
+              (item) => ({ ...item, ...output }),
+            )
+          : { ...currentOutput, ...output },
+      },
     },
   };
 }

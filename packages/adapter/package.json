@@ -48,7 +48,7 @@
     "prepack": "pnpm build"
   },
   "peerDependencies": {
-    "astro": "^6.4.0 || ^7.1.0"
+    "astro": "^7.1.0"
   },
   "devDependencies": {
     "astro": "^7.1.0",
