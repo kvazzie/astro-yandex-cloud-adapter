@@ -180,7 +180,10 @@ export function serverViteConfig(vite: InlineConfig): InlineConfig {
       rolldownOptions: {
         ...currentBuild.rolldownOptions,
         output: Array.isArray(currentOutput)
-          ? currentOutput.map((item) => ({ ...item, ...output }))
+          ? currentOutput.map(
+              /** Adds the required chunk name without collapsing multiple outputs. */
+              (item) => ({ ...item, ...output }),
+            )
           : { ...currentOutput, ...output },
       },
     },

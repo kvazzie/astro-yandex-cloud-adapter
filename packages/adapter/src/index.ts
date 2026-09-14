@@ -80,10 +80,12 @@ export default function yandexCloud(options?: AdapterOptions): AstroIntegration 
           content: injectedRuntimeTypes(),
         });
       },
-      "astro:build:setup": ({ target: buildTarget, vite, updateConfig }) => {
-        if (buildTarget !== "server") return;
-        updateConfig(serverViteConfig(vite));
-      },
+      "astro:build:setup":
+        /** Applies Function Artifact bundling only to Astro's server build. */
+        ({ target: buildTarget, vite, updateConfig }) => {
+          if (buildTarget !== "server") return;
+          updateConfig(serverViteConfig(vite));
+        },
       "astro:build:done": async ({ pages }) => {
         const onDemand = routes
           .filter((route) => !route.isPrerendered)
