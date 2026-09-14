@@ -177,6 +177,21 @@ describe.sequential("Astro artifact builds", () => {
       buildOutput: "server",
       routes: { onDemand: ["/"] },
     });
+
+    const entrypoint = (await import(
+      `${pathToFileURL(join(fixtures, "server/dist/function/index.js")).href}?server=1`
+    )) as {
+      handler(
+        event: object,
+        context: object,
+      ): Promise<{ statusCode: number; body: string }>;
+    };
+    const response = await entrypoint.handler(
+      { httpMethod: "GET", path: "/", headers: { host: "server.example" } },
+      {},
+    );
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("<h1>Server output</h1>");
   });
 
   it("rejects an Object Storage build containing an on-demand route", async () => {
