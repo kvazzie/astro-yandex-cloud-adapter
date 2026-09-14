@@ -66,7 +66,7 @@ export default function yandexCloud(options?: AdapterOptions): AstroIntegration 
         const onDemand = routes.filter((route) => !route.isPrerendered);
         driver.assertRoutesSupported(onDemand.map(routePattern));
       },
-      "astro:config:done": async ({
+      "astro:config:done": ({
         config: resolvedConfig,
         injectTypes,
         setAdapter,
