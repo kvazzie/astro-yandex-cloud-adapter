@@ -164,9 +164,11 @@ export function assertSupportedUserExternals(config: AstroConfig): void {
   }
 }
 
+/** Applies Function Artifact bundling requirements to Astro's server Vite configuration. */
 export function serverViteConfig(vite: InlineConfig): InlineConfig {
   const currentBuild = vite.build ?? {};
   const output = { chunkFileNames: "chunks/[name]-[hash].js" };
+  const currentOutput = currentBuild.rolldownOptions?.output;
   return {
     ssr: {
       ...vite.ssr,
@@ -177,7 +179,9 @@ export function serverViteConfig(vite: InlineConfig): InlineConfig {
       ...currentBuild,
       rolldownOptions: {
         ...currentBuild.rolldownOptions,
-        output: { ...currentBuild.rolldownOptions?.output, ...output },
+        output: Array.isArray(currentOutput)
+          ? currentOutput.map((item) => ({ ...item, ...output }))
+          : { ...currentOutput, ...output },
       },
     },
   };

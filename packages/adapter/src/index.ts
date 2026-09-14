@@ -42,6 +42,7 @@ function injectedRuntimeTypes(): string {
 `;
 }
 
+/** Creates the Bare Adapter integration for the selected Yandex Cloud Target. */
 export default function yandexCloud(options?: AdapterOptions): AstroIntegration {
   const driver = createDriver(options);
   let config: AstroConfig;
