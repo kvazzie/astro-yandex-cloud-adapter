@@ -22,7 +22,9 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm format:check
-      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm test:unit
+      - run: pnpm test:integration
       - run: pnpm pack:check
       - name: Validate packed exports
         run: node scripts/validate-pack.mjs
@@ -36,21 +38,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - astro: ^6.4.0
+          - name: Node 22.12 / Astro 7.1
+            node: 22.12.0
+            astro: 7.1.0
             experimental: false
-          - astro: 7.1.0
+          - name: Node 22.15 / latest Astro 7
+            node: 22.15.0
+            astro: 7
             experimental: false
-          - astro: ^7.1.0
+          - name: Node 24 / latest Astro 7
+            node: 24
+            astro: 7
             experimental: false
-          - astro: next
+          - name: Node 24 / Astro next
+            node: 24
+            astro: next
             experimental: true
+    name: Astro compatibility (${{ matrix.name }})
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
-          node-version: 22.12.0
+          node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Check experimental Astro release
@@ -65,7 +76,10 @@ jobs:
           fi
       - name: Update Astro
         if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
-        run: pnpm --recursive --filter '!fixture-astro-6' update "astro@${{ matrix.astro }}"
-      - name: Test
+        run: pnpm --recursive update "astro@${{ matrix.astro }}"
+      - name: Build adapter package
         if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
-        run: pnpm test
+        run: pnpm build
+      - name: Build fixtures and execute generated handlers
+        if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
+        run: pnpm test:integration

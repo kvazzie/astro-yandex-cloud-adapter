@@ -1,5 +1,9 @@
 # Astro adapter for Yandex Cloud
 
+Both the Object Storage Target and Object Storage + Cloud Functions Target are beta.
+Cloud Functions compatibility has not yet been verified in Yandex Cloud. The supported
+application build environment is Astro `^7.1.0` on Node.js `>=22.12.0`.
+
 `@astro-yandex-cloud/adapter` turns Astro builds into deploy-ready Object Storage and
 Cloud Functions artifacts. It does not provision cloud resources.
 

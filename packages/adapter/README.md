@@ -1,5 +1,9 @@
 # `@astro-yandex-cloud/adapter`
 
+Both the Object Storage Target and Object Storage + Cloud Functions Target are beta.
+Cloud Functions compatibility has not yet been verified in Yandex Cloud. Use Astro
+`^7.1.0` and Node.js `>=22.12.0` to install the adapter and build the application.
+
 Build Astro applications for Yandex Cloud Object Storage, optionally with a Node.js 22
 Cloud Function for on-demand routes.
 
@@ -18,7 +22,9 @@ site contains on-demand routes. `dist/yandex-cloud.json` describes all deployabl
 
 Upload and provisioning are intentionally outside this package. Configure the Yandex function
 with runtime `nodejs22` and entrypoint `index.handler`, then deploy the complete `function`
-directory because Astro may emit code-split chunks.
+directory because Astro may emit code-split chunks. `nodejs22` is the Yandex Cloud Function
+Artifact runtime identifier. It does not select or promise the Node.js patch version used to
+build the application.
 
 ## Runtime
 

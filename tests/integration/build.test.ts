@@ -1,9 +1,7 @@
 import { cp, mkdtemp, readFile, readdir } from "node:fs/promises";
-import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 
 import { build } from "astro";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -11,7 +9,6 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { YandexCloudManifestV1 } from "../../packages/adapter/src/types.js";
 
 const fixtures = resolve(import.meta.dirname, "../fixtures");
-const execFileAsync = promisify(execFile);
 
 async function layout(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -186,30 +183,5 @@ describe.sequential("Astro artifact builds", () => {
     await expect(
       build({ root: `${join(fixtures, "rejected")}/`, logLevel: "silent" }),
     ).rejects.toThrow(/object-storage target cannot serve on-demand routes/);
-  });
-
-  it("builds and executes with the latest Astro 6 release", async () => {
-    await execFileAsync("pnpm", ["build"], { cwd: join(fixtures, "astro6") });
-    const deployment = await manifest("astro6");
-    expect(deployment.astro.version).toMatch(/^6\./);
-    expect(deployment).toMatchObject({
-      buildOutput: "server",
-      artifacts: { function: "function" },
-    });
-
-    const entrypoint = (await import(
-      `${pathToFileURL(join(fixtures, "astro6/dist/function/index.js")).href}?astro6=1`
-    )) as {
-      handler(
-        event: object,
-        context: object,
-      ): Promise<{ statusCode: number; body: string }>;
-    };
-    const response = await entrypoint.handler(
-      { httpMethod: "GET", path: "/runtime", headers: { host: "astro6.example" } },
-      { requestId: "astro6-request" },
-    );
-    expect(response.statusCode).toBe(200);
-    expect(response.body).toContain("Astro 6 runtime: astro6-request");
   });
 });
