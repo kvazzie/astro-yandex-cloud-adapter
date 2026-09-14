@@ -67,19 +67,17 @@ export default function yandexCloud(options?: AdapterOptions): AstroIntegration 
         const onDemand = routes.filter((route) => !route.isPrerendered);
         driver.assertRoutesSupported(onDemand.map(routePattern));
       },
-      "astro:config:done": ({
-        config: resolvedConfig,
-        injectTypes,
-        setAdapter,
-      }) => {
-        config = resolvedConfig;
-        const hasOnDemand = routes.some((route) => !route.isPrerendered);
-        setAdapter(driver.adapter(hasOnDemand));
-        injectTypes({
-          filename: "yandex-cloud.d.ts",
-          content: injectedRuntimeTypes(),
-        });
-      },
+      "astro:config:done":
+        /** Finalizes adapter metadata and generated runtime types. */
+        ({ config: resolvedConfig, injectTypes, setAdapter }) => {
+          config = resolvedConfig;
+          const hasOnDemand = routes.some((route) => !route.isPrerendered);
+          setAdapter(driver.adapter(hasOnDemand));
+          injectTypes({
+            filename: "yandex-cloud.d.ts",
+            content: injectedRuntimeTypes(),
+          });
+        },
       "astro:build:setup":
         /** Applies Function Artifact bundling only to Astro's server build. */
         ({ target: buildTarget, vite, updateConfig }) => {
