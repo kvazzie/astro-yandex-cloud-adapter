@@ -71,6 +71,14 @@ function assertObjectStorageRoutesSupported(onDemand: string[]): void {
   );
 }
 
+function configureBuild(outDir: URL): Record<string, unknown> {
+  return {
+    client: new URL("client/", outDir),
+    server: new URL("function/", outDir),
+    serverEntry: "index.js",
+  };
+}
+
 export function createDriver(options: AdapterOptions | undefined): TargetDriver {
   const target = options?.target ?? "object-storage";
   if (target !== "object-storage" && target !== "object-storage-functions") {
@@ -79,11 +87,7 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
 
   if (target === "object-storage") {
     return {
-      configureBuild: (outDir) => ({
-        client: new URL("client/", outDir),
-        server: new URL("function/", outDir),
-        serverEntry: "index.js",
-      }),
+      configureBuild,
       assertRoutesSupported: assertObjectStorageRoutesSupported,
       adapter: (hasOnDemandRoutes) =>
         adapter(hasOnDemandRoutes, objectStorageFeatures),
@@ -102,11 +106,7 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
     };
   }
   return {
-    configureBuild: (outDir) => ({
-      client: new URL("client/", outDir),
-      server: new URL("function/", outDir),
-      serverEntry: "index.js",
-    }),
+    configureBuild,
     assertRoutesSupported: () => {},
     adapter: (hasOnDemandRoutes) => adapter(hasOnDemandRoutes, functionsFeatures),
     completeBuild: async ({ config, onDemand, prerendered }) => {
