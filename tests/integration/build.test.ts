@@ -527,6 +527,40 @@ describe.sequential("Astro artifact builds", () => {
   it("rejects an Object Storage build containing an on-demand route", async () => {
     await expect(
       build({ root: `${join(fixtures, "rejected")}/`, logLevel: "silent" }),
-    ).rejects.toThrow(/object-storage target cannot serve on-demand routes/);
+    ).rejects.toThrow(
+      /object-storage target cannot serve on-demand routes: \/.*Use target "object-storage-functions" or prerender these routes/,
+    );
+  });
+
+  it("rejects an integration-injected route for Object Storage", async () => {
+    await expect(
+      build({
+        root: `${join(fixtures, "rejected-injected")}/`,
+        logLevel: "silent",
+      }),
+    ).rejects.toThrow(
+      /object-storage target cannot serve on-demand routes: \/injected\/\[name\].*Use target "object-storage-functions" or prerender these routes/,
+    );
+  });
+
+  it("rejects active Astro-internal routes for Object Storage", async () => {
+    let failure: unknown;
+    try {
+      await build({
+        root: `${join(fixtures, "rejected-server-island")}/`,
+        logLevel: "silent",
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    const message = (failure as Error).message;
+    expect(message).toContain("object-storage target cannot serve on-demand routes");
+    expect(message).toContain("/_server-islands/[name]");
+    expect(message).toContain("/_image");
+    expect(message).toContain(
+      'Use target "object-storage-functions" or prerender these routes.',
+    );
   });
 });
