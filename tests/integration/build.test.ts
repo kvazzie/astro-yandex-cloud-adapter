@@ -168,13 +168,28 @@ describe.sequential("Astro artifact builds", () => {
   });
 
   it("omits a function when the functions target is fully static", async () => {
-    const files = await layout(join(fixtures, "static-functions/dist"));
+    const files = (
+      await layout(join(fixtures, "static-functions/dist"))
+    ).map((file) => {
+      if (!file.startsWith("client/_astro/logo.")) return file;
+      return file.slice(file.lastIndexOf("/") + 1).includes("_")
+        ? "client/_astro/logo.optimized.svg"
+        : "client/_astro/logo.source.svg";
+    });
     expect(files).not.toContain("function/index.js");
+    expect(files).toEqual([
+      "client/_astro/logo.source.svg",
+      "client/_astro/logo.optimized.svg",
+      "client/about/index.html",
+      "client/index.html",
+      "client/robots.txt",
+      "yandex-cloud.json",
+    ]);
     expect(await manifest("static-functions")).toMatchObject({
       target: "object-storage-functions",
       buildOutput: "static",
       artifacts: { client: "client" },
-      routes: { onDemand: [] },
+      routes: { prerendered: ["/", "/about/"], onDemand: [] },
     });
   });
 
