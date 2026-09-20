@@ -26,13 +26,18 @@ export interface YandexCloudHttpEvent {
 }
 
 export interface YandexCloudInvocationContext {
-  functionName?: string;
-  functionVersion?: string;
-  memoryLimitInMB?: string;
-  requestId?: string;
-  token?: string;
-  getRemainingTimeInMillis?: () => number;
-  [key: string]: unknown;
+  functionFolderId: string;
+  functionName: string;
+  functionVersion: string;
+  memoryLimitInMB: string;
+  requestId: string;
+  token?: {
+    access_token: string;
+    expires_in: number;
+    token_type: string;
+  };
+  getPayload(): unknown;
+  getRemainingTimeInMillis(): number;
 }
 
 export interface YandexCloudRuntime {

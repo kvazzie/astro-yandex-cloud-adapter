@@ -28,16 +28,21 @@ build the application.
 
 ## Runtime
 
-The handler translates Yandex HTTPS events to Web Requests. The original invocation is available
-as `Astro.locals.runtime`:
+The handler supports direct HTTPS invocation and API Gateway payload format `0.1`. API Gateway
+payload formats `1.0` and `2.0` are not supported. It translates supported events to Web Requests,
+and the original invocation is available as `Astro.locals.runtime`:
 
 ```ts
 const { event, context } = Astro.locals.runtime;
 ```
 
-Use `process.env` for secrets. Forwarded host/protocol headers are trusted because they are
-expected to be supplied by Yandex's ingress; do not expose the function directly through an
-untrusted proxy that rewrites them.
+The incoming `Host` header sets the request origin with the HTTPS protocol. If `Host` is absent,
+the handler uses the origin from Astro's `site` configuration. `X-Forwarded-Host` and
+`X-Forwarded-Proto` do not change the origin.
+
+Direct Cloud Functions HTTPS invocation strips incoming `Cookie` and `Authorization` headers
+before the handler receives the event. Use API Gateway when the application needs those request
+headers. Use `process.env` for secrets.
 
 ## V1 limitations
 

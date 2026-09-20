@@ -55,7 +55,16 @@ const preview: PreviewModule["default"] = async (
         isBase64Encoded: body !== undefined,
         requestContext: { identity: { sourceIp: incoming.socket.remoteAddress } },
       };
-      const result = await entrypoint.handler(event, {});
+      const context: YandexCloudInvocationContext = {
+        functionFolderId: "preview",
+        functionName: "preview",
+        functionVersion: "preview",
+        memoryLimitInMB: "0",
+        requestId: "preview",
+        getPayload: () => event.body,
+        getRemainingTimeInMillis: () => Number.POSITIVE_INFINITY,
+      };
+      const result = await entrypoint.handler(event, context);
       outgoing.writeHead(result.statusCode, {
         ...options.headers,
         ...result.headers,
