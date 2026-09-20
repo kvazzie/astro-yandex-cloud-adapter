@@ -1,18 +1,6 @@
 import yandexCloud from "@astro-yandex-cloud/adapter";
 import { defineConfig } from "astro/config";
-
-const injectedRoute = {
-  name: "fixture-injected-route",
-  hooks: {
-    "astro:config:setup": ({ injectRoute }) => {
-      injectRoute({
-        pattern: "/injected/[name]",
-        entrypoint: "./src/injected.ts",
-        prerender: false,
-      });
-    },
-  },
-};
+import { injectedRoute } from "../shared/injected-route.ts";
 
 export default defineConfig({
   adapter: yandexCloud({ target: "object-storage-functions" }),

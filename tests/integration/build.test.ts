@@ -167,7 +167,7 @@ describe.sequential("Astro artifact builds", () => {
     });
   });
 
-  it("omits a function when the functions target is fully static", async () => {
+  it("omits a Function Artifact for a Static-only Build on the Object Storage + Cloud Functions Target", async () => {
     const files = (await layout(join(fixtures, "static-functions/dist"))).map(
       (file) => {
         if (!file.startsWith("client/_astro/logo.")) return file;
@@ -257,9 +257,10 @@ describe.sequential("Astro artifact builds", () => {
   });
 
   it("discovers and executes an integration-injected route", async () => {
-    expect(await manifest("mixed")).toMatchObject({
-      routes: { onDemand: expect.arrayContaining(["/injected/[name]"]) },
-    });
+    const deployment = await manifest("mixed");
+    expect(deployment.routes.onDemand).toEqual(
+      expect.arrayContaining(["/injected/[name]"]),
+    );
 
     const response = await generatedHandler.handler(
       directHttpEvent({ path: "/injected/Ada" }),
@@ -273,14 +274,15 @@ describe.sequential("Astro artifact builds", () => {
   });
 
   it("emits and executes a Function Artifact for a server island", async () => {
-    expect(await manifest("server-island")).toMatchObject({
+    const deployment = await manifest("server-island");
+    expect(deployment).toMatchObject({
       buildOutput: "server",
       artifacts: { client: "client", function: "function" },
-      routes: {
-        prerendered: ["/"],
-        onDemand: expect.arrayContaining(["/_server-islands/[name]"]),
-      },
+      routes: { prerendered: ["/"] },
     });
+    expect(deployment.routes.onDemand).toEqual(
+      expect.arrayContaining(["/_server-islands/[name]"]),
+    );
 
     const page = await readFile(
       join(fixtures, "server-island/dist/client/index.html"),
@@ -489,13 +491,14 @@ describe.sequential("Astro artifact builds", () => {
   );
 
   it("supports all-server output", async () => {
-    expect(await manifest("server")).toMatchObject({
+    const deployment = await manifest("server");
+    expect(deployment).toMatchObject({
       target: "object-storage-functions",
       buildOutput: "server",
-      routes: {
-        onDemand: expect.arrayContaining(["/", "/_image"]),
-      },
     });
+    expect(deployment.routes.onDemand).toEqual(
+      expect.arrayContaining(["/", "/_image"]),
+    );
 
     const entrypoint = await generatedFixtureHandler("server", "server=1");
     const response = await entrypoint.handler(

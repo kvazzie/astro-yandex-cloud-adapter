@@ -63,6 +63,14 @@ function adapter(
   };
 }
 
+function assertObjectStorageRoutesSupported(onDemand: string[]): void {
+  if (!onDemand.length) return;
+  throw new Error(
+    `The object-storage target cannot serve on-demand routes: ${onDemand.join(", ")}. ` +
+      'Use target "object-storage-functions" or prerender these routes.',
+  );
+}
+
 export function createDriver(options: AdapterOptions | undefined): TargetDriver {
   const target = options?.target ?? "object-storage";
   if (target !== "object-storage" && target !== "object-storage-functions") {
@@ -76,25 +84,14 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
         server: new URL("function/", outDir),
         serverEntry: "index.js",
       }),
-      assertRoutesSupported: (onDemand) => {
-        if (!onDemand.length) return;
-        throw new Error(
-          `The object-storage target cannot serve on-demand routes: ${onDemand.join(", ")}. ` +
-            'Use target "object-storage-functions" or prerender these routes.',
-        );
-      },
+      assertRoutesSupported: assertObjectStorageRoutesSupported,
       adapter: (hasOnDemandRoutes) =>
         adapter(hasOnDemandRoutes, objectStorageFeatures),
       completeBuild: async ({ config, onDemand, prerendered }) => {
         const hasFunction = await hasFunctionArtifact(
           new URL("function/", config.outDir),
         );
-        if (hasFunction) {
-          throw new Error(
-            `The object-storage target cannot serve on-demand routes: ${onDemand.join(", ")}. ` +
-              'Use target "object-storage-functions" or prerender these routes.',
-          );
-        }
+        if (hasFunction) assertObjectStorageRoutesSupported(onDemand);
         await writeDeploymentManifest(config.outDir, config, {
           target,
           hasFunction: false,

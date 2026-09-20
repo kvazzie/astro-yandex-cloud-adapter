@@ -71,7 +71,7 @@ describe("adapter options and routes", () => {
     });
   });
 
-  it("declares runtime and limited Sharp support for the Functions Target", async () => {
+  it("declares runtime and limited Sharp support for the Object Storage + Cloud Functions Target", async () => {
     expect(
       await adapterDescription({ target: "object-storage-functions" }),
     ).toMatchObject({
