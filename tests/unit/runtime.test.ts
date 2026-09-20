@@ -35,7 +35,7 @@ describe("toWebRequest", () => {
     expect(await request.text()).toBe("hello");
   });
 
-  it("uses forwarded origin data ahead of Host", () => {
+  it("ignores forwarded origin data", () => {
     const request = toWebRequest({
       path: "/proxy",
       headers: {
@@ -44,7 +44,7 @@ describe("toWebRequest", () => {
         "x-forwarded-proto": "http, https",
       },
     });
-    expect(request.url).toBe("http://public.example/proxy");
+    expect(request.url).toBe("https://internal.example/proxy");
   });
 
   it("uses Astro site when no host is provided", () => {

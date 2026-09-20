@@ -10,6 +10,21 @@ import type { YandexCloudManifestV1 } from "../../packages/adapter/src/types.js"
 
 const fixtures = resolve(import.meta.dirname, "../fixtures");
 
+interface GeneratedHandler {
+  handler(
+    event: object,
+    context: object,
+  ): Promise<{
+    statusCode: number;
+    body: string;
+    isBase64Encoded: boolean;
+    headers: Record<string, string>;
+    multiValueHeaders: Record<string, string[]>;
+  }>;
+}
+
+let generatedHandler: GeneratedHandler;
+
 async function layout(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   const paths = await Promise.all(
@@ -34,6 +49,12 @@ describe.sequential("Astro artifact builds", () => {
     for (const fixture of ["static", "static-functions", "mixed", "server"]) {
       await build({ root: `${join(fixtures, fixture)}/`, logLevel: "silent" });
     }
+
+    const isolated = await mkdtemp(join(tmpdir(), "astro-yandex-function-"));
+    await cp(join(fixtures, "mixed/dist/function"), isolated, { recursive: true });
+    generatedHandler = (await import(
+      `${pathToFileURL(join(isolated, "index.js")).href}?isolated=1`
+    )) as GeneratedHandler;
   });
 
   it("emits an Object Storage-only static layout and manifest", async () => {
@@ -92,24 +113,7 @@ describe.sequential("Astro artifact builds", () => {
   });
 
   it("executes the generated handler outside the fixture dependency tree", async () => {
-    const isolated = await mkdtemp(join(tmpdir(), "astro-yandex-function-"));
-    await cp(join(fixtures, "mixed/dist/function"), isolated, { recursive: true });
-    const entrypoint = (await import(
-      `${pathToFileURL(join(isolated, "index.js")).href}?isolated=1`
-    )) as {
-      handler(
-        event: object,
-        context: object,
-      ): Promise<{
-        statusCode: number;
-        body: string;
-        isBase64Encoded: boolean;
-        headers: Record<string, string>;
-        multiValueHeaders: Record<string, string[]>;
-      }>;
-    };
-
-    const response = await entrypoint.handler(
+    const response = await generatedHandler.handler(
       {
         httpMethod: "POST",
         path: "/api/echo",
@@ -131,7 +135,7 @@ describe.sequential("Astro artifact builds", () => {
       requestId: "integration-request",
     });
 
-    const page = await entrypoint.handler(
+    const page = await generatedHandler.handler(
       {
         httpMethod: "GET",
         path: "/runtime",
@@ -146,7 +150,7 @@ describe.sequential("Astro artifact builds", () => {
     );
     expect(page.headers["x-fixture-middleware"]).toBe("runtime");
 
-    const binary = await entrypoint.handler(
+    const binary = await generatedHandler.handler(
       {
         httpMethod: "GET",
         path: "/api/binary",
@@ -160,7 +164,7 @@ describe.sequential("Astro artifact builds", () => {
       isBase64Encoded: true,
     });
 
-    const error = await entrypoint.handler(
+    const error = await generatedHandler.handler(
       {
         httpMethod: "GET",
         path: "/api/error",
@@ -169,6 +173,73 @@ describe.sequential("Astro artifact builds", () => {
       {},
     );
     expect(error.statusCode).toBe(500);
+  });
+
+  it("uses direct HTTPS paths and Host origins", async () => {
+    const response = await generatedHandler.handler(
+      {
+        httpMethod: "GET",
+        path: "/api/inspect/direct/path",
+        headers: {
+          Host: "direct.example",
+          "x-forwarded-host": "attacker.example",
+          "x-forwarded-proto": "http",
+        },
+        multiValueHeaders: {},
+        queryStringParameters: {},
+        multiValueQueryStringParameters: {},
+        requestContext: {
+          identity: { sourceIp: "192.0.2.10", userAgent: "vitest" },
+          httpMethod: "GET",
+          requestId: "direct-request",
+          requestTime: "20/Sep/2026:12:00:00 +0000",
+          requestTimeEpoch: 1_790_000_000,
+        },
+        body: "",
+        isBase64Encoded: false,
+      },
+      {},
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toMatchObject({
+      origin: "https://direct.example",
+      pathname: "/api/inspect/direct/path",
+    });
+  });
+
+  it("uses the actual API Gateway 0.1 path instead of its route template", async () => {
+    const response = await generatedHandler.handler(
+      {
+        url: "/api/inspect/gateway/path",
+        path: "/api/inspect/{path}",
+        httpMethod: "GET",
+        headers: { Host: "gateway.example" },
+        multiValueHeaders: {},
+        queryStringParameters: {},
+        multiValueQueryStringParameters: {},
+        requestContext: {
+          identity: { sourceIp: "192.0.2.11", userAgent: "vitest" },
+          httpMethod: "GET",
+          requestId: "gateway-request",
+          requestTime: "20/Sep/2026:12:00:00 +0000",
+          requestTimeEpoch: 1_790_000_000,
+          apiGateway: { operationContext: {} },
+        },
+        body: "",
+        isBase64Encoded: false,
+        pathParams: { path: "gateway/path" },
+        params: {},
+        multiValueParams: {},
+      },
+      {},
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toMatchObject({
+      origin: "https://gateway.example",
+      pathname: "/api/inspect/gateway/path",
+    });
   });
 
   it("supports all-server output", async () => {

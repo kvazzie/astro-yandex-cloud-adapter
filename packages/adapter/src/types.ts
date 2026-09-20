@@ -5,6 +5,7 @@ export interface AdapterOptions {
 }
 
 export interface YandexCloudHttpEvent {
+  url?: string;
   httpMethod?: string;
   method?: string;
   path?: string;
