@@ -168,14 +168,14 @@ describe.sequential("Astro artifact builds", () => {
   });
 
   it("omits a function when the functions target is fully static", async () => {
-    const files = (
-      await layout(join(fixtures, "static-functions/dist"))
-    ).map((file) => {
-      if (!file.startsWith("client/_astro/logo.")) return file;
-      return file.slice(file.lastIndexOf("/") + 1).includes("_")
-        ? "client/_astro/logo.optimized.svg"
-        : "client/_astro/logo.source.svg";
-    });
+    const files = (await layout(join(fixtures, "static-functions/dist"))).map(
+      (file) => {
+        if (!file.startsWith("client/_astro/logo.")) return file;
+        return file.slice(file.lastIndexOf("/") + 1).includes("_")
+          ? "client/_astro/logo.optimized.svg"
+          : "client/_astro/logo.source.svg";
+      },
+    );
     expect(files).not.toContain("function/index.js");
     expect(files).toEqual([
       "client/_astro/logo.source.svg",
@@ -571,7 +571,9 @@ describe.sequential("Astro artifact builds", () => {
 
     expect(failure).toBeInstanceOf(Error);
     const message = (failure as Error).message;
-    expect(message).toContain("object-storage target cannot serve on-demand routes");
+    expect(message).toContain(
+      "object-storage target cannot serve on-demand routes",
+    );
     expect(message).toContain("/_server-islands/[name]");
     expect(message).toContain("/_image");
     expect(message).toContain(

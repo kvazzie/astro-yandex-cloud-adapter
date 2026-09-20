@@ -111,8 +111,7 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
       serverEntry: "index.js",
     }),
     assertRoutesSupported: () => {},
-    adapter: (hasOnDemandRoutes) =>
-      adapter(hasOnDemandRoutes, functionsFeatures),
+    adapter: (hasOnDemandRoutes) => adapter(hasOnDemandRoutes, functionsFeatures),
     completeBuild: async ({ config, onDemand, prerendered }) => {
       const functionDirectory = new URL("function/", config.outDir);
       const hasFunction = await hasFunctionArtifact(functionDirectory);

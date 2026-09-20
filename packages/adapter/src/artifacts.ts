@@ -148,7 +148,9 @@ export async function prepareFunctionArtifact(
   await validateFunctionArtifact(functionDirectory);
 }
 
-export async function hasFunctionArtifact(functionDirectory: URL): Promise<boolean> {
+export async function hasFunctionArtifact(
+  functionDirectory: URL,
+): Promise<boolean> {
   try {
     await access(new URL("index.js", functionDirectory));
     return true;

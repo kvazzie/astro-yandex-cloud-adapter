@@ -18,7 +18,10 @@ export default defineConfig({
 
 The default target is `object-storage`. It accepts only prerendered routes. The
 `object-storage-functions` target emits `dist/client`, and emits `dist/function` when the
-site contains on-demand routes. `dist/yandex-cloud.json` describes all deployable artifacts.
+site contains on-demand routes. Routes added by integrations and active Astro features such as
+server islands and the image endpoint count as on-demand routes. This means an Astro
+`output: "static"` project can still require a Function Artifact. `dist/yandex-cloud.json`
+describes all deployable artifacts.
 
 Upload and provisioning are intentionally outside this package. Configure the Yandex function
 with runtime `nodejs22` and entrypoint `index.handler`, then deploy the complete `function`
