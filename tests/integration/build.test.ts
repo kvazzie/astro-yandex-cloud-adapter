@@ -226,6 +226,22 @@ describe.sequential("Astro artifact builds", () => {
     expect(error.statusCode).toBe(500);
   });
 
+  it("discovers and executes an integration-injected route", async () => {
+    expect(await manifest("mixed")).toMatchObject({
+      routes: { onDemand: expect.arrayContaining(["/injected/[name]"]) },
+    });
+
+    const response = await generatedHandler.handler(
+      directHttpEvent({ path: "/injected/Ada" }),
+      invocationContext(),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      source: "integration",
+      name: "Ada",
+    });
+  });
+
   it("uses direct HTTPS paths and Host origins", async () => {
     const response = await generatedHandler.handler(
       directHttpEvent({
