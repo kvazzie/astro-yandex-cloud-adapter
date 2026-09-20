@@ -148,8 +148,11 @@ describe.sequential("Astro artifact builds", () => {
       { requestId: "page-request" },
     );
     expect(page.body).toContain("page-request:page-event:192.0.2.42");
-    expect(page.multiValueHeaders["set-cookie"]).toContain(
-      "runtime=true; Path=/; HttpOnly",
+    expect(page.multiValueHeaders["set-cookie"]).toEqual(
+      expect.arrayContaining([
+        "runtime=true; Path=/; HttpOnly",
+        "second=two; Path=/; SameSite=Strict",
+      ]),
     );
     expect(page.headers["x-fixture-middleware"]).toBe("runtime");
 

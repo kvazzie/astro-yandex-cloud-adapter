@@ -4,6 +4,7 @@ const contextRequestId = Astro.locals.runtime.context.requestId ?? 'none';
 const eventRequestId = Astro.locals.runtime.event.requestContext?.requestId ?? 'none';
 const clientAddress = Astro.clientAddress;
 Astro.cookies.set('runtime', 'true', { path: '/', httpOnly: true });
+Astro.cookies.set('second', 'two', { path: '/', sameSite: 'strict' });
 ---
 
 <!doctype html><title>Runtime</title><p>{contextRequestId}:{eventRequestId}:{clientAddress}</p>
