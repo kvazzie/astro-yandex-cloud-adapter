@@ -242,6 +242,151 @@ describe.sequential("Astro artifact builds", () => {
     });
   });
 
+  it.each(["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"])(
+    "passes the %s request method through the generated handler",
+    async (method) => {
+      const response = await generatedHandler.handler(
+        {
+          httpMethod: method,
+          path: "/api/inspect/method",
+          headers: {
+            host: "methods.example",
+            origin: "https://methods.example",
+          },
+          multiValueHeaders: {},
+          queryStringParameters: {},
+          multiValueQueryStringParameters: {},
+          requestContext: {
+            identity: { sourceIp: "192.0.2.12", userAgent: "vitest" },
+            httpMethod: method,
+            requestId: `method-${method}`,
+            requestTime: "20/Sep/2026:12:00:00 +0000",
+            requestTimeEpoch: 1_790_000_000,
+          },
+          body: "",
+          isBase64Encoded: false,
+        },
+        {},
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["x-inspected-method"]).toBe(method);
+      if (method === "HEAD") expect(response.body).toBe("");
+      else expect(JSON.parse(response.body).method).toBe(method);
+    },
+  );
+
+  it("passes repeated query values, headers, and a text body", async () => {
+    const response = await generatedHandler.handler(
+      {
+        httpMethod: "POST",
+        path: "/api/inspect/text",
+        headers: {
+          host: "request.example",
+          origin: "https://request.example",
+          "content-type": "text/plain",
+          "x-repeated": "last",
+        },
+        multiValueHeaders: { "x-repeated": ["first", "second"] },
+        queryStringParameters: { value: "last" },
+        multiValueQueryStringParameters: { value: ["first", "second"] },
+        requestContext: {
+          identity: { sourceIp: "192.0.2.13", userAgent: "vitest" },
+          httpMethod: "POST",
+          requestId: "text-request",
+          requestTime: "20/Sep/2026:12:00:00 +0000",
+          requestTimeEpoch: 1_790_000_000,
+        },
+        body: "hello",
+        isBase64Encoded: false,
+      },
+      {},
+    );
+
+    expect(JSON.parse(response.body)).toMatchObject({
+      bodyBase64: "aGVsbG8=",
+      values: ["first", "second"],
+      repeatedHeader: "first, second",
+    });
+  });
+
+  it("decodes a binary request body", async () => {
+    const response = await generatedHandler.handler(
+      {
+        httpMethod: "POST",
+        path: "/api/inspect/binary",
+        headers: {
+          host: "request.example",
+          "content-type": "application/octet-stream",
+        },
+        multiValueHeaders: {},
+        queryStringParameters: {},
+        multiValueQueryStringParameters: {},
+        requestContext: {
+          identity: { sourceIp: "192.0.2.14", userAgent: "vitest" },
+          httpMethod: "POST",
+          requestId: "binary-request",
+          requestTime: "20/Sep/2026:12:00:00 +0000",
+          requestTimeEpoch: 1_790_000_000,
+        },
+        body: "AAEC/w==",
+        isBase64Encoded: true,
+      },
+      {},
+    );
+
+    expect(JSON.parse(response.body).bodyBase64).toBe("AAEC/w==");
+  });
+
+  it("uses the configured Astro site when Host is unavailable", async () => {
+    const response = await generatedHandler.handler(
+      {
+        httpMethod: "GET",
+        path: "/api/inspect/site-fallback",
+        headers: {},
+        multiValueHeaders: {},
+        queryStringParameters: {},
+        multiValueQueryStringParameters: {},
+        requestContext: {
+          identity: { sourceIp: "192.0.2.15", userAgent: "vitest" },
+          httpMethod: "GET",
+          requestId: "site-request",
+          requestTime: "20/Sep/2026:12:00:00 +0000",
+          requestTimeEpoch: 1_790_000_000,
+        },
+        body: "",
+        isBase64Encoded: false,
+      },
+      {},
+    );
+
+    expect(JSON.parse(response.body).origin).toBe("https://fixture.example");
+  });
+
+  it.each([
+    ["redirect", 307, "/runtime"],
+    ["empty", 204, undefined],
+  ] as const)(
+    "returns %s responses in Yandex format",
+    async (kind, statusCode, location) => {
+      const response = await generatedHandler.handler(
+        {
+          httpMethod: "GET",
+          path: `/api/response/${kind}`,
+          headers: { host: "response.example" },
+        },
+        {},
+      );
+
+      expect(response).toMatchObject({
+        statusCode,
+        body: "",
+        isBase64Encoded: false,
+      });
+      expect(response.headers.location).toBe(location);
+    },
+  );
+
   it("supports all-server output", async () => {
     expect(await manifest("server")).toMatchObject({
       target: "object-storage-functions",
