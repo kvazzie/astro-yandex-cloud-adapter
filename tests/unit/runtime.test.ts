@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   fromWebResponse,
@@ -6,7 +6,25 @@ import {
   runtimeLocals,
   toWebRequest,
   type YandexCloudHttpEvent,
+  type YandexCloudInvocationContext,
 } from "../../packages/adapter/src/runtime.js";
+
+type DocumentedInvocationContext = {
+  functionFolderId: string;
+  functionName: string;
+  functionVersion: string;
+  memoryLimitInMB: string;
+  requestId: string;
+  token?: {
+    access_token: string;
+    expires_in: number;
+    token_type: string;
+  };
+  getPayload(): unknown;
+  getRemainingTimeInMillis(): number;
+};
+
+expectTypeOf<YandexCloudInvocationContext>().toEqualTypeOf<DocumentedInvocationContext>();
 
 describe("toWebRequest", () => {
   it("preserves repeated query values and request headers", async () => {
@@ -35,7 +53,7 @@ describe("toWebRequest", () => {
     expect(await request.text()).toBe("hello");
   });
 
-  it("uses forwarded origin data ahead of Host", () => {
+  it("ignores forwarded origin data", () => {
     const request = toWebRequest({
       path: "/proxy",
       headers: {
@@ -44,7 +62,7 @@ describe("toWebRequest", () => {
         "x-forwarded-proto": "http, https",
       },
     });
-    expect(request.url).toBe("http://public.example/proxy");
+    expect(request.url).toBe("https://internal.example/proxy");
   });
 
   it("uses Astro site when no host is provided", () => {
@@ -61,9 +79,23 @@ describe("toWebRequest", () => {
         http: { sourceIp: "192.0.2.9" },
       },
     };
+    const context: YandexCloudInvocationContext = {
+      functionFolderId: "folder-1",
+      functionName: "function-1",
+      functionVersion: "version-1",
+      memoryLimitInMB: "128",
+      requestId: "request-1",
+      token: {
+        access_token: "token",
+        expires_in: 3600,
+        token_type: "Bearer",
+      },
+      getPayload: () => ({ hello: "world" }),
+      getRemainingTimeInMillis: () => 5000,
+    };
     expect(getClientAddress(event)).toBe("192.0.2.8");
-    expect(runtimeLocals(event, { requestId: "request-1" })).toEqual({
-      runtime: { event, context: { requestId: "request-1" } },
+    expect(runtimeLocals(event, context)).toEqual({
+      runtime: { event, context },
     });
   });
 

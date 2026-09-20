@@ -5,6 +5,7 @@ export interface AdapterOptions {
 }
 
 export interface YandexCloudHttpEvent {
+  url?: string;
   httpMethod?: string;
   method?: string;
   path?: string;
@@ -17,7 +18,7 @@ export interface YandexCloudHttpEvent {
   body?: string | null;
   isBase64Encoded?: boolean;
   requestContext?: {
-    identity?: { sourceIp?: string };
+    identity?: { sourceIp?: string; userAgent?: string };
     http?: { method?: string; path?: string; sourceIp?: string };
     [key: string]: unknown;
   };
@@ -25,13 +26,18 @@ export interface YandexCloudHttpEvent {
 }
 
 export interface YandexCloudInvocationContext {
-  functionName?: string;
-  functionVersion?: string;
-  memoryLimitInMB?: string;
-  requestId?: string;
-  token?: string;
-  getRemainingTimeInMillis?: () => number;
-  [key: string]: unknown;
+  functionFolderId: string;
+  functionName: string;
+  functionVersion: string;
+  memoryLimitInMB: string;
+  requestId: string;
+  token?: {
+    access_token: string;
+    expires_in: number;
+    token_type: string;
+  };
+  getPayload(): unknown;
+  getRemainingTimeInMillis(): number;
 }
 
 export interface YandexCloudRuntime {

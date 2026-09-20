@@ -46,7 +46,11 @@ function appendHeaders(target: Headers, event: YandexCloudHttpEvent): void {
 
 function eventPath(event: YandexCloudHttpEvent): string {
   const path =
-    event.rawPath ?? event.path ?? event.requestContext?.http?.path ?? "/";
+    event.url ??
+    event.rawPath ??
+    event.path ??
+    event.requestContext?.http?.path ??
+    "/";
   return path.startsWith("/") ? path : `/${path}`;
 }
 
@@ -70,15 +74,9 @@ function originForEvent(
   event: YandexCloudHttpEvent,
   configuredSite?: string,
 ): string {
-  const forwardedHost = firstHeader(event, "x-forwarded-host")
-    ?.split(",")[0]
-    ?.trim();
-  const host = forwardedHost || firstHeader(event, "host");
-  const forwardedProtocol = firstHeader(event, "x-forwarded-proto")
-    ?.split(",")[0]
-    ?.trim();
+  const host = firstHeader(event, "host");
 
-  if (host) return `${forwardedProtocol || "https"}://${host}`;
+  if (host) return `https://${host}`;
   if (configuredSite) return new URL(configuredSite).origin;
   throw new TypeError(
     "The Yandex HTTPS event has no Host header and Astro `site` is not set.",
