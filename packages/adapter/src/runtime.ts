@@ -46,7 +46,11 @@ function appendHeaders(target: Headers, event: YandexCloudHttpEvent): void {
 
 function eventPath(event: YandexCloudHttpEvent): string {
   const path =
-    event.url ?? event.rawPath ?? event.path ?? event.requestContext?.http?.path ?? "/";
+    event.url ??
+    event.rawPath ??
+    event.path ??
+    event.requestContext?.http?.path ??
+    "/";
   return path.startsWith("/") ? path : `/${path}`;
 }
 
