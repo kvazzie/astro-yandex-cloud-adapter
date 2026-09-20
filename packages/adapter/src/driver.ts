@@ -22,7 +22,16 @@ export interface TargetDriver {
   completeBuild(build: CompletedBuild): Promise<void>;
 }
 
-const supportedAstroFeatures: AstroAdapter["supportedAstroFeatures"] = {
+const objectStorageFeatures: AstroAdapter["supportedAstroFeatures"] = {
+  staticOutput: "stable",
+  hybridOutput: "unsupported",
+  serverOutput: "unsupported",
+  sharpImageService: "stable",
+  envGetSecret: "stable",
+  i18nDomains: "unsupported",
+};
+
+const functionsFeatures: AstroAdapter["supportedAstroFeatures"] = {
   staticOutput: "stable",
   hybridOutput: "stable",
   serverOutput: "stable",
@@ -35,7 +44,10 @@ const supportedAstroFeatures: AstroAdapter["supportedAstroFeatures"] = {
   i18nDomains: "unsupported",
 };
 
-function adapter(hasOnDemandRoutes: boolean): AstroAdapter {
+function adapter(
+  hasOnDemandRoutes: boolean,
+  supportedAstroFeatures: AstroAdapter["supportedAstroFeatures"],
+): AstroAdapter {
   return {
     name: ADAPTER_NAME,
     entrypointResolution: "auto",
@@ -71,7 +83,8 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
             'Use target "object-storage-functions" or prerender these routes.',
         );
       },
-      adapter,
+      adapter: (hasOnDemandRoutes) =>
+        adapter(hasOnDemandRoutes, objectStorageFeatures),
       completeBuild: async ({ config, onDemand, prerendered }) => {
         const hasFunction = await hasFunctionArtifact(
           new URL("function/", config.outDir),
@@ -98,7 +111,8 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
       serverEntry: "index.js",
     }),
     assertRoutesSupported: () => {},
-    adapter,
+    adapter: (hasOnDemandRoutes) =>
+      adapter(hasOnDemandRoutes, functionsFeatures),
     completeBuild: async ({ config, onDemand, prerendered }) => {
       const functionDirectory = new URL("function/", config.outDir);
       const hasFunction = await hasFunctionArtifact(functionDirectory);
