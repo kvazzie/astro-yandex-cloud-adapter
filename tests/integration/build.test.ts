@@ -24,6 +24,15 @@ interface GeneratedHandler {
 
 let generatedHandler: GeneratedHandler;
 
+async function generatedFixtureHandler(
+  fixture: string,
+  cacheKey: string,
+): Promise<GeneratedHandler> {
+  return (await import(
+    `${pathToFileURL(join(fixtures, fixture, "dist/function/index.js")).href}?${cacheKey}`
+  )) as GeneratedHandler;
+}
+
 function invocationContext(
   overrides: Partial<YandexCloudInvocationContext> = {},
 ): YandexCloudInvocationContext {
@@ -97,7 +106,13 @@ async function manifest(fixture: string): Promise<YandexCloudManifestV1> {
 
 describe.sequential("Astro artifact builds", () => {
   beforeAll(async () => {
-    for (const fixture of ["static", "static-functions", "mixed", "server"]) {
+    for (const fixture of [
+      "static",
+      "static-functions",
+      "mixed",
+      "server",
+      "server-island",
+    ]) {
       await build({ root: `${join(fixtures, fixture)}/`, logLevel: "silent" });
     }
 
@@ -240,6 +255,38 @@ describe.sequential("Astro artifact builds", () => {
       source: "integration",
       name: "Ada",
     });
+  });
+
+  it("emits and executes a Function Artifact for a server island", async () => {
+    expect(await manifest("server-island")).toMatchObject({
+      buildOutput: "server",
+      artifacts: { client: "client", function: "function" },
+      routes: {
+        prerendered: ["/"],
+        onDemand: expect.arrayContaining(["/_server-islands/[name]"]),
+      },
+    });
+
+    const page = await readFile(
+      join(fixtures, "server-island/dist/client/index.html"),
+      "utf8",
+    );
+    const islandUrl = page
+      .match(/<link rel="preload" as="fetch" href="([^"]+)"/)?.[1]
+      ?.replaceAll("&amp;", "&");
+    expect(islandUrl).toBeDefined();
+
+    const url = new URL(islandUrl!, "https://fixture.example");
+    const handler = await generatedFixtureHandler("server-island", "island=1");
+    const response = await handler.handler(
+      directHttpEvent({
+        path: url.pathname,
+        queryStringParameters: Object.fromEntries(url.searchParams),
+      }),
+      invocationContext(),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('<p id="server-greeting">Hello, Ada.</p>');
   });
 
   it("uses direct HTTPS paths and Host origins", async () => {
