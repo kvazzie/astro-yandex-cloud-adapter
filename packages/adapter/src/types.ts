@@ -18,7 +18,7 @@ export interface YandexCloudHttpEvent {
   body?: string | null;
   isBase64Encoded?: boolean;
   requestContext?: {
-    identity?: { sourceIp?: string };
+    identity?: { sourceIp?: string; userAgent?: string };
     http?: { method?: string; path?: string; sourceIp?: string };
     [key: string]: unknown;
   };

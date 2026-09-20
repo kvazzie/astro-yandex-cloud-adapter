@@ -6,24 +6,75 @@ import { pathToFileURL } from "node:url";
 import { build } from "astro";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import type { YandexCloudManifestV1 } from "../../packages/adapter/src/types.js";
+import type { YandexCloudHttpResult } from "../../packages/adapter/src/runtime.js";
+import type {
+  YandexCloudHttpEvent,
+  YandexCloudInvocationContext,
+  YandexCloudManifestV1,
+} from "../../packages/adapter/src/types.js";
 
 const fixtures = resolve(import.meta.dirname, "../fixtures");
 
 interface GeneratedHandler {
   handler(
-    event: object,
-    context: object,
-  ): Promise<{
-    statusCode: number;
-    body: string;
-    isBase64Encoded: boolean;
-    headers: Record<string, string>;
-    multiValueHeaders: Record<string, string[]>;
-  }>;
+    event: YandexCloudHttpEvent,
+    context: YandexCloudInvocationContext,
+  ): Promise<YandexCloudHttpResult>;
 }
 
 let generatedHandler: GeneratedHandler;
+
+function invocationContext(
+  overrides: Partial<YandexCloudInvocationContext> = {},
+): YandexCloudInvocationContext {
+  return {
+    functionFolderId: "test-folder",
+    functionName: "test-function",
+    functionVersion: "test-version",
+    memoryLimitInMB: "128",
+    requestId: "test-request",
+    getPayload: () => undefined,
+    getRemainingTimeInMillis: () => 30_000,
+    ...overrides,
+  };
+}
+
+function directHttpEvent(
+  overrides: Partial<YandexCloudHttpEvent> = {},
+): YandexCloudHttpEvent {
+  const httpMethod = overrides.httpMethod ?? "GET";
+  return {
+    httpMethod,
+    path: "/",
+    headers: { host: "fixture.example" },
+    multiValueHeaders: {},
+    queryStringParameters: {},
+    multiValueQueryStringParameters: {},
+    requestContext: {
+      identity: { sourceIp: "192.0.2.1", userAgent: "vitest" },
+      httpMethod,
+      requestId: "test-request",
+      requestTime: "20/Sep/2026:12:00:00 +0000",
+      requestTimeEpoch: 1_790_000_000,
+    },
+    body: "",
+    isBase64Encoded: false,
+    ...overrides,
+  };
+}
+
+function apiGatewayV01Event(
+  overrides: Partial<YandexCloudHttpEvent> = {},
+): YandexCloudHttpEvent {
+  return directHttpEvent({
+    url: "/",
+    path: "/",
+    pathParams: {},
+    params: {},
+    multiValueParams: {},
+    ...overrides,
+  });
+}
 
 async function layout(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -114,7 +165,7 @@ describe.sequential("Astro artifact builds", () => {
 
   it("executes the generated handler outside the fixture dependency tree", async () => {
     const response = await generatedHandler.handler(
-      {
+      directHttpEvent({
         httpMethod: "POST",
         path: "/api/echo",
         headers: {
@@ -125,8 +176,8 @@ describe.sequential("Astro artifact builds", () => {
         multiValueQueryStringParameters: { value: ["one", "two"] },
         body: "payload",
         requestContext: { identity: { sourceIp: "192.0.2.42" } },
-      },
-      { requestId: "integration-request" },
+      }),
+      invocationContext({ requestId: "integration-request" }),
     );
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(response.body)).toEqual({
@@ -136,16 +187,14 @@ describe.sequential("Astro artifact builds", () => {
     });
 
     const page = await generatedHandler.handler(
-      {
-        httpMethod: "GET",
+      directHttpEvent({
         path: "/runtime",
-        headers: { host: "fixture.example" },
         requestContext: {
           identity: { sourceIp: "192.0.2.42" },
           requestId: "page-event",
         },
-      },
-      { requestId: "page-request" },
+      }),
+      invocationContext({ requestId: "page-request" }),
     );
     expect(page.body).toContain("page-request:page-event:192.0.2.42");
     expect(page.multiValueHeaders["set-cookie"]).toEqual(
@@ -157,12 +206,10 @@ describe.sequential("Astro artifact builds", () => {
     expect(page.headers["x-fixture-middleware"]).toBe("runtime");
 
     const binary = await generatedHandler.handler(
-      {
-        httpMethod: "GET",
+      directHttpEvent({
         path: "/api/binary",
-        headers: { host: "fixture.example" },
-      },
-      {},
+      }),
+      invocationContext(),
     );
     expect(binary).toMatchObject({
       statusCode: 200,
@@ -171,29 +218,23 @@ describe.sequential("Astro artifact builds", () => {
     });
 
     const error = await generatedHandler.handler(
-      {
-        httpMethod: "GET",
+      directHttpEvent({
         path: "/api/error",
-        headers: { host: "fixture.example" },
-      },
-      {},
+      }),
+      invocationContext(),
     );
     expect(error.statusCode).toBe(500);
   });
 
   it("uses direct HTTPS paths and Host origins", async () => {
     const response = await generatedHandler.handler(
-      {
-        httpMethod: "GET",
+      directHttpEvent({
         path: "/api/inspect/direct/path",
         headers: {
           Host: "direct.example",
           "x-forwarded-host": "attacker.example",
           "x-forwarded-proto": "http",
         },
-        multiValueHeaders: {},
-        queryStringParameters: {},
-        multiValueQueryStringParameters: {},
         requestContext: {
           identity: { sourceIp: "192.0.2.10", userAgent: "vitest" },
           httpMethod: "GET",
@@ -201,10 +242,8 @@ describe.sequential("Astro artifact builds", () => {
           requestTime: "20/Sep/2026:12:00:00 +0000",
           requestTimeEpoch: 1_790_000_000,
         },
-        body: "",
-        isBase64Encoded: false,
-      },
-      {},
+      }),
+      invocationContext(),
     );
 
     expect(response.statusCode).toBe(200);
@@ -216,14 +255,10 @@ describe.sequential("Astro artifact builds", () => {
 
   it("uses the actual API Gateway 0.1 path instead of its route template", async () => {
     const response = await generatedHandler.handler(
-      {
+      apiGatewayV01Event({
         url: "/api/inspect/gateway/path",
         path: "/api/inspect/{path}",
-        httpMethod: "GET",
         headers: { Host: "gateway.example" },
-        multiValueHeaders: {},
-        queryStringParameters: {},
-        multiValueQueryStringParameters: {},
         requestContext: {
           identity: { sourceIp: "192.0.2.11", userAgent: "vitest" },
           httpMethod: "GET",
@@ -232,13 +267,9 @@ describe.sequential("Astro artifact builds", () => {
           requestTimeEpoch: 1_790_000_000,
           apiGateway: { operationContext: {} },
         },
-        body: "",
-        isBase64Encoded: false,
         pathParams: { path: "gateway/path" },
-        params: {},
-        multiValueParams: {},
-      },
-      {},
+      }),
+      invocationContext(),
     );
 
     expect(response.statusCode).toBe(200);
@@ -252,16 +283,13 @@ describe.sequential("Astro artifact builds", () => {
     "passes the %s request method through the generated handler",
     async (method) => {
       const response = await generatedHandler.handler(
-        {
+        directHttpEvent({
           httpMethod: method,
           path: "/api/inspect/method",
           headers: {
             host: "methods.example",
             origin: "https://methods.example",
           },
-          multiValueHeaders: {},
-          queryStringParameters: {},
-          multiValueQueryStringParameters: {},
           requestContext: {
             identity: { sourceIp: "192.0.2.12", userAgent: "vitest" },
             httpMethod: method,
@@ -269,22 +297,20 @@ describe.sequential("Astro artifact builds", () => {
             requestTime: "20/Sep/2026:12:00:00 +0000",
             requestTimeEpoch: 1_790_000_000,
           },
-          body: "",
-          isBase64Encoded: false,
-        },
-        {},
+        }),
+        invocationContext(),
       );
 
       expect(response.statusCode).toBe(200);
       expect(response.headers["x-inspected-method"]).toBe(method);
       if (method === "HEAD") expect(response.body).toBe("");
-      else expect(JSON.parse(response.body).method).toBe(method);
+      else expect(JSON.parse(response.body)).toMatchObject({ method });
     },
   );
 
   it("passes repeated query values, headers, and a text body", async () => {
     const response = await generatedHandler.handler(
-      {
+      directHttpEvent({
         httpMethod: "POST",
         path: "/api/inspect/text",
         headers: {
@@ -294,7 +320,6 @@ describe.sequential("Astro artifact builds", () => {
           "x-repeated": "last",
         },
         multiValueHeaders: { "x-repeated": ["first", "second"] },
-        queryStringParameters: { value: "last" },
         multiValueQueryStringParameters: { value: ["first", "second"] },
         requestContext: {
           identity: { sourceIp: "192.0.2.13", userAgent: "vitest" },
@@ -304,9 +329,8 @@ describe.sequential("Astro artifact builds", () => {
           requestTimeEpoch: 1_790_000_000,
         },
         body: "hello",
-        isBase64Encoded: false,
-      },
-      {},
+      }),
+      invocationContext(),
     );
 
     expect(JSON.parse(response.body)).toMatchObject({
@@ -318,16 +342,13 @@ describe.sequential("Astro artifact builds", () => {
 
   it("decodes a binary request body", async () => {
     const response = await generatedHandler.handler(
-      {
+      directHttpEvent({
         httpMethod: "POST",
         path: "/api/inspect/binary",
         headers: {
           host: "request.example",
           "content-type": "application/octet-stream",
         },
-        multiValueHeaders: {},
-        queryStringParameters: {},
-        multiValueQueryStringParameters: {},
         requestContext: {
           identity: { sourceIp: "192.0.2.14", userAgent: "vitest" },
           httpMethod: "POST",
@@ -337,22 +358,18 @@ describe.sequential("Astro artifact builds", () => {
         },
         body: "AAEC/w==",
         isBase64Encoded: true,
-      },
-      {},
+      }),
+      invocationContext(),
     );
 
-    expect(JSON.parse(response.body).bodyBase64).toBe("AAEC/w==");
+    expect(JSON.parse(response.body)).toMatchObject({ bodyBase64: "AAEC/w==" });
   });
 
   it("uses the configured Astro site when Host is unavailable", async () => {
     const response = await generatedHandler.handler(
-      {
-        httpMethod: "GET",
+      directHttpEvent({
         path: "/api/inspect/site-fallback",
         headers: {},
-        multiValueHeaders: {},
-        queryStringParameters: {},
-        multiValueQueryStringParameters: {},
         requestContext: {
           identity: { sourceIp: "192.0.2.15", userAgent: "vitest" },
           httpMethod: "GET",
@@ -360,13 +377,13 @@ describe.sequential("Astro artifact builds", () => {
           requestTime: "20/Sep/2026:12:00:00 +0000",
           requestTimeEpoch: 1_790_000_000,
         },
-        body: "",
-        isBase64Encoded: false,
-      },
-      {},
+      }),
+      invocationContext(),
     );
 
-    expect(JSON.parse(response.body).origin).toBe("https://fixture.example");
+    expect(JSON.parse(response.body)).toMatchObject({
+      origin: "https://fixture.example",
+    });
   });
 
   it.each([
@@ -376,13 +393,12 @@ describe.sequential("Astro artifact builds", () => {
     "returns %s responses in Yandex format",
     async (kind, statusCode, location) => {
       const response = await generatedHandler.handler(
-        {
+        apiGatewayV01Event({
           url: `/api/response/${kind}`,
           path: "/api/response/{kind}",
-          httpMethod: "GET",
           headers: { host: "response.example" },
-        },
-        {},
+        }),
+        invocationContext(),
       );
 
       expect(response).toMatchObject({
@@ -403,15 +419,10 @@ describe.sequential("Astro artifact builds", () => {
 
     const entrypoint = (await import(
       `${pathToFileURL(join(fixtures, "server/dist/function/index.js")).href}?server=1`
-    )) as {
-      handler(
-        event: object,
-        context: object,
-      ): Promise<{ statusCode: number; body: string }>;
-    };
+    )) as GeneratedHandler;
     const response = await entrypoint.handler(
-      { httpMethod: "GET", path: "/", headers: { host: "server.example" } },
-      {},
+      directHttpEvent({ headers: { host: "server.example" } }),
+      invocationContext(),
     );
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain("<h1>Server output</h1>");
