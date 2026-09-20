@@ -374,8 +374,9 @@ describe.sequential("Astro artifact builds", () => {
     async (kind, statusCode, location) => {
       const response = await generatedHandler.handler(
         {
+          url: `/api/response/${kind}`,
+          path: "/api/response/{kind}",
           httpMethod: "GET",
-          path: `/api/response/${kind}`,
           headers: { host: "response.example" },
         },
         {},
