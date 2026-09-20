@@ -1,7 +1,11 @@
 import type { AstroAdapter, AstroConfig } from "astro";
 import type { InlineConfig } from "vite";
 
-import { prepareFunctionArtifact, writeDeploymentManifest } from "./artifacts.js";
+import {
+  hasFunctionArtifact,
+  prepareFunctionArtifact,
+  writeDeploymentManifest,
+} from "./artifacts.js";
 import { ADAPTER_NAME } from "./constants.js";
 import type { AdapterOptions } from "./types.js";
 
@@ -41,6 +45,7 @@ function adapter(hasOnDemandRoutes: boolean): AstroAdapter {
       buildOutput: hasOnDemandRoutes ? "server" : "static",
       middlewareMode: "classic",
       preserveBuildClientDir: true,
+      preserveBuildServerDir: true,
     },
     supportedAstroFeatures,
   };
@@ -54,7 +59,11 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
 
   if (target === "object-storage") {
     return {
-      configureBuild: (outDir) => ({ client: new URL("client/", outDir) }),
+      configureBuild: (outDir) => ({
+        client: new URL("client/", outDir),
+        server: new URL("function/", outDir),
+        serverEntry: "index.js",
+      }),
       assertRoutesSupported: (onDemand) => {
         if (!onDemand.length) return;
         throw new Error(
@@ -64,10 +73,19 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
       },
       adapter,
       completeBuild: async ({ config, onDemand, prerendered }) => {
+        const hasFunction = await hasFunctionArtifact(
+          new URL("function/", config.outDir),
+        );
+        if (hasFunction) {
+          throw new Error(
+            `The object-storage target cannot serve on-demand routes: ${onDemand.join(", ")}. ` +
+              'Use target "object-storage-functions" or prerender these routes.',
+          );
+        }
         await writeDeploymentManifest(config.outDir, config, {
           target,
           hasFunction: false,
-          onDemand,
+          onDemand: [],
           prerendered,
         });
       },
@@ -82,17 +100,15 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
     assertRoutesSupported: () => {},
     adapter,
     completeBuild: async ({ config, onDemand, prerendered }) => {
-      const hasFunction = onDemand.length > 0;
+      const functionDirectory = new URL("function/", config.outDir);
+      const hasFunction = await hasFunctionArtifact(functionDirectory);
       if (hasFunction) {
-        await prepareFunctionArtifact(
-          new URL("function/", config.outDir),
-          config.root,
-        );
+        await prepareFunctionArtifact(functionDirectory, config.root);
       }
       await writeDeploymentManifest(config.outDir, config, {
         target,
         hasFunction,
-        onDemand,
+        onDemand: hasFunction ? onDemand : [],
         prerendered,
       });
     },
