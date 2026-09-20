@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { build } from "astro";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { YandexCloudHttpResult } from "../../packages/adapter/src/runtime.js";
 import type {
@@ -477,18 +477,51 @@ describe.sequential("Astro artifact builds", () => {
     expect(await manifest("server")).toMatchObject({
       target: "object-storage-functions",
       buildOutput: "server",
-      routes: { onDemand: ["/"] },
+      routes: {
+        onDemand: expect.arrayContaining(["/", "/_image"]),
+      },
     });
 
-    const entrypoint = (await import(
-      `${pathToFileURL(join(fixtures, "server/dist/function/index.js")).href}?server=1`
-    )) as GeneratedHandler;
+    const entrypoint = await generatedFixtureHandler("server", "server=1");
     const response = await entrypoint.handler(
       directHttpEvent({ headers: { host: "server.example" } }),
       invocationContext(),
     );
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain("<h1>Server output</h1>");
+
+    const sourceImage = new Response(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="red" /></svg>',
+      { headers: { "content-type": "image/svg+xml" } },
+    );
+    Object.defineProperty(sourceImage, "url", {
+      value: "https://images.example/source.svg",
+    });
+    const remoteImage = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(sourceImage);
+    let image: YandexCloudHttpResult;
+    try {
+      image = await entrypoint.handler(
+        directHttpEvent({
+          path: "/_image",
+          queryStringParameters: {
+            href: "https://images.example/source.svg",
+            w: "16",
+            f: "svg",
+          },
+        }),
+        invocationContext(),
+      );
+    } finally {
+      remoteImage.mockRestore();
+    }
+    expect(image).toMatchObject({
+      statusCode: 200,
+      isBase64Encoded: false,
+      headers: { "content-type": "image/svg+xml" },
+    });
+    expect(image.body).toContain('<rect width="32" height="32" fill="red"');
   });
 
   it("rejects an Object Storage build containing an on-demand route", async () => {

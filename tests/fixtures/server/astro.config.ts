@@ -3,5 +3,6 @@ import { defineConfig } from "astro/config";
 
 export default defineConfig({
   adapter: yandexCloud({ target: "object-storage-functions" }),
+  image: { domains: ["images.example"] },
   output: "server",
 });
