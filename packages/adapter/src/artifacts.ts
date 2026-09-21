@@ -106,7 +106,12 @@ function isAstroLoggerImport(
   file: string,
   ancestors: SyntaxNode[],
 ): boolean {
-  if (!/(^|[\\/])chunks[\\/]render-[^\\/]+\.js$/.test(file)) return false;
+  if (
+    file !== "index.js" &&
+    !/(^|[\\/])chunks[\\/]render-[^\\/]+\.js$/.test(file)
+  ) {
+    return false;
+  }
   if (
     !ancestors.some(
       (ancestor) =>
