@@ -89,7 +89,9 @@ async function unresolvedPackages(directory: string): Promise<Set<string>> {
     for (const match of source.matchAll(
       /\b(?:require|__require)\(\s*["']([^"']+)["']\s*\)/g,
     )) {
-      const dependency = barePackage(match[1]);
+      const specifier = match[1];
+      if (!specifier) continue;
+      const dependency = barePackage(specifier);
       if (dependency) packages.add(dependency);
     }
   }
