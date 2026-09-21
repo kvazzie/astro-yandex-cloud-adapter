@@ -34,6 +34,19 @@ async function generatedFixtureHandler(
   )) as GeneratedHandler;
 }
 
+async function isolatedFixtureHandler(
+  fixture: string,
+  cacheKey: string,
+): Promise<GeneratedHandler> {
+  const isolated = await mkdtemp(join(tmpdir(), `astro-yandex-${fixture}-`));
+  await cp(join(fixtures, fixture, "dist/function"), isolated, {
+    recursive: true,
+  });
+  return (await import(
+    `${pathToFileURL(join(isolated, "index.js")).href}?${cacheKey}`
+  )) as GeneratedHandler;
+}
+
 function invocationContext(
   overrides: Partial<YandexCloudInvocationContext> = {},
 ): YandexCloudInvocationContext {
@@ -118,19 +131,11 @@ describe.sequential("Astro artifact builds", () => {
       await build({ root: `${join(fixtures, fixture)}/`, logLevel: "silent" });
     }
 
-    const isolated = await mkdtemp(join(tmpdir(), "astro-yandex-function-"));
-    await cp(join(fixtures, "mixed/dist/function"), isolated, { recursive: true });
-    generatedHandler = (await import(
-      `${pathToFileURL(join(isolated, "index.js")).href}?isolated=1`
-    )) as GeneratedHandler;
-
-    const isolatedActions = await mkdtemp(join(tmpdir(), "astro-yandex-actions-"));
-    await cp(join(fixtures, "actions/dist/function"), isolatedActions, {
-      recursive: true,
-    });
-    actionsGeneratedHandler = (await import(
-      `${pathToFileURL(join(isolatedActions, "index.js")).href}?isolated=actions`
-    )) as GeneratedHandler;
+    generatedHandler = await isolatedFixtureHandler("mixed", "isolated=1");
+    actionsGeneratedHandler = await isolatedFixtureHandler(
+      "actions",
+      "isolated=actions",
+    );
   });
 
   it("emits an Object Storage-only static layout and manifest", async () => {
