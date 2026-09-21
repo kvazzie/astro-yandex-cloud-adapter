@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:astro-yandex-cloud:deployment-manifest:v1",
   "title": "Astro Yandex Cloud Deployment Manifest version 1",
+  "$comment": "Version 1 permits additive fields. Removing or changing a field, or tightening an existing invariant, requires a new schemaVersion.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -36,7 +37,8 @@
     "buildOutput": { "enum": ["static", "server"] },
     "base": {
       "type": "string",
-      "pattern": "^/(?:[^/]+(?:/[^/]+)*)?$"
+      "pattern": "^/(?:[^/]+(?:/[^/]+)*)?$",
+      "description": "Canonical Astro base. Every Client Artifact URL, route requirement, and Object Storage key is placed under this base."
     },
     "artifacts": {
       "type": "object",
@@ -83,8 +85,14 @@
       "required": ["path", "url", "objectKey"],
       "properties": {
         "path": { "$ref": "#/$defs/relativePath" },
-        "url": { "$ref": "#/$defs/urlPath" },
-        "objectKey": { "$ref": "#/$defs/objectKey" }
+        "url": {
+          "$ref": "#/$defs/urlPath",
+          "description": "Public URL under the manifest base."
+        },
+        "objectKey": {
+          "$ref": "#/$defs/objectKey",
+          "description": "The canonical Object Storage key formed from the manifest base and this file's path."
+        }
       }
     },
     "clientArtifact": {
@@ -120,15 +128,24 @@
       "type": "object",
       "required": ["url", "objectKey"],
       "properties": {
-        "url": { "$ref": "#/$defs/urlPath" },
-        "objectKey": { "$ref": "#/$defs/objectKey" }
+        "url": {
+          "$ref": "#/$defs/urlPath",
+          "description": "Prerendered request URL under the manifest base."
+        },
+        "objectKey": {
+          "$ref": "#/$defs/objectKey",
+          "description": "Object Storage key of the Client Artifact file that serves this URL."
+        }
       }
     },
     "onDemandRoute": {
       "type": "object",
       "required": ["pattern"],
       "properties": {
-        "pattern": { "$ref": "#/$defs/urlPath" }
+        "pattern": {
+          "$ref": "#/$defs/urlPath",
+          "description": "Request pattern under the manifest base that requires the Function Artifact."
+        }
       }
     }
   },

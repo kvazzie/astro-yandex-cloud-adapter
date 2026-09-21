@@ -19,21 +19,36 @@ const allowedBuiltins = new Set([
   ...builtinModules,
   ...builtinModules.map((name) => `node:${name}`),
 ]);
-async function javascriptFiles(directory: string): Promise<string[]> {
+
+interface DiscoveredFile {
+  name: string;
+  absolutePath: string;
+}
+
+async function filesUnder(directory: string): Promise<DiscoveredFile[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = await Promise.all(
     entries.map(async (entry) => {
-      const path = resolve(directory, entry.name);
-      if (entry.isDirectory()) return javascriptFiles(path);
-      if (entry.name.endsWith(".cjs")) {
-        throw new Error(
-          `The function artifact contains the unsupported CommonJS module ${entry.name}. V1 function artifacts must use ESM.`,
-        );
-      }
-      return /\.m?js$/.test(entry.name) ? [path] : [];
+      const absolutePath = resolve(directory, entry.name);
+      return entry.isDirectory()
+        ? filesUnder(absolutePath)
+        : [{ name: entry.name, absolutePath }];
     }),
   );
   return files.flat();
+}
+
+async function javascriptFiles(directory: string): Promise<string[]> {
+  const files = await filesUnder(directory);
+  const commonJs = files.find((file) => file.name.endsWith(".cjs"));
+  if (commonJs) {
+    throw new Error(
+      `The function artifact contains the unsupported CommonJS module ${commonJs.name}. V1 function artifacts must use ESM.`,
+    );
+  }
+  return files
+    .filter((file) => /\.m?js$/.test(file.name))
+    .map((file) => file.absolutePath);
 }
 
 function barePackage(specifier: string): string | undefined {
@@ -180,44 +195,39 @@ function normalizedBase(base: string): string {
   return path === "/" ? path : path.replace(/\/+$/, "");
 }
 
-function withBase(base: string, path: string): string {
-  const suffix = `/${path.replace(/^\/+/, "")}`;
+function withBase(base: string, urlPath: string): string {
+  const suffix = `/${urlPath.replace(/^\/+/, "")}`;
   if (base === "/") return suffix;
   return suffix === "/" ? `${base}/` : `${base}${suffix}`;
 }
 
-function objectKey(base: string, path: string): string {
+function objectKey(base: string, clientRelativePath: string): string {
   const prefix = base === "/" ? "" : base.slice(1);
-  return [prefix, path].filter(Boolean).join("/");
+  return [prefix, clientRelativePath].filter(Boolean).join("/");
 }
 
-function encodedPath(path: string): string {
-  return path.split("/").map(encodeURIComponent).join("/");
+function encodedPath(clientRelativePath: string): string {
+  return clientRelativePath.split("/").map(encodeURIComponent).join("/");
 }
 
 async function relativeFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files = await Promise.all(
-    entries.map(async (entry) => {
-      const path = resolve(directory, entry.name);
-      return entry.isDirectory()
-        ? (await relativeFiles(path)).map((child) => `${entry.name}/${child}`)
-        : [entry.name];
-    }),
-  );
-  return files.flat().sort();
+  return (await filesUnder(directory))
+    .map((file) => relative(directory, file.absolutePath).split(sep).join("/"))
+    .sort();
 }
 
-function prerenderedFile(route: string, clientFiles: Set<string>): string {
-  if (route === "/") return "index.html";
-  const path = route.replace(/^\/+|\/+$/g, "");
-  const candidates = route.endsWith("/")
-    ? [`${path}/index.html`, `${path}.html`]
-    : [`${path}.html`, `${path}/index.html`];
+function prerenderedFile(routeUrl: string, clientFiles: Set<string>): string {
+  const pathname = routeUrl.replace(/^\/+|\/+$/g, "");
+  const candidates =
+    routeUrl === "/"
+      ? ["index.html"]
+      : routeUrl.endsWith("/")
+        ? [`${pathname}/index.html`, `${pathname}.html`]
+        : [`${pathname}.html`, `${pathname}/index.html`];
   const file = candidates.find((candidate) => clientFiles.has(candidate));
   if (file) return file;
   throw new Error(
-    `Could not match the Prerendered Route ${route} to a Client Artifact file.`,
+    `Could not match the Prerendered Route ${routeUrl} to a Client Artifact file.`,
   );
 }
 
@@ -237,14 +247,16 @@ async function describeClientArtifact(
   );
   const routeUrlByFile = new Map(routeFileEntries);
   return {
-    files: paths.map((path): ClientArtifactFile => ({
-      path,
-      url: routeUrlByFile.get(path) ?? withBase(base, encodedPath(path)),
-      objectKey: objectKey(base, path),
+    files: paths.map((clientRelativePath): ClientArtifactFile => ({
+      path: clientRelativePath,
+      url:
+        routeUrlByFile.get(clientRelativePath) ??
+        withBase(base, encodedPath(clientRelativePath)),
+      objectKey: objectKey(base, clientRelativePath),
     })),
-    routes: routeFileEntries.map(([path, url]) => ({
+    routes: routeFileEntries.map(([clientRelativePath, url]) => ({
       url,
-      objectKey: objectKey(base, path),
+      objectKey: objectKey(base, clientRelativePath),
     })),
   };
 }

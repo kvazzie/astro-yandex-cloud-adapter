@@ -136,4 +136,22 @@ describe("Deployment Manifest consumers", () => {
       /Invalid Deployment Manifest/,
     );
   });
+
+  it("rejects Client Artifact placement outside the required base", () => {
+    const manifest = staticManifest();
+    manifest.base = "/docs";
+
+    expect(() => parseDeploymentManifest(manifest)).toThrow(
+      /Invalid Deployment Manifest.*base/i,
+    );
+  });
+
+  it("rejects a Prerendered Route that does not reference an uploaded client file", () => {
+    const manifest = staticManifest();
+    manifest.routes.prerendered[0]!.objectKey = "missing.html";
+
+    expect(() => parseDeploymentManifest(manifest)).toThrow(
+      /Invalid Deployment Manifest.*Prerendered Route/i,
+    );
+  });
 });
