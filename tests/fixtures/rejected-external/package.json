@@ -1,5 +1,5 @@
 {
-  "name": "fixture-mixed",
+  "name": "fixture-rejected-external",
   "private": true,
   "type": "module",
   "dependencies": {

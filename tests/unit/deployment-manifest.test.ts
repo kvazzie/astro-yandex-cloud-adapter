@@ -110,7 +110,7 @@ describe("Deployment Manifest consumers", () => {
           runtime: "nodejs22",
           format: "esm",
           entrypoint: "index.handler",
-          support: { sharp: "limited" },
+          support: { sharp: "unsupported" },
         };
       },
     ],

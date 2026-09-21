@@ -40,6 +40,12 @@ async function filesUnder(directory: string): Promise<DiscoveredFile[]> {
 
 async function javascriptFiles(directory: string): Promise<string[]> {
   const files = await filesUnder(directory);
+  const nativeModule = files.find((file) => file.name.endsWith(".node"));
+  if (nativeModule) {
+    throw new Error(
+      `The Function Artifact contains the native runtime module ${nativeModule.name}, which cannot use the "bundle" dependency strategy. Use dependencyStrategy: "install".`,
+    );
+  }
   const commonJs = files.find((file) => file.name.endsWith(".cjs"));
   if (commonJs) {
     throw new Error(
@@ -70,6 +76,11 @@ async function unresolvedPackages(directory: string): Promise<Set<string>> {
   await init;
   for (const file of await javascriptFiles(directory)) {
     const source = await readFile(file, "utf8");
+    if (/\.node(?:["'`]|\\)/.test(source)) {
+      throw new Error(
+        `The Function Artifact contains native runtime dependency code in ${relative(directory, file)}, which cannot use the "bundle" dependency strategy. Use dependencyStrategy: "install".`,
+      );
+    }
     const [imports] = parse(source, file);
     for (const specifier of imports) {
       const dependency = specifier.n && barePackage(specifier.n);
@@ -110,28 +121,25 @@ async function installedVersion(root: URL, packageName: string): Promise<string>
   throw new Error(`Could not determine the installed ${packageName} version.`);
 }
 
-async function writeFunctionPackage(
-  functionDirectory: URL,
-  root: URL,
-): Promise<void> {
+async function writeFunctionPackage(functionDirectory: URL): Promise<void> {
   const path = fileURLToPath(functionDirectory);
   const packages = await unresolvedPackages(path);
-  const unsupported = [...packages].filter((name) => name !== "sharp");
-  if (unsupported.length) {
+  if (packages.has("sharp")) {
     throw new Error(
-      `The function artifact contains unsupported external package imports: ${unsupported.join(", ")}. ` +
-        "V1 supports only the limited Sharp external.",
+      'The Function Artifact contains the native runtime dependency sharp, which cannot use the "bundle" dependency strategy. Use dependencyStrategy: "install".',
     );
   }
-
-  const dependencies: Record<string, string> = {};
-  if (packages.has("sharp"))
-    dependencies.sharp = await installedVersion(root, "sharp");
+  if (packages.size) {
+    throw new Error(
+      `The "bundle" dependency strategy left unresolved runtime package imports in the Function Artifact: ${[...packages].sort().join(", ")}. ` +
+        'Bundle these packages with Astro/Vite or use dependencyStrategy: "install".',
+    );
+  }
   const packageJson = {
     private: true,
     type: "module",
     engines: { node: ">=22.12.0" },
-    dependencies,
+    dependencies: {},
   };
   await writeFile(
     new URL("package.json", functionDirectory),
@@ -151,22 +159,13 @@ async function validateFunctionArtifact(functionDirectory: URL): Promise<void> {
       },
     );
   }
-
-  const packages = await unresolvedPackages(fileURLToPath(functionDirectory));
-  const unsupported = [...packages].filter((name) => name !== "sharp");
-  if (unsupported.length) {
-    throw new Error(
-      `Unresolved imports remain in the function artifact: ${unsupported.join(", ")}.`,
-    );
-  }
 }
 
 export async function prepareFunctionArtifact(
   functionDirectory: URL,
-  root: URL,
 ): Promise<void> {
-  await writeFunctionPackage(functionDirectory, root);
   await validateFunctionArtifact(functionDirectory);
+  await writeFunctionPackage(functionDirectory);
 }
 
 export async function hasFunctionArtifact(
@@ -298,7 +297,7 @@ export async function writeDeploymentManifest(
               runtime: "nodejs22" as const,
               format: "esm" as const,
               entrypoint: "index.handler" as const,
-              support: { sharp: "limited" as const },
+              support: { sharp: "unsupported" as const },
             },
           }
         : {}),

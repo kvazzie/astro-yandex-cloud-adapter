@@ -1,3 +1,5 @@
+import { builtinModules } from "node:module";
+
 import type { AstroAdapter, AstroConfig } from "astro";
 import type { InlineConfig } from "vite";
 
@@ -7,7 +9,7 @@ import {
   writeDeploymentManifest,
 } from "./artifacts.js";
 import { ADAPTER_NAME } from "./constants.js";
-import type { AdapterOptions } from "./types.js";
+import type { AdapterOptions, DependencyStrategy } from "./types.js";
 
 interface CompletedBuild {
   config: AstroConfig;
@@ -16,6 +18,7 @@ interface CompletedBuild {
 }
 
 export interface TargetDriver {
+  dependencyStrategy: DependencyStrategy;
   configureBuild(outDir: URL): Record<string, unknown>;
   assertRoutesSupported(onDemand: string[]): void;
   adapter(hasOnDemandRoutes: boolean): AstroAdapter;
@@ -31,18 +34,28 @@ const objectStorageFeatures: AstroAdapter["supportedAstroFeatures"] = {
   i18nDomains: "unsupported",
 };
 
-const functionsFeatures: AstroAdapter["supportedAstroFeatures"] = {
-  staticOutput: "stable",
-  hybridOutput: "stable",
-  serverOutput: "stable",
-  sharpImageService: {
-    support: "limited",
-    message:
-      "Sharp is externalized and has limited support in Yandex Cloud Functions.",
-  },
-  envGetSecret: "stable",
-  i18nDomains: "unsupported",
-};
+function functionsFeatures(
+  dependencyStrategy: DependencyStrategy,
+): AstroAdapter["supportedAstroFeatures"] {
+  return {
+    staticOutput: "stable",
+    hybridOutput: "stable",
+    serverOutput: "stable",
+    sharpImageService:
+      dependencyStrategy === "bundle"
+        ? {
+            support: "unsupported",
+            message:
+              'Sharp is a native runtime dependency and cannot use the "bundle" dependency strategy. Use dependencyStrategy: "install".',
+          }
+        : {
+            support: "limited",
+            message: "Sharp support is experimental in Yandex Cloud Functions.",
+          },
+    envGetSecret: "stable",
+    i18nDomains: "unsupported",
+  };
+}
 
 function adapter(
   hasOnDemandRoutes: boolean,
@@ -84,9 +97,16 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
   if (target !== "object-storage" && target !== "object-storage-functions") {
     throw new TypeError(`Unknown Yandex Cloud adapter target: ${String(target)}.`);
   }
+  const dependencyStrategy = options?.dependencyStrategy ?? "bundle";
+  if (dependencyStrategy !== "bundle" && dependencyStrategy !== "install") {
+    throw new TypeError(
+      `Unknown Yandex Cloud adapter dependency strategy: ${String(dependencyStrategy)}.`,
+    );
+  }
 
   if (target === "object-storage") {
     return {
+      dependencyStrategy,
       configureBuild,
       assertRoutesSupported: assertObjectStorageRoutesSupported,
       adapter: (hasOnDemandRoutes) =>
@@ -106,14 +126,16 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
     };
   }
   return {
+    dependencyStrategy,
     configureBuild,
     assertRoutesSupported: () => {},
-    adapter: (hasOnDemandRoutes) => adapter(hasOnDemandRoutes, functionsFeatures),
+    adapter: (hasOnDemandRoutes) =>
+      adapter(hasOnDemandRoutes, functionsFeatures(dependencyStrategy)),
     completeBuild: async ({ config, onDemand, prerendered }) => {
       const functionDirectory = new URL("function/", config.outDir);
       const hasFunction = await hasFunctionArtifact(functionDirectory);
       if (hasFunction) {
-        await prepareFunctionArtifact(functionDirectory, config.root);
+        await prepareFunctionArtifact(functionDirectory);
       }
       await writeDeploymentManifest(config.outDir, config, {
         target,
@@ -125,59 +147,26 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
   };
 }
 
+const builtins = new Set([
+  ...builtinModules,
+  ...builtinModules.map((name) => `node:${name}`),
+]);
+
 function supportedExternal(specifier: string): boolean {
-  return (
-    specifier === "sharp" ||
-    specifier.startsWith("node:") ||
-    [
-      "assert",
-      "buffer",
-      "child_process",
-      "cluster",
-      "console",
-      "constants",
-      "crypto",
-      "dgram",
-      "diagnostics_channel",
-      "dns",
-      "events",
-      "fs",
-      "http",
-      "http2",
-      "https",
-      "module",
-      "net",
-      "os",
-      "path",
-      "perf_hooks",
-      "process",
-      "punycode",
-      "querystring",
-      "readline",
-      "repl",
-      "stream",
-      "string_decoder",
-      "sys",
-      "timers",
-      "tls",
-      "trace_events",
-      "tty",
-      "url",
-      "util",
-      "v8",
-      "vm",
-      "wasi",
-      "worker_threads",
-      "zlib",
-    ].includes(specifier)
-  );
+  return builtins.has(specifier);
 }
 
-export function assertSupportedUserExternals(config: AstroConfig): void {
+export function assertSupportedUserExternals(
+  config: AstroConfig,
+  dependencyStrategy: DependencyStrategy,
+): void {
   const external = config.vite.ssr?.external;
   if (external === undefined) return;
+  if (dependencyStrategy === "install") return;
   if (external === true || !Array.isArray(external)) {
-    throw new Error("V1 does not support custom Vite SSR package externals.");
+    throw new Error(
+      'The "bundle" dependency strategy does not support custom Vite SSR package externals. Remove vite.ssr.external or use dependencyStrategy: "install".',
+    );
   }
   const unsupported = external.filter(
     (entry): entry is string =>
@@ -185,7 +174,8 @@ export function assertSupportedUserExternals(config: AstroConfig): void {
   );
   if (unsupported.length) {
     throw new Error(
-      `V1 does not support these Vite SSR package externals: ${unsupported.map(String).join(", ")}.`,
+      `The "bundle" dependency strategy cannot externalize runtime packages: ${unsupported.map(String).join(", ")}. ` +
+        'Remove them from vite.ssr.external or use dependencyStrategy: "install".',
     );
   }
 }
@@ -198,7 +188,6 @@ export function serverViteConfig(vite: InlineConfig): InlineConfig {
   return {
     ssr: {
       ...vite.ssr,
-      external: ["sharp"],
       noExternal: true,
     },
     build: {

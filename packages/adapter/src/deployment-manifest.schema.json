@@ -119,7 +119,7 @@
           "type": "object",
           "required": ["sharp"],
           "properties": {
-            "sharp": { "const": "limited" }
+            "sharp": { "enum": ["unsupported", "limited"] }
           }
         }
       }

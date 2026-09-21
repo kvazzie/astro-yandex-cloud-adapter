@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { build } from "astro";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import type { YandexCloudHttpResult } from "../../packages/adapter/src/runtime.js";
 import type {
@@ -205,7 +205,7 @@ describe.sequential("Astro artifact builds", () => {
           runtime: "nodejs22",
           format: "esm",
           entrypoint: "index.handler",
-          support: { sharp: "limited" },
+          support: { sharp: "unsupported" },
         },
       },
     });
@@ -284,7 +284,16 @@ describe.sequential("Astro artifact builds", () => {
       body: "payload",
       query: ["one", "two"],
       requestId: "integration-request",
+      dependencyValue: 64,
+      builtinValue:
+        "1e6ed65d77d6364eeaed5a745ba5c4985ae2b700dd85d7cf7f027bdf294a33fc",
     });
+
+    expect(
+      JSON.parse(
+        await readFile(join(fixtures, "mixed/dist/function/package.json"), "utf8"),
+      ),
+    ).toMatchObject({ dependencies: {} });
 
     const page = await generatedHandler.handler(
       directHttpEvent({
@@ -702,7 +711,7 @@ describe.sequential("Astro artifact builds", () => {
       buildOutput: "server",
     });
     expect(deployment.routes.onDemand).toEqual(
-      expect.arrayContaining([{ pattern: "/" }, { pattern: "/_image" }]),
+      expect.arrayContaining([{ pattern: "/" }]),
     );
 
     const entrypoint = await generatedFixtureHandler("server", "server=1");
@@ -712,39 +721,37 @@ describe.sequential("Astro artifact builds", () => {
     );
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain("<h1>Server output</h1>");
+  });
 
-    const sourceImage = new Response(
-      '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="red" /></svg>',
-      { headers: { "content-type": "image/svg+xml" } },
+  it("rejects package externals under the bundle dependency strategy", async () => {
+    await expect(
+      build({
+        root: `${join(fixtures, "rejected-external")}/`,
+        logLevel: "silent",
+      }),
+    ).rejects.toThrow(
+      /bundle.*cannot externalize runtime packages: nanoid.*dependencyStrategy: "install"/,
     );
-    Object.defineProperty(sourceImage, "url", {
-      value: "https://images.example/source.svg",
-    });
-    const remoteImage = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(sourceImage);
-    let image: YandexCloudHttpResult;
-    try {
-      image = await entrypoint.handler(
-        directHttpEvent({
-          path: "/_image",
-          queryStringParameters: {
-            href: "https://images.example/source.svg",
-            w: "16",
-            f: "svg",
-          },
-        }),
-        invocationContext(),
-      );
-    } finally {
-      remoteImage.mockRestore();
-    }
-    expect(image).toMatchObject({
-      statusCode: 200,
-      isBase64Encoded: false,
-      headers: { "content-type": "image/svg+xml" },
-    });
-    expect(image.body).toContain('<rect width="32" height="32" fill="red"');
+  });
+
+  it("rejects unresolved runtime package imports left in a bundle artifact", async () => {
+    await expect(
+      build({
+        root: `${join(fixtures, "rejected-unresolved")}/`,
+        logLevel: "silent",
+      }),
+    ).rejects.toThrow(
+      /bundle.*unresolved runtime package imports.*missing-runtime-package.*dependencyStrategy: "install"/,
+    );
+  });
+
+  it("rejects Sharp as a native bundle dependency", async () => {
+    await expect(
+      build({
+        root: `${join(fixtures, "rejected-native")}/`,
+        logLevel: "silent",
+      }),
+    ).rejects.toThrow(/native runtime dependency.*dependencyStrategy: "install"/);
   });
 
   it("rejects an Object Storage build containing an on-demand route", async () => {

@@ -1,8 +1,8 @@
 import yandexCloud from "@astro-yandex-cloud/adapter";
-import { defineConfig } from "astro/config";
+import { defineConfig, passthroughImageService } from "astro/config";
 
 export default defineConfig({
   adapter: yandexCloud({ target: "object-storage-functions" }),
-  image: { domains: ["images.example"] },
+  image: { service: passthroughImageService() },
   output: "server",
 });
