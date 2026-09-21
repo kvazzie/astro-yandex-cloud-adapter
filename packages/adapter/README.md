@@ -43,6 +43,17 @@ The incoming `Host` header sets the request origin with the HTTPS protocol. If `
 the handler uses the origin from Astro's `site` configuration. `X-Forwarded-Host` and
 `X-Forwarded-Proto` do not change the origin.
 
+### Astro Actions
+
+Use API Gateway payload format `0.1` for Astro Action RPC calls and form actions. Action requests
+run application middleware, can read `Astro.locals`, preserve request cookies, return multiple
+`Set-Cookie` headers, and redirect callers.
+
+Direct HTTPS invocation supports stateless form actions that do not require an incoming `Cookie`
+or `Authorization` header. This is the only documented direct-invocation Action flow. Use API
+Gateway payload format `0.1` for authenticated actions and any other action that needs those
+request headers.
+
 Direct Cloud Functions HTTPS invocation strips incoming `Cookie` and `Authorization` headers
 before the handler receives the event. Use API Gateway when the application needs those request
 headers. Use `process.env` for secrets.
