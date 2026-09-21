@@ -11,11 +11,32 @@ function invalidManifest(detail: string): never {
   throw new TypeError(`Invalid Deployment Manifest: ${detail}`);
 }
 
+const manifestUrlOrigin = "https://manifest.invalid";
+
+function isCanonicalUrlPath(path: string): boolean {
+  try {
+    decodeURI(path);
+    const parsed = new URL(path, manifestUrlOrigin);
+    return (
+      parsed.origin === manifestUrlOrigin &&
+      !parsed.search &&
+      !parsed.hash &&
+      !path.includes("//") &&
+      parsed.pathname === path
+    );
+  } catch {
+    return false;
+  }
+}
+
 function belongsToBase(base: string, path: string): boolean {
   return base === "/" || path === base || path.startsWith(`${base}/`);
 }
 
 function validatePlacement(manifest: DeploymentManifestV1): void {
+  if (!isCanonicalUrlPath(manifest.base)) {
+    invalidManifest(`base ${manifest.base} must be a canonical URL path.`);
+  }
   const keyPrefix = manifest.base === "/" ? "" : `${manifest.base.slice(1)}/`;
   const clientRoutes = new Set<string>();
   const clientPaths = new Set<string>();
@@ -31,6 +52,11 @@ function validatePlacement(manifest: DeploymentManifestV1): void {
         `Client Artifact file ${file.path} must use Object Storage key ${expectedKey} for base ${manifest.base}.`,
       );
     }
+    if (!isCanonicalUrlPath(file.url)) {
+      invalidManifest(
+        `Client Artifact URL ${file.url} must be a canonical URL path.`,
+      );
+    }
     if (!belongsToBase(manifest.base, file.url)) {
       invalidManifest(
         `Client Artifact URL ${file.url} must be placed under base ${manifest.base}.`,
@@ -40,6 +66,11 @@ function validatePlacement(manifest: DeploymentManifestV1): void {
   }
 
   for (const route of manifest.routes.prerendered) {
+    if (!isCanonicalUrlPath(route.url)) {
+      invalidManifest(
+        `Prerendered Route URL ${route.url} must be a canonical URL path.`,
+      );
+    }
     if (!belongsToBase(manifest.base, route.url)) {
       invalidManifest(
         `Prerendered Route URL ${route.url} must be placed under base ${manifest.base}.`,
@@ -53,6 +84,11 @@ function validatePlacement(manifest: DeploymentManifestV1): void {
   }
 
   for (const route of manifest.routes.onDemand) {
+    if (!isCanonicalUrlPath(route.pattern)) {
+      invalidManifest(
+        `On-demand Route pattern ${route.pattern} must be a canonical URL path.`,
+      );
+    }
     if (!belongsToBase(manifest.base, route.pattern)) {
       invalidManifest(
         `On-demand Route pattern ${route.pattern} must be placed under base ${manifest.base}.`,

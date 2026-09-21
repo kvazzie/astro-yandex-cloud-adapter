@@ -37,7 +37,7 @@
     "buildOutput": { "enum": ["static", "server"] },
     "base": {
       "type": "string",
-      "pattern": "^/(?:[^/]+(?:/[^/]+)*)?$",
+      "pattern": "^/(?:|(?!\\.{1,2}(?:/|$))[^/?#]+(?:/(?!\\.{1,2}(?:/|$))[^/?#]+)*)$",
       "description": "Canonical Astro base. Every Client Artifact URL, route requirement, and Object Storage key is placed under this base."
     },
     "artifacts": {
@@ -73,7 +73,7 @@
     },
     "urlPath": {
       "type": "string",
-      "pattern": "^/"
+      "pattern": "^/(?:|(?!\\.{1,2}(?:/|$))[^/?#]+(?:/(?!\\.{1,2}(?:/|$))[^/?#]+)*/?)$"
     },
     "objectKey": {
       "type": "string",

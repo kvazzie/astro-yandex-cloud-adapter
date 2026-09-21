@@ -154,4 +154,27 @@ describe("Deployment Manifest consumers", () => {
       /Invalid Deployment Manifest.*Prerendered Route/i,
     );
   });
+
+  it.each([
+    "/docs/../index.html",
+    "/docs/%2e%2e/index.html",
+    "/docs/index.html?download=1",
+    "/docs/index.html#file",
+  ])("rejects the non-canonical URL path %s", (url) => {
+    const manifest = staticManifest();
+    manifest.base = "/docs";
+    manifest.artifacts.client.files[0] = {
+      path: "index.html",
+      url,
+      objectKey: "docs/index.html",
+    };
+    manifest.routes.prerendered[0] = {
+      url,
+      objectKey: "docs/index.html",
+    };
+
+    expect(() => parseDeploymentManifest(manifest)).toThrow(
+      /Invalid Deployment Manifest/,
+    );
+  });
 });
