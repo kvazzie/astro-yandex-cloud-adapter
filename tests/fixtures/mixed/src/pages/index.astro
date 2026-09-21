@@ -1,5 +1,11 @@
 ---
+import { Image } from "astro:assets";
+import logo from "../assets/logo.svg";
+
 export const prerender = true;
 ---
 
-<!doctype html><title>Mixed fixture</title><h1>Prerendered home</h1>
+<!doctype html>
+<title>Mixed fixture</title>
+<Image src={logo} alt="Yandex Cloud" />
+<h1>Prerendered home</h1>

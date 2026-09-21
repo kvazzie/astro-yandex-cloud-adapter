@@ -45,7 +45,22 @@ export interface YandexCloudRuntime {
   context: YandexCloudInvocationContext;
 }
 
-export interface YandexCloudManifestV1 {
+export interface ClientArtifactFile {
+  path: string;
+  url: string;
+  objectKey: string;
+}
+
+export interface PrerenderedRouteRequirement {
+  url: string;
+  objectKey: string;
+}
+
+export interface OnDemandRouteRequirement {
+  pattern: string;
+}
+
+export interface DeploymentManifestV1 {
   schemaVersion: 1;
   adapter: {
     name: "@astro-yandex-cloud/adapter";
@@ -56,20 +71,26 @@ export interface YandexCloudManifestV1 {
   };
   target: Target;
   buildOutput: "static" | "server";
+  base: string;
   artifacts: {
-    client: string;
-    function?: string;
-  };
-  function?: {
-    runtime: "nodejs22";
-    format: "esm";
-    entrypoint: "index.handler";
-    support: {
-      sharp: "limited";
+    client: {
+      path: string;
+      files: ClientArtifactFile[];
+    };
+    function?: {
+      path: string;
+      runtime: "nodejs22";
+      format: "esm";
+      entrypoint: "index.handler";
+      support: {
+        sharp: "limited";
+      };
     };
   };
   routes: {
-    prerendered: string[];
-    onDemand: string[];
+    prerendered: PrerenderedRouteRequirement[];
+    onDemand: OnDemandRouteRequirement[];
   };
 }
+
+export type YandexCloudManifestV1 = DeploymentManifestV1;

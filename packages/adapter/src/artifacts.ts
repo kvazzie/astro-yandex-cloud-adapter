@@ -7,7 +7,13 @@ import type { AstroConfig } from "astro";
 import { init, parse } from "es-module-lexer";
 
 import { ADAPTER_NAME, ADAPTER_VERSION } from "./constants.js";
-import type { Target, YandexCloudManifestV1 } from "./types.js";
+import { parseDeploymentManifest } from "./deployment-manifest.js";
+import type {
+  ClientArtifactFile,
+  PrerenderedRouteRequirement,
+  Target,
+  YandexCloudManifestV1,
+} from "./types.js";
 
 const allowedBuiltins = new Set([
   ...builtinModules,
@@ -169,6 +175,80 @@ export function artifactPath(outDir: URL, artifact: URL): string {
     .join("/");
 }
 
+function normalizedBase(base: string): string {
+  const path = `/${base.replace(/^\/+|\/+$/g, "")}`;
+  return path === "/" ? path : path.replace(/\/+$/, "");
+}
+
+function withBase(base: string, path: string): string {
+  const suffix = `/${path.replace(/^\/+/, "")}`;
+  if (base === "/") return suffix;
+  return suffix === "/" ? `${base}/` : `${base}${suffix}`;
+}
+
+function objectKey(base: string, path: string): string {
+  const prefix = base === "/" ? "" : base.slice(1);
+  return [prefix, path].filter(Boolean).join("/");
+}
+
+function encodedPath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+async function relativeFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = await Promise.all(
+    entries.map(async (entry) => {
+      const path = resolve(directory, entry.name);
+      return entry.isDirectory()
+        ? (await relativeFiles(path)).map((child) => `${entry.name}/${child}`)
+        : [entry.name];
+    }),
+  );
+  return files.flat().sort();
+}
+
+function prerenderedFile(route: string, clientFiles: Set<string>): string {
+  if (route === "/") return "index.html";
+  const path = route.replace(/^\/+|\/+$/g, "");
+  const candidates = route.endsWith("/")
+    ? [`${path}/index.html`, `${path}.html`]
+    : [`${path}.html`, `${path}/index.html`];
+  const file = candidates.find((candidate) => clientFiles.has(candidate));
+  if (file) return file;
+  throw new Error(
+    `Could not match the Prerendered Route ${route} to a Client Artifact file.`,
+  );
+}
+
+async function describeClientArtifact(
+  clientDirectory: URL,
+  base: string,
+  prerendered: string[],
+): Promise<{
+  files: ClientArtifactFile[];
+  routes: PrerenderedRouteRequirement[];
+}> {
+  const paths = await relativeFiles(fileURLToPath(clientDirectory));
+  const pathSet = new Set(paths);
+  const uniqueRoutes = [...new Set(prerendered)].sort();
+  const routeFileEntries = uniqueRoutes.map(
+    (url) => [prerenderedFile(url, pathSet), withBase(base, url)] as const,
+  );
+  const routeUrlByFile = new Map(routeFileEntries);
+  return {
+    files: paths.map((path): ClientArtifactFile => ({
+      path,
+      url: routeUrlByFile.get(path) ?? withBase(base, encodedPath(path)),
+      objectKey: objectKey(base, path),
+    })),
+    routes: routeFileEntries.map(([path, url]) => ({
+      url,
+      objectKey: objectKey(base, path),
+    })),
+  };
+}
+
 export async function writeDeploymentManifest(
   outDir: URL,
   config: AstroConfig,
@@ -181,33 +261,44 @@ export async function writeDeploymentManifest(
 ): Promise<YandexCloudManifestV1> {
   const client = new URL("client/", outDir);
   const functionDirectory = new URL("function/", outDir);
+  const base = normalizedBase(config.base);
+  const clientArtifact = await describeClientArtifact(
+    client,
+    base,
+    input.prerendered,
+  );
   const manifest: YandexCloudManifestV1 = {
     schemaVersion: 1,
     adapter: { name: ADAPTER_NAME, version: ADAPTER_VERSION },
     astro: { version: await readAstroVersion(config.root) },
     target: input.target,
     buildOutput: input.hasFunction ? "server" : "static",
+    base,
     artifacts: {
-      client: artifactPath(outDir, client),
+      client: {
+        path: artifactPath(outDir, client),
+        files: clientArtifact.files,
+      },
       ...(input.hasFunction
-        ? { function: artifactPath(outDir, functionDirectory) }
+        ? {
+            function: {
+              path: artifactPath(outDir, functionDirectory),
+              runtime: "nodejs22" as const,
+              format: "esm" as const,
+              entrypoint: "index.handler" as const,
+              support: { sharp: "limited" as const },
+            },
+          }
         : {}),
     },
-    ...(input.hasFunction
-      ? {
-          function: {
-            runtime: "nodejs22" as const,
-            format: "esm" as const,
-            entrypoint: "index.handler" as const,
-            support: { sharp: "limited" as const },
-          },
-        }
-      : {}),
     routes: {
-      prerendered: [...new Set(input.prerendered)].sort(),
-      onDemand: [...new Set(input.onDemand)].sort(),
+      prerendered: clientArtifact.routes,
+      onDemand: [...new Set(input.onDemand)]
+        .sort()
+        .map((pattern) => ({ pattern: withBase(base, pattern) })),
     },
   };
+  parseDeploymentManifest(manifest);
   await mkdir(fileURLToPath(outDir), { recursive: true });
   await writeFile(
     new URL("yandex-cloud.json", outDir),

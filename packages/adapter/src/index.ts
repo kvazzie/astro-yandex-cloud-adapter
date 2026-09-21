@@ -13,8 +13,13 @@ import {
 import { runtimeConfigPlugin } from "./runtime-config.js";
 import type { AdapterOptions } from "./types.js";
 
+export { parseDeploymentManifest } from "./deployment-manifest.js";
 export type {
   AdapterOptions,
+  ClientArtifactFile,
+  DeploymentManifestV1,
+  OnDemandRouteRequirement,
+  PrerenderedRouteRequirement,
   Target,
   YandexCloudManifestV1,
   YandexCloudRuntime,
