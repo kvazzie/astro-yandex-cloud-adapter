@@ -124,9 +124,7 @@ describe.sequential("Astro artifact builds", () => {
       `${pathToFileURL(join(isolated, "index.js")).href}?isolated=1`
     )) as GeneratedHandler;
 
-    const isolatedActions = await mkdtemp(
-      join(tmpdir(), "astro-yandex-actions-"),
-    );
+    const isolatedActions = await mkdtemp(join(tmpdir(), "astro-yandex-actions-"));
     await cp(join(fixtures, "actions/dist/function"), isolatedActions, {
       recursive: true,
     });
