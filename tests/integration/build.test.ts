@@ -23,6 +23,7 @@ interface GeneratedHandler {
 }
 
 let generatedHandler: GeneratedHandler;
+let actionsGeneratedHandler: GeneratedHandler;
 
 async function generatedFixtureHandler(
   fixture: string,
@@ -112,6 +113,7 @@ describe.sequential("Astro artifact builds", () => {
       "mixed",
       "server",
       "server-island",
+      "actions",
     ]) {
       await build({ root: `${join(fixtures, fixture)}/`, logLevel: "silent" });
     }
@@ -120,6 +122,16 @@ describe.sequential("Astro artifact builds", () => {
     await cp(join(fixtures, "mixed/dist/function"), isolated, { recursive: true });
     generatedHandler = (await import(
       `${pathToFileURL(join(isolated, "index.js")).href}?isolated=1`
+    )) as GeneratedHandler;
+
+    const isolatedActions = await mkdtemp(
+      join(tmpdir(), "astro-yandex-actions-"),
+    );
+    await cp(join(fixtures, "actions/dist/function"), isolatedActions, {
+      recursive: true,
+    });
+    actionsGeneratedHandler = (await import(
+      `${pathToFileURL(join(isolatedActions, "index.js")).href}?isolated=actions`
     )) as GeneratedHandler;
   });
 
@@ -254,6 +266,45 @@ describe.sequential("Astro artifact builds", () => {
       invocationContext(),
     );
     expect(error.statusCode).toBe(500);
+  });
+
+  it("executes a valid Action through API Gateway 0.1", async () => {
+    const response = await actionsGeneratedHandler.handler(
+      apiGatewayV01Event({
+        httpMethod: "POST",
+        url: "/_actions/greet",
+        path: "/_actions/{path}",
+        pathParams: { path: "greet" },
+        headers: {
+          host: "actions.example",
+          "content-type": "application/json",
+          cookie: "session=session-123",
+        },
+        body: JSON.stringify({ name: "Ada" }),
+      }),
+      invocationContext(),
+    );
+
+    expect(response).toMatchObject({
+      statusCode: 200,
+      headers: {
+        "content-type": "application/json+devalue",
+        "x-actions-middleware": "active",
+      },
+      isBase64Encoded: false,
+    });
+    expect(JSON.parse(response.body)).toEqual([
+      { message: 1, session: 2, middleware: 3 },
+      "Hello, Ada",
+      "session-123",
+      "active",
+    ]);
+    expect(response.multiValueHeaders["set-cookie"]).toEqual(
+      expect.arrayContaining([
+        "action-first=one; Path=/; HttpOnly",
+        "action-second=two; Path=/; SameSite=Lax",
+      ]),
+    );
   });
 
   it("discovers and executes an integration-injected route", async () => {
