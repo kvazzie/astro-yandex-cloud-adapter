@@ -38,7 +38,7 @@ async function javascriptFiles(directory: string): Promise<string[]> {
   const nativeModule = files.find((file) => file.name.endsWith(".node"));
   if (nativeModule) {
     throw new Error(
-      `The Function Artifact contains the native runtime module ${nativeModule.name}, which cannot use the "bundle" dependency strategy. Use dependencyStrategy: "install".`,
+      `The Function Artifact contains the native runtime module ${nativeModule.name}, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", whose packaging is not available yet.`,
     );
   }
   const commonJs = files.find((file) => file.name.endsWith(".cjs"));
@@ -80,16 +80,55 @@ function isSyntaxNode(value: unknown): value is SyntaxNode {
   );
 }
 
-function visitSyntax(node: SyntaxNode, visitor: (node: SyntaxNode) => void): void {
-  visitor(node);
+function visitSyntax(
+  node: SyntaxNode,
+  visitor: (node: SyntaxNode, ancestors: SyntaxNode[]) => void,
+  ancestors: SyntaxNode[] = [],
+): void {
+  visitor(node, ancestors);
+  const nextAncestors = [...ancestors, node];
   for (const value of Object.values(node)) {
-    if (isSyntaxNode(value)) visitSyntax(value, visitor);
+    if (isSyntaxNode(value)) visitSyntax(value, visitor, nextAncestors);
     else if (Array.isArray(value)) {
       for (const child of value) {
-        if (isSyntaxNode(child)) visitSyntax(child, visitor);
+        if (isSyntaxNode(child)) visitSyntax(child, visitor, nextAncestors);
       }
     }
   }
+}
+
+function isIdentifier(value: unknown, name: string): boolean {
+  return isSyntaxNode(value) && value.type === "Identifier" && value.name === name;
+}
+
+function isAstroLoggerImport(
+  source: unknown,
+  file: string,
+  ancestors: SyntaxNode[],
+): boolean {
+  if (!/(^|[\\/])chunks[\\/]render-[^\\/]+\.js$/.test(file)) return false;
+  if (
+    !ancestors.some(
+      (ancestor) =>
+        ancestor.type === "FunctionDeclaration" &&
+        isIdentifier(ancestor.id, "loadLoggerDestination"),
+    )
+  ) {
+    return false;
+  }
+  if (isIdentifier(source, "entrypoint")) return true;
+  if (!isSyntaxNode(source) || source.type !== "CallExpression") return false;
+  if (!isIdentifier(source.callee, "normalizeEntrypoint")) return false;
+  const arguments_ = source.arguments;
+  const entrypoint: unknown = Array.isArray(arguments_)
+    ? arguments_[0]
+    : undefined;
+  return (
+    isSyntaxNode(entrypoint) &&
+    entrypoint.type === "MemberExpression" &&
+    isIdentifier(entrypoint.object, "loggerConfig") &&
+    isIdentifier(entrypoint.property, "entrypoint")
+  );
 }
 
 function staticSpecifier(value: unknown): string | undefined {
@@ -120,7 +159,7 @@ function staticSpecifier(value: unknown): string | undefined {
 function dependencySpecifier(specifier: string, file: string): string | undefined {
   if (specifier.endsWith(".node")) {
     throw new Error(
-      `The Function Artifact contains the native runtime module ${specifier} referenced by ${file}, which cannot use the "bundle" dependency strategy. Use dependencyStrategy: "install".`,
+      `The Function Artifact contains the native runtime module ${specifier} referenced by ${file}, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", whose packaging is not available yet.`,
     );
   }
   return barePackage(specifier);
@@ -140,13 +179,13 @@ function runtimeSpecifiers(source: string, file: string): Set<string> {
   };
   const rejectDynamic = (): never => {
     throw new Error(
-      `The Function Artifact contains unresolved dynamic or native runtime dependency resolution in ${file}, which cannot use the "bundle" dependency strategy. Bundle a fixed package import or use dependencyStrategy: "install".`,
+      `The Function Artifact contains unresolved dynamic or native runtime dependency resolution in ${file}, which cannot use the "bundle" dependency strategy. Bundle a fixed package import; dependencyStrategy: "install" packaging is not available yet.`,
     );
   };
   const requiredSpecifier = (value: unknown): string =>
     staticSpecifier(value) ?? rejectDynamic();
 
-  visitSyntax(program, (node) => {
+  visitSyntax(program, (node, ancestors) => {
     if (
       node.type === "ImportDeclaration" ||
       node.type === "ExportNamedDeclaration" ||
@@ -157,11 +196,12 @@ function runtimeSpecifiers(source: string, file: string): Set<string> {
       return;
     }
     if (node.type === "ImportExpression") {
-      // Astro 7.1 retains its runtime-configurable logger import even when the
-      // emitted manifest cannot reach it, so only classifiable imports belong
-      // in the unresolved-package check.
       const specifier = staticSpecifier(node.source);
-      if (specifier) add(specifier);
+      if (specifier) {
+        add(specifier);
+      } else if (!isAstroLoggerImport(node.source, file, ancestors)) {
+        rejectDynamic();
+      }
       return;
     }
     if (node.type !== "CallExpression") return;
@@ -226,13 +266,13 @@ async function writeFunctionPackage(functionDirectory: URL): Promise<void> {
   const packages = await unresolvedPackages(path);
   if (packages.has("sharp")) {
     throw new Error(
-      'The Function Artifact contains the native runtime dependency sharp, which cannot use the "bundle" dependency strategy. Use dependencyStrategy: "install".',
+      'The Function Artifact contains the native runtime dependency sharp, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", whose packaging is not available yet.',
     );
   }
   if (packages.size) {
     throw new Error(
       `The "bundle" dependency strategy left unresolved runtime package imports in the Function Artifact: ${[...packages].sort().join(", ")}. ` +
-        'Bundle these packages with Astro/Vite or use dependencyStrategy: "install".',
+        'Bundle these packages with Astro/Vite; dependencyStrategy: "install" packaging is not available yet.',
     );
   }
   const packageJson = {

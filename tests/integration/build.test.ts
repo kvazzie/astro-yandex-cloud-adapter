@@ -756,6 +756,17 @@ describe.sequential("Astro artifact builds", () => {
     );
   });
 
+  it("rejects computed runtime imports left in a bundle artifact", async () => {
+    await expect(
+      build({
+        root: `${join(fixtures, "rejected-dynamic-import")}/`,
+        logLevel: "silent",
+      }),
+    ).rejects.toThrow(
+      /unresolved dynamic or native runtime dependency resolution.*Bundle a fixed package import.*dependencyStrategy: "install"/,
+    );
+  });
+
   it("rejects Sharp as a native bundle dependency", async () => {
     await expect(
       build({

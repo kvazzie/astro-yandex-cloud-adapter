@@ -145,7 +145,7 @@ function assertBundleUserExternals(config: AstroConfig): void {
   if (external === undefined) return;
   if (external === true || !Array.isArray(external)) {
     throw new Error(
-      'The "bundle" dependency strategy does not support custom Vite SSR package externals. Remove vite.ssr.external or use dependencyStrategy: "install".',
+      'The "bundle" dependency strategy does not support custom Vite SSR package externals. Remove vite.ssr.external; dependencyStrategy: "install" packaging is not available yet.',
     );
   }
   const unsupported = external.filter(
@@ -154,7 +154,7 @@ function assertBundleUserExternals(config: AstroConfig): void {
   if (unsupported.length) {
     throw new Error(
       `The "bundle" dependency strategy cannot externalize runtime packages: ${unsupported.map(String).join(", ")}. ` +
-        'Remove them from vite.ssr.external or use dependencyStrategy: "install".',
+        'Remove them from vite.ssr.external; dependencyStrategy: "install" packaging is not available yet.',
     );
   }
 }
@@ -201,7 +201,7 @@ function createDependencyStrategyPolicy(
       sharpImageService: {
         support: "unsupported",
         message:
-          'Sharp is a native runtime dependency and cannot use the "bundle" dependency strategy. Use dependencyStrategy: "install".',
+          'Sharp is a native runtime dependency and cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", whose packaging is not available yet.',
       },
     };
   }
