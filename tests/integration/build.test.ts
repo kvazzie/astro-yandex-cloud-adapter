@@ -305,6 +305,37 @@ describe.sequential("Astro artifact builds", () => {
     );
   });
 
+  it("returns Astro's Action validation result through API Gateway 0.1", async () => {
+    const response = await actionsGeneratedHandler.handler(
+      apiGatewayV01Event({
+        httpMethod: "POST",
+        url: "/_actions/greet",
+        path: "/_actions/{path}",
+        pathParams: { path: "greet" },
+        headers: {
+          host: "actions.example",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ name: "Al" }),
+      }),
+      invocationContext(),
+    );
+
+    expect(response).toMatchObject({
+      statusCode: 400,
+      headers: {
+        "content-type": "application/json",
+        "x-actions-middleware": "active",
+      },
+      isBase64Encoded: false,
+    });
+    expect(JSON.parse(response.body)).toMatchObject({
+      type: "AstroActionInputError",
+      issues: [{ code: "too_small", path: ["name"], minimum: 3 }],
+      fields: { name: [expect.any(String)] },
+    });
+  });
+
   it("discovers and executes an integration-injected route", async () => {
     const deployment = await manifest("mixed");
     expect(deployment.routes.onDemand).toEqual(

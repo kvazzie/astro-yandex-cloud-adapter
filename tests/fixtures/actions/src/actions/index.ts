@@ -3,7 +3,7 @@ import { z } from "astro/zod";
 
 export const server = {
   greet: defineAction({
-    input: z.object({ name: z.string().min(1) }),
+    input: z.object({ name: z.string().min(3) }),
     handler: async ({ name }, context) => {
       context.cookies.set("action-first", "one", {
         httpOnly: true,
