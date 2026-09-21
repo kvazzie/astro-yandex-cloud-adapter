@@ -157,7 +157,11 @@ function runtimeSpecifiers(source: string, file: string): Set<string> {
       return;
     }
     if (node.type === "ImportExpression") {
-      add(requiredSpecifier(node.source));
+      // Astro 7.1 retains its runtime-configurable logger import even when the
+      // emitted manifest cannot reach it, so only classifiable imports belong
+      // in the unresolved-package check.
+      const specifier = staticSpecifier(node.source);
+      if (specifier) add(specifier);
       return;
     }
     if (node.type !== "CallExpression") return;
