@@ -741,7 +741,18 @@ describe.sequential("Astro artifact builds", () => {
         logLevel: "silent",
       }),
     ).rejects.toThrow(
-      /bundle.*unresolved runtime package imports.*missing-runtime-package.*dependencyStrategy: "install"/,
+      /bundle.*unresolved runtime package imports in the Function Artifact: missing-runtime-package\. Bundle.*dependencyStrategy: "install"/,
+    );
+  });
+
+  it("rejects dynamic runtime package resolution left in a bundle artifact", async () => {
+    await expect(
+      build({
+        root: `${join(fixtures, "rejected-dynamic")}/`,
+        logLevel: "silent",
+      }),
+    ).rejects.toThrow(
+      /unresolved dynamic or native runtime dependency resolution.*Bundle a fixed package import.*dependencyStrategy: "install"/,
     );
   });
 

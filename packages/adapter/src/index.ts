@@ -5,11 +5,7 @@ import type {
 } from "astro";
 
 import { ADAPTER_NAME } from "./constants.js";
-import {
-  assertSupportedUserExternals,
-  createDriver,
-  serverViteConfig,
-} from "./driver.js";
+import { createDriver } from "./driver.js";
 import { runtimeConfigPlugin } from "./runtime-config.js";
 import type { AdapterOptions } from "./types.js";
 
@@ -62,7 +58,7 @@ export default function yandexCloud(options?: AdapterOptions): AstroIntegration 
     name: ADAPTER_NAME,
     hooks: {
       "astro:config:setup": ({ config: initialConfig, updateConfig }) => {
-        assertSupportedUserExternals(initialConfig, driver.dependencyStrategy);
+        driver.assertUserExternals(initialConfig);
         updateConfig({
           build: driver.configureBuild(initialConfig.outDir),
           vite: { plugins: [runtimeConfigPlugin(initialConfig.site)] },
@@ -90,12 +86,7 @@ export default function yandexCloud(options?: AdapterOptions): AstroIntegration 
         /** Applies Function Artifact bundling only to Astro's server build. */
         ({ target: buildTarget, vite, updateConfig }) => {
           if (buildTarget !== "server") return;
-          if (driver.dependencyStrategy === "install") {
-            throw new Error(
-              'The "install" dependency strategy is not available yet. Use "bundle" for JavaScript dependencies.',
-            );
-          }
-          updateConfig(serverViteConfig(vite));
+          updateConfig(driver.configureServerBuild(vite));
         },
       "astro:build:done": async ({ pages }) => {
         const onDemand = routes

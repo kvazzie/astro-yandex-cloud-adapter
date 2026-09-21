@@ -8,17 +8,13 @@ export default defineConfig({
   vite: {
     plugins: [
       {
-        name: "fixture-unresolved-runtime-import",
+        name: "fixture-dynamic-runtime-import",
         generateBundle() {
           this.emitFile({
             type: "asset",
-            fileName: "unresolved-runtime.js",
-            source: `const example = 'require("false-positive-package")';
-const extension = "addon.node";
-// require("comment-package")
-import "missing-runtime-package";
-void example;
-void extension;
+            fileName: "dynamic-runtime.js",
+            source: `const packageName = "missing-runtime-package";
+require(packageName);
 `,
           });
         },

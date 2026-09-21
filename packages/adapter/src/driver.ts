@@ -1,4 +1,4 @@
-import { builtinModules } from "node:module";
+import { isBuiltin } from "node:module";
 
 import type { AstroAdapter, AstroConfig } from "astro";
 import type { InlineConfig } from "vite";
@@ -18,7 +18,8 @@ interface CompletedBuild {
 }
 
 export interface TargetDriver {
-  dependencyStrategy: DependencyStrategy;
+  assertUserExternals: (config: AstroConfig) => void;
+  configureServerBuild: (vite: InlineConfig) => InlineConfig;
   configureBuild(outDir: URL): Record<string, unknown>;
   assertRoutesSupported(onDemand: string[]): void;
   adapter(hasOnDemandRoutes: boolean): AstroAdapter;
@@ -35,23 +36,13 @@ const objectStorageFeatures: AstroAdapter["supportedAstroFeatures"] = {
 };
 
 function functionsFeatures(
-  dependencyStrategy: DependencyStrategy,
+  sharpImageService: AstroAdapter["supportedAstroFeatures"]["sharpImageService"],
 ): AstroAdapter["supportedAstroFeatures"] {
   return {
     staticOutput: "stable",
     hybridOutput: "stable",
     serverOutput: "stable",
-    sharpImageService:
-      dependencyStrategy === "bundle"
-        ? {
-            support: "unsupported",
-            message:
-              'Sharp is a native runtime dependency and cannot use the "bundle" dependency strategy. Use dependencyStrategy: "install".',
-          }
-        : {
-            support: "limited",
-            message: "Sharp support is experimental in Yandex Cloud Functions.",
-          },
+    sharpImageService,
     envGetSecret: "stable",
     i18nDomains: "unsupported",
   };
@@ -97,16 +88,15 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
   if (target !== "object-storage" && target !== "object-storage-functions") {
     throw new TypeError(`Unknown Yandex Cloud adapter target: ${String(target)}.`);
   }
-  const dependencyStrategy = options?.dependencyStrategy ?? "bundle";
-  if (dependencyStrategy !== "bundle" && dependencyStrategy !== "install") {
-    throw new TypeError(
-      `Unknown Yandex Cloud adapter dependency strategy: ${String(dependencyStrategy)}.`,
-    );
-  }
+  const dependencies = createDependencyStrategyPolicy(options?.dependencyStrategy);
+  const dependencyConfiguration = {
+    assertUserExternals: dependencies.assertUserExternals,
+    configureServerBuild: dependencies.configureServerBuild,
+  };
 
   if (target === "object-storage") {
     return {
-      dependencyStrategy,
+      ...dependencyConfiguration,
       configureBuild,
       assertRoutesSupported: assertObjectStorageRoutesSupported,
       adapter: (hasOnDemandRoutes) =>
@@ -126,11 +116,14 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
     };
   }
   return {
-    dependencyStrategy,
+    ...dependencyConfiguration,
     configureBuild,
     assertRoutesSupported: () => {},
     adapter: (hasOnDemandRoutes) =>
-      adapter(hasOnDemandRoutes, functionsFeatures(dependencyStrategy)),
+      adapter(
+        hasOnDemandRoutes,
+        functionsFeatures(dependencies.sharpImageService),
+      ),
     completeBuild: async ({ config, onDemand, prerendered }) => {
       const functionDirectory = new URL("function/", config.outDir);
       const hasFunction = await hasFunctionArtifact(functionDirectory);
@@ -147,30 +140,16 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
   };
 }
 
-const builtins = new Set([
-  ...builtinModules,
-  ...builtinModules.map((name) => `node:${name}`),
-]);
-
-function supportedExternal(specifier: string): boolean {
-  return builtins.has(specifier);
-}
-
-export function assertSupportedUserExternals(
-  config: AstroConfig,
-  dependencyStrategy: DependencyStrategy,
-): void {
+function assertBundleUserExternals(config: AstroConfig): void {
   const external = config.vite.ssr?.external;
   if (external === undefined) return;
-  if (dependencyStrategy === "install") return;
   if (external === true || !Array.isArray(external)) {
     throw new Error(
       'The "bundle" dependency strategy does not support custom Vite SSR package externals. Remove vite.ssr.external or use dependencyStrategy: "install".',
     );
   }
   const unsupported = external.filter(
-    (entry): entry is string =>
-      typeof entry !== "string" || !supportedExternal(entry),
+    (entry): entry is string => typeof entry !== "string" || !isBuiltin(entry),
   );
   if (unsupported.length) {
     throw new Error(
@@ -181,7 +160,7 @@ export function assertSupportedUserExternals(
 }
 
 /** Applies Function Artifact bundling requirements to Astro's server Vite configuration. */
-export function serverViteConfig(vite: InlineConfig): InlineConfig {
+function serverViteConfig(vite: InlineConfig): InlineConfig {
   const currentBuild = vite.build ?? {};
   const output = { chunkFileNames: "chunks/[name]-[hash].js" };
   const currentOutput = currentBuild.rolldownOptions?.output;
@@ -203,4 +182,44 @@ export function serverViteConfig(vite: InlineConfig): InlineConfig {
       },
     },
   };
+}
+
+interface DependencyStrategyPolicy {
+  assertUserExternals: (config: AstroConfig) => void;
+  configureServerBuild: (vite: InlineConfig) => InlineConfig;
+  sharpImageService: AstroAdapter["supportedAstroFeatures"]["sharpImageService"];
+}
+
+function createDependencyStrategyPolicy(
+  selected: DependencyStrategy | undefined,
+): DependencyStrategyPolicy {
+  const strategy = selected ?? "bundle";
+  if (strategy === "bundle") {
+    return {
+      assertUserExternals: assertBundleUserExternals,
+      configureServerBuild: serverViteConfig,
+      sharpImageService: {
+        support: "unsupported",
+        message:
+          'Sharp is a native runtime dependency and cannot use the "bundle" dependency strategy. Use dependencyStrategy: "install".',
+      },
+    };
+  }
+  if (strategy === "install") {
+    return {
+      assertUserExternals: () => {},
+      configureServerBuild: () => {
+        throw new Error(
+          'The "install" dependency strategy is not available yet. Use "bundle" for JavaScript dependencies.',
+        );
+      },
+      sharpImageService: {
+        support: "limited",
+        message: "Sharp support is experimental in Yandex Cloud Functions.",
+      },
+    };
+  }
+  throw new TypeError(
+    `Unknown Yandex Cloud adapter dependency strategy: ${String(strategy)}.`,
+  );
 }

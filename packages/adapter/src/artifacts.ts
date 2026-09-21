@@ -1,10 +1,10 @@
-import { builtinModules, createRequire } from "node:module";
+import { createRequire, isBuiltin } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 
+import { parse } from "acorn";
 import type { AstroConfig } from "astro";
-import { init, parse } from "es-module-lexer";
 
 import { ADAPTER_NAME, ADAPTER_VERSION } from "./constants.js";
 import { parseDeploymentManifest } from "./deployment-manifest.js";
@@ -14,11 +14,6 @@ import type {
   Target,
   YandexCloudManifestV1,
 } from "./types.js";
-
-const allowedBuiltins = new Set([
-  ...builtinModules,
-  ...builtinModules.map((name) => `node:${name}`),
-]);
 
 interface DiscoveredFile {
   name: string;
@@ -65,35 +60,128 @@ function barePackage(specifier: string): string | undefined {
   ) {
     return undefined;
   }
-  if (allowedBuiltins.has(specifier)) return undefined;
+  if (isBuiltin(specifier)) return undefined;
   return specifier.startsWith("@")
     ? specifier.split("/").slice(0, 2).join("/")
     : specifier.split("/")[0];
 }
 
+interface SyntaxNode {
+  type: string;
+  [property: string]: unknown;
+}
+
+function isSyntaxNode(value: unknown): value is SyntaxNode {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "type" in value &&
+    typeof value.type === "string"
+  );
+}
+
+function visitSyntax(node: SyntaxNode, visitor: (node: SyntaxNode) => void): void {
+  visitor(node);
+  for (const value of Object.values(node)) {
+    if (isSyntaxNode(value)) visitSyntax(value, visitor);
+    else if (Array.isArray(value)) {
+      for (const child of value) {
+        if (isSyntaxNode(child)) visitSyntax(child, visitor);
+      }
+    }
+  }
+}
+
+function staticSpecifier(value: unknown): string | undefined {
+  if (!isSyntaxNode(value)) return undefined;
+  if (value.type === "Literal" && typeof value.value === "string") {
+    return value.value;
+  }
+  if (value.type !== "TemplateLiteral") return undefined;
+  const expressions = value.expressions;
+  const quasis = value.quasis;
+  if (
+    !Array.isArray(expressions) ||
+    expressions.length ||
+    !Array.isArray(quasis)
+  ) {
+    return undefined;
+  }
+  const first: unknown = (quasis as unknown[])[0];
+  if (!isSyntaxNode(first)) return undefined;
+  const templateValue = first.value;
+  if (typeof templateValue !== "object" || templateValue === null) {
+    return undefined;
+  }
+  const cooked = "cooked" in templateValue ? templateValue.cooked : undefined;
+  return typeof cooked === "string" ? cooked : undefined;
+}
+
+function dependencySpecifier(specifier: string, file: string): string | undefined {
+  if (specifier.endsWith(".node")) {
+    throw new Error(
+      `The Function Artifact contains the native runtime module ${specifier} referenced by ${file}, which cannot use the "bundle" dependency strategy. Use dependencyStrategy: "install".`,
+    );
+  }
+  return barePackage(specifier);
+}
+
+function runtimeSpecifiers(source: string, file: string): Set<string> {
+  const packages = new Set<string>();
+  const program = parse(source, {
+    allowHashBang: true,
+    ecmaVersion: "latest",
+    sourceType: "module",
+  }) as unknown as SyntaxNode;
+
+  const add = (specifier: string): void => {
+    const dependency = dependencySpecifier(specifier, file);
+    if (dependency) packages.add(dependency);
+  };
+  const rejectDynamic = (): never => {
+    throw new Error(
+      `The Function Artifact contains unresolved dynamic or native runtime dependency resolution in ${file}, which cannot use the "bundle" dependency strategy. Bundle a fixed package import or use dependencyStrategy: "install".`,
+    );
+  };
+  const requiredSpecifier = (value: unknown): string =>
+    staticSpecifier(value) ?? rejectDynamic();
+
+  visitSyntax(program, (node) => {
+    if (
+      node.type === "ImportDeclaration" ||
+      node.type === "ExportNamedDeclaration" ||
+      node.type === "ExportAllDeclaration"
+    ) {
+      const specifier = staticSpecifier(node.source);
+      if (specifier) add(specifier);
+      return;
+    }
+    if (node.type === "ImportExpression") {
+      add(requiredSpecifier(node.source));
+      return;
+    }
+    if (node.type !== "CallExpression") return;
+    const callee = node.callee;
+    if (
+      !isSyntaxNode(callee) ||
+      callee.type !== "Identifier" ||
+      (callee.name !== "require" && callee.name !== "__require")
+    ) {
+      return;
+    }
+    const arguments_ = node.arguments;
+    add(requiredSpecifier(Array.isArray(arguments_) ? arguments_[0] : undefined));
+  });
+  return packages;
+}
+
 async function unresolvedPackages(directory: string): Promise<Set<string>> {
   const packages = new Set<string>();
-  await init;
   for (const file of await javascriptFiles(directory)) {
     const source = await readFile(file, "utf8");
-    if (/\.node(?:["'`]|\\)/.test(source)) {
-      throw new Error(
-        `The Function Artifact contains native runtime dependency code in ${relative(directory, file)}, which cannot use the "bundle" dependency strategy. Use dependencyStrategy: "install".`,
-      );
-    }
-    const [imports] = parse(source, file);
-    for (const specifier of imports) {
-      const dependency = specifier.n && barePackage(specifier.n);
-      if (dependency) packages.add(dependency);
-    }
-    for (const match of source.matchAll(
-      /\b(?:require|__require)\(\s*["']([^"']+)["']\s*\)/g,
-    )) {
-      const specifier = match[1];
-      if (!specifier) continue;
-      const dependency = barePackage(specifier);
-      if (dependency) packages.add(dependency);
-    }
+    const relativePath = relative(directory, file);
+    for (const dependency of runtimeSpecifiers(source, relativePath))
+      packages.add(dependency);
   }
   return packages;
 }
