@@ -20,4 +20,12 @@ export const server = {
       };
     },
   }),
+  submit: defineAction({
+    accept: "form",
+    input: z.object({ message: z.string().min(1) }),
+    handler: async ({ message }, context) => ({
+      message,
+      middleware: context.locals.actionMiddleware,
+    }),
+  }),
 };

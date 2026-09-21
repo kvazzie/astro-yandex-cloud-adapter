@@ -336,6 +336,40 @@ describe.sequential("Astro artifact builds", () => {
     });
   });
 
+  it.each([
+    ["API Gateway 0.1", apiGatewayV01Event],
+    ["direct HTTPS", directHttpEvent],
+  ])(
+    "runs a stateless form Action through %s",
+    async (_invocation, eventFactory) => {
+      const response = await actionsGeneratedHandler.handler(
+        eventFactory({
+          httpMethod: "POST",
+          url: eventFactory === apiGatewayV01Event ? "/" : undefined,
+          path: "/",
+          queryStringParameters: { _action: "submit" },
+          headers: {
+            host: "actions.example",
+            "content-type": "application/x-www-form-urlencoded",
+            origin: "https://actions.example",
+          },
+          body: "message=Saved",
+        }),
+        invocationContext(),
+      );
+
+      expect(response).toMatchObject({
+        statusCode: 303,
+        headers: {
+          location: "/complete?message=Saved&middleware=active",
+          "x-actions-middleware": "active",
+        },
+        body: "",
+        isBase64Encoded: false,
+      });
+    },
+  );
+
   it("discovers and executes an integration-injected route", async () => {
     const deployment = await manifest("mixed");
     expect(deployment.routes.onDemand).toEqual(
