@@ -23,6 +23,7 @@ interface GeneratedHandler {
 }
 
 let generatedHandler: GeneratedHandler;
+let actionsGeneratedHandler: GeneratedHandler;
 
 async function generatedFixtureHandler(
   fixture: string,
@@ -30,6 +31,19 @@ async function generatedFixtureHandler(
 ): Promise<GeneratedHandler> {
   return (await import(
     `${pathToFileURL(join(fixtures, fixture, "dist/function/index.js")).href}?${cacheKey}`
+  )) as GeneratedHandler;
+}
+
+async function isolatedFixtureHandler(
+  fixture: string,
+  cacheKey: string,
+): Promise<GeneratedHandler> {
+  const isolated = await mkdtemp(join(tmpdir(), `astro-yandex-${fixture}-`));
+  await cp(join(fixtures, fixture, "dist/function"), isolated, {
+    recursive: true,
+  });
+  return (await import(
+    `${pathToFileURL(join(isolated, "index.js")).href}?${cacheKey}`
   )) as GeneratedHandler;
 }
 
@@ -112,15 +126,16 @@ describe.sequential("Astro artifact builds", () => {
       "mixed",
       "server",
       "server-island",
+      "actions",
     ]) {
       await build({ root: `${join(fixtures, fixture)}/`, logLevel: "silent" });
     }
 
-    const isolated = await mkdtemp(join(tmpdir(), "astro-yandex-function-"));
-    await cp(join(fixtures, "mixed/dist/function"), isolated, { recursive: true });
-    generatedHandler = (await import(
-      `${pathToFileURL(join(isolated, "index.js")).href}?isolated=1`
-    )) as GeneratedHandler;
+    generatedHandler = await isolatedFixtureHandler("mixed", "isolated=1");
+    actionsGeneratedHandler = await isolatedFixtureHandler(
+      "actions",
+      "isolated=actions",
+    );
   });
 
   it("emits an Object Storage-only static layout and manifest", async () => {
@@ -255,6 +270,110 @@ describe.sequential("Astro artifact builds", () => {
     );
     expect(error.statusCode).toBe(500);
   });
+
+  it("executes a valid Action through API Gateway 0.1", async () => {
+    const response = await actionsGeneratedHandler.handler(
+      apiGatewayV01Event({
+        httpMethod: "POST",
+        url: "/_actions/greet",
+        path: "/_actions/{path}",
+        pathParams: { path: "greet" },
+        headers: {
+          host: "actions.example",
+          "content-type": "application/json",
+          cookie: "session=session-123",
+        },
+        body: JSON.stringify({ name: "Ada" }),
+      }),
+      invocationContext(),
+    );
+
+    expect(response).toMatchObject({
+      statusCode: 200,
+      headers: {
+        "content-type": "application/json+devalue",
+        "x-actions-middleware": "active",
+      },
+      isBase64Encoded: false,
+    });
+    expect(JSON.parse(response.body)).toEqual([
+      { message: 1, session: 2, middleware: 3 },
+      "Hello, Ada",
+      "session-123",
+      "active",
+    ]);
+    expect(response.multiValueHeaders["set-cookie"]).toEqual(
+      expect.arrayContaining([
+        "action-first=one; Path=/; HttpOnly",
+        "action-second=two; Path=/; SameSite=Lax",
+      ]),
+    );
+  });
+
+  it("returns Astro's Action validation result through API Gateway 0.1", async () => {
+    const response = await actionsGeneratedHandler.handler(
+      apiGatewayV01Event({
+        httpMethod: "POST",
+        url: "/_actions/greet",
+        path: "/_actions/{path}",
+        pathParams: { path: "greet" },
+        headers: {
+          host: "actions.example",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ name: "Al" }),
+      }),
+      invocationContext(),
+    );
+
+    expect(response).toMatchObject({
+      statusCode: 400,
+      headers: {
+        "content-type": "application/json",
+        "x-actions-middleware": "active",
+      },
+      isBase64Encoded: false,
+    });
+    expect(JSON.parse(response.body)).toMatchObject({
+      type: "AstroActionInputError",
+      issues: [{ code: "too_small", path: ["name"], minimum: 3 }],
+      fields: { name: [expect.any(String)] },
+    });
+  });
+
+  it.each([
+    ["API Gateway 0.1", apiGatewayV01Event],
+    ["direct HTTPS", directHttpEvent],
+  ])(
+    "runs a stateless form Action through %s",
+    async (_invocation, eventFactory) => {
+      const response = await actionsGeneratedHandler.handler(
+        eventFactory({
+          httpMethod: "POST",
+          url: eventFactory === apiGatewayV01Event ? "/" : undefined,
+          path: "/",
+          queryStringParameters: { _action: "submit" },
+          headers: {
+            host: "actions.example",
+            "content-type": "application/x-www-form-urlencoded",
+            origin: "https://actions.example",
+          },
+          body: "message=Saved",
+        }),
+        invocationContext(),
+      );
+
+      expect(response).toMatchObject({
+        statusCode: 303,
+        headers: {
+          location: "/complete?message=Saved&middleware=active",
+          "x-actions-middleware": "active",
+        },
+        body: "",
+        isBase64Encoded: false,
+      });
+    },
+  );
 
   it("discovers and executes an integration-injected route", async () => {
     const deployment = await manifest("mixed");

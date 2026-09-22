@@ -87,6 +87,15 @@ importers:
         specifier: ^8.0.13
         version: 8.2.0(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)
 
+  tests/fixtures/actions:
+    dependencies:
+      "@astro-yandex-cloud/adapter":
+        specifier: workspace:*
+        version: link:../../../packages/adapter
+      astro:
+        specifier: ^7.1.0
+        version: 7.1.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(jiti@2.7.0)(rollup@4.62.4)
+
   tests/fixtures/mixed:
     dependencies:
       "@astro-yandex-cloud/adapter":

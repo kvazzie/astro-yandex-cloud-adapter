@@ -1,0 +1,9 @@
+{
+  "name": "fixture-actions",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@astro-yandex-cloud/adapter": "workspace:*",
+    "astro": "^7.1.0"
+  }
+}

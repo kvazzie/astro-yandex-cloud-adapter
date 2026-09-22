@@ -135,6 +135,7 @@ function isTextual(contentType: string | null): boolean {
   return (
     mediaType.startsWith("text/") ||
     mediaType === "application/json" ||
+    mediaType === "application/json+devalue" ||
     mediaType.endsWith("+json") ||
     mediaType === "application/javascript" ||
     mediaType === "application/xml" ||
