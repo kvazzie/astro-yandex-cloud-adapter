@@ -1,10 +1,9 @@
 {
-  "name": "fixture-mixed",
+  "name": "fixture-rejected-dynamic",
   "private": true,
   "type": "module",
   "dependencies": {
     "@astro-yandex-cloud/adapter": "workspace:*",
-    "astro": "^7.1.0",
-    "nanoid": "^3.3.17"
+    "astro": "^7.1.0"
   }
 }

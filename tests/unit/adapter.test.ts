@@ -29,6 +29,12 @@ describe("adapter options and routes", () => {
     );
   });
 
+  it("rejects unknown dependency strategies", () => {
+    expect(() => yandexCloud({ dependencyStrategy: "copy" as never })).toThrow(
+      /Unknown.*dependency strategy/,
+    );
+  });
+
   it("rejects on-demand routes for object storage", () => {
     const hook = yandexCloud().hooks["astro:routes:resolved"];
     expect(() =>
@@ -71,7 +77,7 @@ describe("adapter options and routes", () => {
     });
   });
 
-  it("declares runtime and limited Sharp support for the Object Storage + Cloud Functions Target", async () => {
+  it("defaults Function Artifacts to bundle and rejects native Sharp", async () => {
     expect(
       await adapterDescription({ target: "object-storage-functions" }),
     ).toMatchObject({
@@ -80,12 +86,28 @@ describe("adapter options and routes", () => {
         hybridOutput: "stable",
         serverOutput: "stable",
         sharpImageService: {
-          support: "limited",
+          support: "unsupported",
           message:
-            "Sharp is externalized and has limited support in Yandex Cloud Functions.",
+            'Sharp is a native runtime dependency and cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", whose packaging is not available yet.',
         },
         envGetSecret: "stable",
         i18nDomains: "unsupported",
+      },
+    });
+  });
+
+  it("exposes the artifact-wide install strategy for its follow-up implementation", async () => {
+    expect(
+      await adapterDescription({
+        target: "object-storage-functions",
+        dependencyStrategy: "install",
+      }),
+    ).toMatchObject({
+      supportedAstroFeatures: {
+        sharpImageService: {
+          support: "limited",
+          message: "Sharp support is experimental in Yandex Cloud Functions.",
+        },
       },
     });
   });

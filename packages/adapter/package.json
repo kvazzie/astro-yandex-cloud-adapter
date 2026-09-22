@@ -46,8 +46,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "dependencies": {
-    "ajv": "^8.20.0",
-    "es-module-lexer": "^2.3.2"
+    "acorn": "^8.18.0",
+    "ajv": "^8.20.0"
   },
   "scripts": {
     "build": "tsdown",

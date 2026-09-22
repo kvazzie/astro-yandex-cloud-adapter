@@ -7,6 +7,9 @@ application build environment is Astro `^7.1.0` on Node.js `>=22.12.0`.
 `@astro-yandex-cloud/adapter` turns Astro builds into deploy-ready Object Storage and
 Cloud Functions artifacts. It does not provision cloud resources.
 
+Function Artifacts bundle ordinary JavaScript dependencies through Astro's Vite and Rolldown
+pipeline by default, so they run without installing application packages.
+
 ```js
 import yandexCloud from "@astro-yandex-cloud/adapter";
 import { defineConfig } from "astro/config";

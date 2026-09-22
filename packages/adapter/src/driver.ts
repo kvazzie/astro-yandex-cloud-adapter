@@ -1,3 +1,5 @@
+import { isBuiltin } from "node:module";
+
 import type { AstroAdapter, AstroConfig } from "astro";
 import type { InlineConfig } from "vite";
 
@@ -7,7 +9,7 @@ import {
   writeDeploymentManifest,
 } from "./artifacts.js";
 import { ADAPTER_NAME } from "./constants.js";
-import type { AdapterOptions } from "./types.js";
+import type { AdapterOptions, DependencyStrategy } from "./types.js";
 
 interface CompletedBuild {
   config: AstroConfig;
@@ -16,6 +18,8 @@ interface CompletedBuild {
 }
 
 export interface TargetDriver {
+  assertUserExternals: (config: AstroConfig) => void;
+  configureServerBuild: (vite: InlineConfig) => InlineConfig;
   configureBuild(outDir: URL): Record<string, unknown>;
   assertRoutesSupported(onDemand: string[]): void;
   adapter(hasOnDemandRoutes: boolean): AstroAdapter;
@@ -31,18 +35,18 @@ const objectStorageFeatures: AstroAdapter["supportedAstroFeatures"] = {
   i18nDomains: "unsupported",
 };
 
-const functionsFeatures: AstroAdapter["supportedAstroFeatures"] = {
-  staticOutput: "stable",
-  hybridOutput: "stable",
-  serverOutput: "stable",
-  sharpImageService: {
-    support: "limited",
-    message:
-      "Sharp is externalized and has limited support in Yandex Cloud Functions.",
-  },
-  envGetSecret: "stable",
-  i18nDomains: "unsupported",
-};
+function functionsFeatures(
+  sharpImageService: AstroAdapter["supportedAstroFeatures"]["sharpImageService"],
+): AstroAdapter["supportedAstroFeatures"] {
+  return {
+    staticOutput: "stable",
+    hybridOutput: "stable",
+    serverOutput: "stable",
+    sharpImageService,
+    envGetSecret: "stable",
+    i18nDomains: "unsupported",
+  };
+}
 
 function adapter(
   hasOnDemandRoutes: boolean,
@@ -84,9 +88,15 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
   if (target !== "object-storage" && target !== "object-storage-functions") {
     throw new TypeError(`Unknown Yandex Cloud adapter target: ${String(target)}.`);
   }
+  const dependencies = createDependencyStrategyPolicy(options?.dependencyStrategy);
+  const dependencyConfiguration = {
+    assertUserExternals: dependencies.assertUserExternals,
+    configureServerBuild: dependencies.configureServerBuild,
+  };
 
   if (target === "object-storage") {
     return {
+      ...dependencyConfiguration,
       configureBuild,
       assertRoutesSupported: assertObjectStorageRoutesSupported,
       adapter: (hasOnDemandRoutes) =>
@@ -106,14 +116,19 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
     };
   }
   return {
+    ...dependencyConfiguration,
     configureBuild,
     assertRoutesSupported: () => {},
-    adapter: (hasOnDemandRoutes) => adapter(hasOnDemandRoutes, functionsFeatures),
+    adapter: (hasOnDemandRoutes) =>
+      adapter(
+        hasOnDemandRoutes,
+        functionsFeatures(dependencies.sharpImageService),
+      ),
     completeBuild: async ({ config, onDemand, prerendered }) => {
       const functionDirectory = new URL("function/", config.outDir);
       const hasFunction = await hasFunctionArtifact(functionDirectory);
       if (hasFunction) {
-        await prepareFunctionArtifact(functionDirectory, config.root);
+        await prepareFunctionArtifact(functionDirectory);
       }
       await writeDeploymentManifest(config.outDir, config, {
         target,
@@ -125,80 +140,33 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
   };
 }
 
-function supportedExternal(specifier: string): boolean {
-  return (
-    specifier === "sharp" ||
-    specifier.startsWith("node:") ||
-    [
-      "assert",
-      "buffer",
-      "child_process",
-      "cluster",
-      "console",
-      "constants",
-      "crypto",
-      "dgram",
-      "diagnostics_channel",
-      "dns",
-      "events",
-      "fs",
-      "http",
-      "http2",
-      "https",
-      "module",
-      "net",
-      "os",
-      "path",
-      "perf_hooks",
-      "process",
-      "punycode",
-      "querystring",
-      "readline",
-      "repl",
-      "stream",
-      "string_decoder",
-      "sys",
-      "timers",
-      "tls",
-      "trace_events",
-      "tty",
-      "url",
-      "util",
-      "v8",
-      "vm",
-      "wasi",
-      "worker_threads",
-      "zlib",
-    ].includes(specifier)
-  );
-}
-
-export function assertSupportedUserExternals(config: AstroConfig): void {
+function assertBundleUserExternals(config: AstroConfig): void {
   const external = config.vite.ssr?.external;
   if (external === undefined) return;
   if (external === true || !Array.isArray(external)) {
-    throw new Error("V1 does not support custom Vite SSR package externals.");
+    throw new Error(
+      'The "bundle" dependency strategy does not support custom Vite SSR package externals. Remove vite.ssr.external; dependencyStrategy: "install" packaging is not available yet.',
+    );
   }
   const unsupported = external.filter(
-    (entry): entry is string =>
-      typeof entry !== "string" || !supportedExternal(entry),
+    (entry): entry is string => typeof entry !== "string" || !isBuiltin(entry),
   );
   if (unsupported.length) {
     throw new Error(
-      `V1 does not support these Vite SSR package externals: ${unsupported.map(String).join(", ")}.`,
+      `The "bundle" dependency strategy cannot externalize runtime packages: ${unsupported.map(String).join(", ")}. ` +
+        'Remove them from vite.ssr.external; dependencyStrategy: "install" packaging is not available yet.',
     );
   }
 }
 
 /** Applies Function Artifact bundling requirements to Astro's server Vite configuration. */
-export function serverViteConfig(vite: InlineConfig): InlineConfig {
+function serverViteConfig(vite: InlineConfig): InlineConfig {
   const currentBuild = vite.build ?? {};
   const output = { chunkFileNames: "chunks/[name]-[hash].js" };
   const currentOutput = currentBuild.rolldownOptions?.output;
   return {
     ssr: {
       ...vite.ssr,
-      external: ["sharp"],
       noExternal: true,
     },
     build: {
@@ -214,4 +182,44 @@ export function serverViteConfig(vite: InlineConfig): InlineConfig {
       },
     },
   };
+}
+
+interface DependencyStrategyPolicy {
+  assertUserExternals: (config: AstroConfig) => void;
+  configureServerBuild: (vite: InlineConfig) => InlineConfig;
+  sharpImageService: AstroAdapter["supportedAstroFeatures"]["sharpImageService"];
+}
+
+function createDependencyStrategyPolicy(
+  selected: DependencyStrategy | undefined,
+): DependencyStrategyPolicy {
+  const strategy = selected ?? "bundle";
+  if (strategy === "bundle") {
+    return {
+      assertUserExternals: assertBundleUserExternals,
+      configureServerBuild: serverViteConfig,
+      sharpImageService: {
+        support: "unsupported",
+        message:
+          'Sharp is a native runtime dependency and cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", whose packaging is not available yet.',
+      },
+    };
+  }
+  if (strategy === "install") {
+    return {
+      assertUserExternals: () => {},
+      configureServerBuild: () => {
+        throw new Error(
+          'The "install" dependency strategy is not available yet. Use "bundle" for JavaScript dependencies.',
+        );
+      },
+      sharpImageService: {
+        support: "limited",
+        message: "Sharp support is experimental in Yandex Cloud Functions.",
+      },
+    };
+  }
+  throw new TypeError(
+    `Unknown Yandex Cloud adapter dependency strategy: ${String(strategy)}.`,
+  );
 }

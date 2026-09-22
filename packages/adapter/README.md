@@ -23,6 +23,26 @@ server islands and the image endpoint count as on-demand routes. This means an A
 `output: "static"` project can still require a Function Artifact. `dist/yandex-cloud.json`
 describes all deployable artifacts.
 
+## Function Artifact dependencies
+
+`dependencyStrategy` selects one strategy for the whole Function Artifact. It defaults to
+`bundle`, which uses Astro's Vite and Rolldown application build pipeline to include ordinary
+JavaScript dependencies. Node builtins remain runtime imports. The generated artifact has no
+application packages to install and its `package.json` contains no runtime dependencies.
+
+```js
+yandexCloud({
+  target: "object-storage-functions",
+  dependencyStrategy: "bundle",
+});
+```
+
+Bundle builds reject custom package externals, unresolved runtime package imports, and native
+runtime code. Native dependencies such as Sharp require the artifact-wide `install` strategy.
+Until install packaging is implemented, a Runtime Build that selects `install` fails instead of
+emitting an incomplete artifact. `tsdown` builds this adapter package only; it does not rebuild
+application code or Function Artifacts.
+
 ## Deployment Manifest
 
 The schema version 1 Deployment Manifest records the selected Target, the application base,
@@ -82,10 +102,10 @@ headers. Use `process.env` for secrets.
 
 ## V1 limitations
 
-- Sharp is the only supported external/native dependency and has limited support. Test image
-  transformations in the deployed Node.js 22 runtime.
-- Explicit package externals, other native packages, and runtime filesystem assets not discovered
-  by Astro/Vite are rejected or unsupported.
+- Bundle builds do not support native dependencies, including Sharp. Configure Astro's
+  passthrough image service when a Runtime Build does not need image transformation.
+- Explicit package externals, unresolved runtime packages, and runtime filesystem assets not
+  discovered by Astro/Vite are rejected or unsupported.
 - The adapter emits no cache policy, routing topology, SST links, resource handles, credentials,
   deployment commands, provisioning permission, API Gateway, Terraform, IAM, bucket, CDN, or
   domain configuration.

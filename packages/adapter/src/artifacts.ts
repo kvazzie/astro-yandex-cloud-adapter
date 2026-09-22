@@ -1,10 +1,10 @@
-import { builtinModules, createRequire } from "node:module";
+import { createRequire, isBuiltin } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 
+import { parse } from "acorn";
 import type { AstroConfig } from "astro";
-import { init, parse } from "es-module-lexer";
 
 import { ADAPTER_NAME, ADAPTER_VERSION } from "./constants.js";
 import { parseDeploymentManifest } from "./deployment-manifest.js";
@@ -14,11 +14,6 @@ import type {
   Target,
   YandexCloudManifestV1,
 } from "./types.js";
-
-const allowedBuiltins = new Set([
-  ...builtinModules,
-  ...builtinModules.map((name) => `node:${name}`),
-]);
 
 interface DiscoveredFile {
   name: string;
@@ -40,6 +35,12 @@ async function filesUnder(directory: string): Promise<DiscoveredFile[]> {
 
 async function javascriptFiles(directory: string): Promise<string[]> {
   const files = await filesUnder(directory);
+  const nativeModule = files.find((file) => file.name.endsWith(".node"));
+  if (nativeModule) {
+    throw new Error(
+      `The Function Artifact contains the native runtime module ${nativeModule.name}, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", whose packaging is not available yet.`,
+    );
+  }
   const commonJs = files.find((file) => file.name.endsWith(".cjs"));
   if (commonJs) {
     throw new Error(
@@ -59,22 +60,177 @@ function barePackage(specifier: string): string | undefined {
   ) {
     return undefined;
   }
-  if (allowedBuiltins.has(specifier)) return undefined;
+  if (isBuiltin(specifier)) return undefined;
   return specifier.startsWith("@")
     ? specifier.split("/").slice(0, 2).join("/")
     : specifier.split("/")[0];
 }
 
+interface SyntaxNode {
+  type: string;
+  [property: string]: unknown;
+}
+
+function isSyntaxNode(value: unknown): value is SyntaxNode {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "type" in value &&
+    typeof value.type === "string"
+  );
+}
+
+function visitSyntax(
+  node: SyntaxNode,
+  visitor: (node: SyntaxNode, ancestors: SyntaxNode[]) => void,
+  ancestors: SyntaxNode[] = [],
+): void {
+  visitor(node, ancestors);
+  const nextAncestors = [...ancestors, node];
+  for (const value of Object.values(node)) {
+    if (isSyntaxNode(value)) visitSyntax(value, visitor, nextAncestors);
+    else if (Array.isArray(value)) {
+      for (const child of value) {
+        if (isSyntaxNode(child)) visitSyntax(child, visitor, nextAncestors);
+      }
+    }
+  }
+}
+
+function isIdentifier(value: unknown, name: string): boolean {
+  return isSyntaxNode(value) && value.type === "Identifier" && value.name === name;
+}
+
+function isAstroLoggerImport(
+  source: unknown,
+  file: string,
+  ancestors: SyntaxNode[],
+): boolean {
+  if (
+    file !== "index.js" &&
+    !/(^|[\\/])chunks[\\/]render-[^\\/]+\.js$/.test(file)
+  ) {
+    return false;
+  }
+  if (
+    !ancestors.some(
+      (ancestor) =>
+        ancestor.type === "FunctionDeclaration" &&
+        isIdentifier(ancestor.id, "loadLoggerDestination"),
+    )
+  ) {
+    return false;
+  }
+  if (isIdentifier(source, "entrypoint")) return true;
+  if (!isSyntaxNode(source) || source.type !== "CallExpression") return false;
+  if (!isIdentifier(source.callee, "normalizeEntrypoint")) return false;
+  const arguments_ = source.arguments;
+  const entrypoint: unknown = Array.isArray(arguments_)
+    ? arguments_[0]
+    : undefined;
+  return (
+    isSyntaxNode(entrypoint) &&
+    entrypoint.type === "MemberExpression" &&
+    isIdentifier(entrypoint.object, "loggerConfig") &&
+    isIdentifier(entrypoint.property, "entrypoint")
+  );
+}
+
+function staticSpecifier(value: unknown): string | undefined {
+  if (!isSyntaxNode(value)) return undefined;
+  if (value.type === "Literal" && typeof value.value === "string") {
+    return value.value;
+  }
+  if (value.type !== "TemplateLiteral") return undefined;
+  const expressions = value.expressions;
+  const quasis = value.quasis;
+  if (
+    !Array.isArray(expressions) ||
+    expressions.length ||
+    !Array.isArray(quasis)
+  ) {
+    return undefined;
+  }
+  const first: unknown = (quasis as unknown[])[0];
+  if (!isSyntaxNode(first)) return undefined;
+  const templateValue = first.value;
+  if (typeof templateValue !== "object" || templateValue === null) {
+    return undefined;
+  }
+  const cooked = "cooked" in templateValue ? templateValue.cooked : undefined;
+  return typeof cooked === "string" ? cooked : undefined;
+}
+
+function dependencySpecifier(specifier: string, file: string): string | undefined {
+  if (specifier.endsWith(".node")) {
+    throw new Error(
+      `The Function Artifact contains the native runtime module ${specifier} referenced by ${file}, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", whose packaging is not available yet.`,
+    );
+  }
+  return barePackage(specifier);
+}
+
+function runtimeSpecifiers(source: string, file: string): Set<string> {
+  const packages = new Set<string>();
+  const program = parse(source, {
+    allowHashBang: true,
+    ecmaVersion: "latest",
+    sourceType: "module",
+  }) as unknown as SyntaxNode;
+
+  const add = (specifier: string): void => {
+    const dependency = dependencySpecifier(specifier, file);
+    if (dependency) packages.add(dependency);
+  };
+  const rejectDynamic = (): never => {
+    throw new Error(
+      `The Function Artifact contains unresolved dynamic or native runtime dependency resolution in ${file}, which cannot use the "bundle" dependency strategy. Bundle a fixed package import; dependencyStrategy: "install" packaging is not available yet.`,
+    );
+  };
+  const requiredSpecifier = (value: unknown): string =>
+    staticSpecifier(value) ?? rejectDynamic();
+
+  visitSyntax(program, (node, ancestors) => {
+    if (
+      node.type === "ImportDeclaration" ||
+      node.type === "ExportNamedDeclaration" ||
+      node.type === "ExportAllDeclaration"
+    ) {
+      const specifier = staticSpecifier(node.source);
+      if (specifier) add(specifier);
+      return;
+    }
+    if (node.type === "ImportExpression") {
+      const specifier = staticSpecifier(node.source);
+      if (specifier) {
+        add(specifier);
+      } else if (!isAstroLoggerImport(node.source, file, ancestors)) {
+        rejectDynamic();
+      }
+      return;
+    }
+    if (node.type !== "CallExpression") return;
+    const callee = node.callee;
+    if (
+      !isSyntaxNode(callee) ||
+      callee.type !== "Identifier" ||
+      (callee.name !== "require" && callee.name !== "__require")
+    ) {
+      return;
+    }
+    const arguments_ = node.arguments;
+    add(requiredSpecifier(Array.isArray(arguments_) ? arguments_[0] : undefined));
+  });
+  return packages;
+}
+
 async function unresolvedPackages(directory: string): Promise<Set<string>> {
   const packages = new Set<string>();
-  await init;
   for (const file of await javascriptFiles(directory)) {
     const source = await readFile(file, "utf8");
-    const [imports] = parse(source, file);
-    for (const specifier of imports) {
-      const dependency = specifier.n && barePackage(specifier.n);
-      if (dependency) packages.add(dependency);
-    }
+    const relativePath = relative(directory, file);
+    for (const dependency of runtimeSpecifiers(source, relativePath))
+      packages.add(dependency);
   }
   return packages;
 }
@@ -110,28 +266,25 @@ async function installedVersion(root: URL, packageName: string): Promise<string>
   throw new Error(`Could not determine the installed ${packageName} version.`);
 }
 
-async function writeFunctionPackage(
-  functionDirectory: URL,
-  root: URL,
-): Promise<void> {
+async function writeFunctionPackage(functionDirectory: URL): Promise<void> {
   const path = fileURLToPath(functionDirectory);
   const packages = await unresolvedPackages(path);
-  const unsupported = [...packages].filter((name) => name !== "sharp");
-  if (unsupported.length) {
+  if (packages.has("sharp")) {
     throw new Error(
-      `The function artifact contains unsupported external package imports: ${unsupported.join(", ")}. ` +
-        "V1 supports only the limited Sharp external.",
+      'The Function Artifact contains the native runtime dependency sharp, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", whose packaging is not available yet.',
     );
   }
-
-  const dependencies: Record<string, string> = {};
-  if (packages.has("sharp"))
-    dependencies.sharp = await installedVersion(root, "sharp");
+  if (packages.size) {
+    throw new Error(
+      `The "bundle" dependency strategy left unresolved runtime package imports in the Function Artifact: ${[...packages].sort().join(", ")}. ` +
+        'Bundle these packages with Astro/Vite; dependencyStrategy: "install" packaging is not available yet.',
+    );
+  }
   const packageJson = {
     private: true,
     type: "module",
     engines: { node: ">=22.12.0" },
-    dependencies,
+    dependencies: {},
   };
   await writeFile(
     new URL("package.json", functionDirectory),
@@ -151,22 +304,13 @@ async function validateFunctionArtifact(functionDirectory: URL): Promise<void> {
       },
     );
   }
-
-  const packages = await unresolvedPackages(fileURLToPath(functionDirectory));
-  const unsupported = [...packages].filter((name) => name !== "sharp");
-  if (unsupported.length) {
-    throw new Error(
-      `Unresolved imports remain in the function artifact: ${unsupported.join(", ")}.`,
-    );
-  }
 }
 
 export async function prepareFunctionArtifact(
   functionDirectory: URL,
-  root: URL,
 ): Promise<void> {
-  await writeFunctionPackage(functionDirectory, root);
   await validateFunctionArtifact(functionDirectory);
+  await writeFunctionPackage(functionDirectory);
 }
 
 export async function hasFunctionArtifact(
@@ -298,7 +442,7 @@ export async function writeDeploymentManifest(
               runtime: "nodejs22" as const,
               format: "esm" as const,
               entrypoint: "index.handler" as const,
-              support: { sharp: "limited" as const },
+              support: { sharp: "unsupported" as const },
             },
           }
         : {}),

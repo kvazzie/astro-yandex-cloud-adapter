@@ -1,7 +1,9 @@
 export type Target = "object-storage" | "object-storage-functions";
+export type DependencyStrategy = "bundle" | "install";
 
 export interface AdapterOptions {
   target?: Target;
+  dependencyStrategy?: DependencyStrategy;
 }
 
 export interface YandexCloudHttpEvent {
@@ -83,7 +85,7 @@ export interface DeploymentManifestV1 {
       format: "esm";
       entrypoint: "index.handler";
       support: {
-        sharp: "limited";
+        sharp: "unsupported" | "limited";
       };
     };
   };
