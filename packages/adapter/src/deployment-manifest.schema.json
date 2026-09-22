@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:astro-yandex-cloud:deployment-manifest:v1",
+  "title": "Astro Yandex Cloud Deployment Manifest version 1",
+  "$comment": "Version 1 permits additive fields. Removing or changing a field, or tightening an existing invariant, requires a new schemaVersion.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "adapter",
+    "astro",
+    "target",
+    "buildOutput",
+    "base",
+    "artifacts",
+    "routes"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "adapter": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "@astro-yandex-cloud/adapter" },
+        "version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "astro": {
+      "type": "object",
+      "required": ["version"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "target": {
+      "enum": ["object-storage", "object-storage-functions"]
+    },
+    "buildOutput": { "enum": ["static", "server"] },
+    "base": {
+      "type": "string",
+      "pattern": "^/(?:|(?!\\.{1,2}(?:/|$))[^/?#]+(?:/(?!\\.{1,2}(?:/|$))[^/?#]+)*)$",
+      "description": "Canonical Astro base. Every Client Artifact URL, route requirement, and Object Storage key is placed under this base."
+    },
+    "artifacts": {
+      "type": "object",
+      "required": ["client"],
+      "properties": {
+        "client": { "$ref": "#/$defs/clientArtifact" },
+        "function": { "$ref": "#/$defs/functionArtifact" }
+      }
+    },
+    "routes": {
+      "type": "object",
+      "required": ["prerendered", "onDemand"],
+      "properties": {
+        "prerendered": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/prerenderedRoute" },
+          "uniqueItems": true
+        },
+        "onDemand": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/onDemandRoute" },
+          "uniqueItems": true
+        }
+      }
+    }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$)).+$"
+    },
+    "urlPath": {
+      "type": "string",
+      "pattern": "^/(?:|(?!\\.{1,2}(?:/|$))[^/?#]+(?:/(?!\\.{1,2}(?:/|$))[^/?#]+)*/?)$"
+    },
+    "objectKey": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$)).+$"
+    },
+    "clientArtifactFile": {
+      "type": "object",
+      "required": ["path", "url", "objectKey"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "url": {
+          "$ref": "#/$defs/urlPath",
+          "description": "Public URL under the manifest base."
+        },
+        "objectKey": {
+          "$ref": "#/$defs/objectKey",
+          "description": "The canonical Object Storage key formed from the manifest base and this file's path."
+        }
+      }
+    },
+    "clientArtifact": {
+      "type": "object",
+      "required": ["path", "files"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "files": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/clientArtifactFile" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "functionArtifact": {
+      "type": "object",
+      "required": ["path", "runtime", "format", "entrypoint", "support"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "runtime": { "const": "nodejs22" },
+        "format": { "const": "esm" },
+        "entrypoint": { "const": "index.handler" },
+        "support": {
+          "type": "object",
+          "required": ["sharp"],
+          "properties": {
+            "sharp": { "const": "limited" }
+          }
+        }
+      }
+    },
+    "prerenderedRoute": {
+      "type": "object",
+      "required": ["url", "objectKey"],
+      "properties": {
+        "url": {
+          "$ref": "#/$defs/urlPath",
+          "description": "Prerendered request URL under the manifest base."
+        },
+        "objectKey": {
+          "$ref": "#/$defs/objectKey",
+          "description": "Object Storage key of the Client Artifact file that serves this URL."
+        }
+      }
+    },
+    "onDemandRoute": {
+      "type": "object",
+      "required": ["pattern"],
+      "properties": {
+        "pattern": {
+          "$ref": "#/$defs/urlPath",
+          "description": "Request pattern under the manifest base that requires the Function Artifact."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "target": { "const": "object-storage" } },
+        "required": ["target"]
+      },
+      "then": {
+        "properties": {
+          "buildOutput": { "const": "static" },
+          "artifacts": {
+            "type": "object",
+            "not": { "type": "object", "required": ["function"] }
+          },
+          "routes": {
+            "type": "object",
+            "properties": {
+              "onDemand": { "type": "array", "maxItems": 0 }
+            },
+            "required": ["onDemand"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "buildOutput": { "const": "static" } },
+        "required": ["buildOutput"]
+      },
+      "then": {
+        "properties": {
+          "artifacts": {
+            "type": "object",
+            "not": { "type": "object", "required": ["function"] }
+          },
+          "routes": {
+            "type": "object",
+            "properties": {
+              "onDemand": { "type": "array", "maxItems": 0 }
+            },
+            "required": ["onDemand"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "buildOutput": { "const": "server" } },
+        "required": ["buildOutput"]
+      },
+      "then": {
+        "properties": {
+          "target": { "const": "object-storage-functions" },
+          "artifacts": { "type": "object", "required": ["function"] },
+          "routes": {
+            "type": "object",
+            "properties": {
+              "onDemand": { "type": "array", "minItems": 1 }
+            },
+            "required": ["onDemand"]
+          }
+        }
+      }
+    }
+  ]
+}

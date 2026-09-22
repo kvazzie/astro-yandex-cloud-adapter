@@ -153,13 +153,36 @@ describe.sequential("Astro artifact builds", () => {
       "client/robots.txt",
       "yandex-cloud.json",
     ]);
-    expect(await manifest("static")).toMatchObject({
+    const deployment = await manifest("static");
+    expect(deployment).toMatchObject({
       schemaVersion: 1,
       target: "object-storage",
       buildOutput: "static",
-      artifacts: { client: "client" },
-      routes: { prerendered: ["/", "/about/"], onDemand: [] },
+      base: "/docs",
+      artifacts: { client: { path: "client" } },
+      routes: {
+        prerendered: [
+          { url: "/docs/", objectKey: "docs/index.html" },
+          { url: "/docs/about/", objectKey: "docs/about/index.html" },
+        ],
+        onDemand: [],
+      },
     });
+    expect(
+      deployment.artifacts.client.files.find((file) => file.path === "robots.txt"),
+    ).toEqual({
+      path: "robots.txt",
+      url: "/docs/robots.txt",
+      objectKey: "docs/robots.txt",
+    });
+    const browserAssets = deployment.artifacts.client.files.filter((file) =>
+      file.path.startsWith("_astro/"),
+    );
+    expect(browserAssets.length).toBeGreaterThan(0);
+    for (const asset of browserAssets) {
+      expect(asset.url).toMatch(/^\/docs\/_astro\//);
+      expect(asset.objectKey).toMatch(/^docs\/_astro\//);
+    }
   });
 
   it("emits a mixed client/function layout and deployment metadata", async () => {
@@ -169,17 +192,42 @@ describe.sequential("Astro artifact builds", () => {
     expect(files).toContain("function/index.js");
     expect(files).toContain("function/package.json");
     expect(files.some((file) => file.startsWith("function/chunks/"))).toBe(true);
-    expect(await manifest("mixed")).toMatchObject({
+    const deployment = await manifest("mixed");
+    expect(deployment).toMatchObject({
       schemaVersion: 1,
       target: "object-storage-functions",
       buildOutput: "server",
-      artifacts: { client: "client", function: "function" },
-      function: {
-        runtime: "nodejs22",
-        format: "esm",
-        entrypoint: "index.handler",
+      base: "/",
+      artifacts: {
+        client: { path: "client" },
+        function: {
+          path: "function",
+          runtime: "nodejs22",
+          format: "esm",
+          entrypoint: "index.handler",
+          support: { sharp: "limited" },
+        },
       },
     });
+    expect(deployment.routes.prerendered).toEqual([
+      { url: "/", objectKey: "index.html" },
+    ]);
+    expect(deployment.routes.onDemand.map((route) => route.pattern)).toEqual(
+      expect.arrayContaining(["/runtime"]),
+    );
+    expect(
+      deployment.artifacts.client.files.find((file) => file.path === "public.txt"),
+    ).toEqual({
+      path: "public.txt",
+      url: "/public.txt",
+      objectKey: "public.txt",
+    });
+    const browserAsset = deployment.artifacts.client.files.find((file) =>
+      file.path.startsWith("_astro/"),
+    );
+    expect(browserAsset).toBeDefined();
+    expect(browserAsset?.url).toMatch(/^\/_astro\//);
+    expect(browserAsset?.objectKey).toMatch(/^_astro\//);
   });
 
   it("omits a Function Artifact for a Static-only Build on the Object Storage + Cloud Functions Target", async () => {
@@ -203,8 +251,15 @@ describe.sequential("Astro artifact builds", () => {
     expect(await manifest("static-functions")).toMatchObject({
       target: "object-storage-functions",
       buildOutput: "static",
-      artifacts: { client: "client" },
-      routes: { prerendered: ["/", "/about/"], onDemand: [] },
+      base: "/",
+      artifacts: { client: { path: "client" } },
+      routes: {
+        prerendered: [
+          { url: "/", objectKey: "index.html" },
+          { url: "/about/", objectKey: "about/index.html" },
+        ],
+        onDemand: [],
+      },
     });
   });
 
@@ -275,8 +330,8 @@ describe.sequential("Astro artifact builds", () => {
     const response = await actionsGeneratedHandler.handler(
       apiGatewayV01Event({
         httpMethod: "POST",
-        url: "/_actions/greet",
-        path: "/_actions/{path}",
+        url: "/docs/_actions/greet",
+        path: "/docs/_actions/{path}",
         pathParams: { path: "greet" },
         headers: {
           host: "actions.example",
@@ -310,12 +365,40 @@ describe.sequential("Astro artifact builds", () => {
     );
   });
 
+  it("applies a non-root base once to every deployment requirement", async () => {
+    const deployment = await manifest("actions");
+    expect(deployment.base).toBe("/docs");
+    expect(deployment.routes.prerendered).toEqual([
+      {
+        url: "/docs/prerendered/",
+        objectKey: "docs/prerendered/index.html",
+      },
+    ]);
+    expect(deployment.routes.onDemand.map((route) => route.pattern)).toEqual(
+      expect.arrayContaining(["/docs/_actions/[...path]"]),
+    );
+    expect(
+      deployment.artifacts.client.files.find((file) => file.path === "public.txt"),
+    ).toEqual({
+      path: "public.txt",
+      url: "/docs/public.txt",
+      objectKey: "docs/public.txt",
+    });
+    const browserAsset = deployment.artifacts.client.files.find((file) =>
+      file.path.startsWith("_astro/"),
+    );
+    expect(browserAsset).toBeDefined();
+    expect(browserAsset?.url).toMatch(/^\/docs\/_astro\//);
+    expect(browserAsset?.objectKey).toMatch(/^docs\/_astro\//);
+    expect(JSON.stringify(deployment)).not.toContain("/docs/docs/");
+  });
+
   it("returns Astro's Action validation result through API Gateway 0.1", async () => {
     const response = await actionsGeneratedHandler.handler(
       apiGatewayV01Event({
         httpMethod: "POST",
-        url: "/_actions/greet",
-        path: "/_actions/{path}",
+        url: "/docs/_actions/greet",
+        path: "/docs/_actions/{path}",
         pathParams: { path: "greet" },
         headers: {
           host: "actions.example",
@@ -350,8 +433,8 @@ describe.sequential("Astro artifact builds", () => {
       const response = await actionsGeneratedHandler.handler(
         eventFactory({
           httpMethod: "POST",
-          url: eventFactory === apiGatewayV01Event ? "/" : undefined,
-          path: "/",
+          url: eventFactory === apiGatewayV01Event ? "/docs/" : undefined,
+          path: "/docs/",
           queryStringParameters: { _action: "submit" },
           headers: {
             host: "actions.example",
@@ -378,7 +461,7 @@ describe.sequential("Astro artifact builds", () => {
   it("discovers and executes an integration-injected route", async () => {
     const deployment = await manifest("mixed");
     expect(deployment.routes.onDemand).toEqual(
-      expect.arrayContaining(["/injected/[name]"]),
+      expect.arrayContaining([{ pattern: "/injected/[name]" }]),
     );
 
     const response = await generatedHandler.handler(
@@ -396,11 +479,14 @@ describe.sequential("Astro artifact builds", () => {
     const deployment = await manifest("server-island");
     expect(deployment).toMatchObject({
       buildOutput: "server",
-      artifacts: { client: "client", function: "function" },
-      routes: { prerendered: ["/"] },
+      artifacts: {
+        client: { path: "client" },
+        function: { path: "function" },
+      },
+      routes: { prerendered: [{ url: "/", objectKey: "index.html" }] },
     });
     expect(deployment.routes.onDemand).toEqual(
-      expect.arrayContaining(["/_server-islands/[name]"]),
+      expect.arrayContaining([{ pattern: "/_server-islands/[name]" }]),
     );
 
     const page = await readFile(
@@ -616,7 +702,7 @@ describe.sequential("Astro artifact builds", () => {
       buildOutput: "server",
     });
     expect(deployment.routes.onDemand).toEqual(
-      expect.arrayContaining(["/", "/_image"]),
+      expect.arrayContaining([{ pattern: "/" }, { pattern: "/_image" }]),
     );
 
     const entrypoint = await generatedFixtureHandler("server", "server=1");

@@ -32,6 +32,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./deployment-manifest": {
+      "types": "./dist/deployment-manifest.d.ts",
+      "import": "./dist/deployment-manifest.js"
+    },
+    "./deployment-manifest.schema.json": "./dist/deployment-manifest.schema.json",
     "./runtime": {
       "types": "./dist/runtime.d.ts",
       "import": "./dist/runtime.js"
@@ -41,6 +46,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "dependencies": {
+    "ajv": "^8.20.0",
     "es-module-lexer": "^2.3.2"
   },
   "scripts": {

@@ -23,6 +23,28 @@ server islands and the image endpoint count as on-demand routes. This means an A
 `output: "static"` project can still require a Function Artifact. `dist/yandex-cloud.json`
 describes all deployable artifacts.
 
+## Deployment Manifest
+
+The schema version 1 Deployment Manifest records the selected Target, the application base,
+artifact paths, every Client Artifact file, canonical Object Storage keys, and the complete
+Prerendered and On-demand Route requirements. Client file entries include their public URL so a
+deployment product does not need to reproduce Astro's base or trailing-slash behavior.
+
+Deployment products can validate untrusted manifest data through the package interface:
+
+```js
+import { readFile } from "node:fs/promises";
+import { parseDeploymentManifest } from "@astro-yandex-cloud/adapter/deployment-manifest";
+
+const value = JSON.parse(await readFile("dist/yandex-cloud.json", "utf8"));
+const manifest = parseDeploymentManifest(value);
+```
+
+The JSON Schema is exported as
+`@astro-yandex-cloud/adapter/deployment-manifest.schema.json`. Version 1 consumers must ignore
+unknown additive fields. A change that removes a field, changes a field's meaning, or tightens an
+existing invariant requires a new schema version.
+
 Upload and provisioning are intentionally outside this package. Configure the Yandex function
 with runtime `nodejs22` and entrypoint `index.handler`, then deploy the complete `function`
 directory because Astro may emit code-split chunks. `nodejs22` is the Yandex Cloud Function
@@ -64,4 +86,6 @@ headers. Use `process.env` for secrets.
   transformations in the deployed Node.js 22 runtime.
 - Explicit package externals, other native packages, and runtime filesystem assets not discovered
   by Astro/Vite are rejected or unsupported.
-- The adapter emits no API Gateway, Terraform, IAM, bucket, CDN, or domain configuration.
+- The adapter emits no cache policy, routing topology, SST links, resource handles, credentials,
+  deployment commands, provisioning permission, API Gateway, Terraform, IAM, bucket, CDN, or
+  domain configuration.
