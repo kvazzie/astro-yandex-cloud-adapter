@@ -1,7 +1,7 @@
 import { builtinModules, createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 
 import type { AstroConfig } from "astro";
 import { init, parse } from "es-module-lexer";
@@ -146,6 +146,17 @@ export async function prepareFunctionArtifact(
 ): Promise<void> {
   await writeFunctionPackage(functionDirectory, root);
   await validateFunctionArtifact(functionDirectory);
+}
+
+export async function hasFunctionArtifact(
+  functionDirectory: URL,
+): Promise<boolean> {
+  try {
+    await access(new URL("index.js", functionDirectory));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function readAstroVersion(root: URL): Promise<string> {

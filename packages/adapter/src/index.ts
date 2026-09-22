@@ -29,6 +29,10 @@ function routePattern(route: IntegrationResolvedRoute): string {
   return route.pattern;
 }
 
+function needsConfiguredRuntime(route: IntegrationResolvedRoute): boolean {
+  return !route.isPrerendered && route.origin !== "internal";
+}
+
 function routePathname(pathname: string): string {
   return pathname ? `/${pathname.replace(/^\/+/, "")}` : "/";
 }
@@ -60,18 +64,16 @@ export default function yandexCloud(options?: AdapterOptions): AstroIntegration 
       },
       "astro:routes:resolved": ({ routes: resolvedRoutes }) => {
         routes = resolvedRoutes.filter(
-          (route) =>
-            route.origin === "project" &&
-            (route.type === "page" || route.type === "endpoint"),
+          (route) => route.type === "page" || route.type === "endpoint",
         );
-        const onDemand = routes.filter((route) => !route.isPrerendered);
+        const onDemand = routes.filter(needsConfiguredRuntime);
         driver.assertRoutesSupported(onDemand.map(routePattern));
       },
       "astro:config:done":
         /** Finalizes adapter metadata and generated runtime types. */
         ({ config: resolvedConfig, injectTypes, setAdapter }) => {
           config = resolvedConfig;
-          const hasOnDemand = routes.some((route) => !route.isPrerendered);
+          const hasOnDemand = routes.some(needsConfiguredRuntime);
           setAdapter(driver.adapter(hasOnDemand));
           injectTypes({
             filename: "yandex-cloud.d.ts",

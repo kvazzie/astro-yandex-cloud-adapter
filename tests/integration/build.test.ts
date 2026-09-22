@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { build } from "astro";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { YandexCloudHttpResult } from "../../packages/adapter/src/runtime.js";
 import type {
@@ -23,6 +23,15 @@ interface GeneratedHandler {
 }
 
 let generatedHandler: GeneratedHandler;
+
+async function generatedFixtureHandler(
+  fixture: string,
+  cacheKey: string,
+): Promise<GeneratedHandler> {
+  return (await import(
+    `${pathToFileURL(join(fixtures, fixture, "dist/function/index.js")).href}?${cacheKey}`
+  )) as GeneratedHandler;
+}
 
 function invocationContext(
   overrides: Partial<YandexCloudInvocationContext> = {},
@@ -97,7 +106,13 @@ async function manifest(fixture: string): Promise<YandexCloudManifestV1> {
 
 describe.sequential("Astro artifact builds", () => {
   beforeAll(async () => {
-    for (const fixture of ["static", "static-functions", "mixed", "server"]) {
+    for (const fixture of [
+      "static",
+      "static-functions",
+      "mixed",
+      "server",
+      "server-island",
+    ]) {
       await build({ root: `${join(fixtures, fixture)}/`, logLevel: "silent" });
     }
 
@@ -152,14 +167,29 @@ describe.sequential("Astro artifact builds", () => {
     });
   });
 
-  it("omits a function when the functions target is fully static", async () => {
-    const files = await layout(join(fixtures, "static-functions/dist"));
+  it("omits a Function Artifact for a Static-only Build on the Object Storage + Cloud Functions Target", async () => {
+    const files = (await layout(join(fixtures, "static-functions/dist"))).map(
+      (file) => {
+        if (!file.startsWith("client/_astro/logo.")) return file;
+        return file.slice(file.lastIndexOf("/") + 1).includes("_")
+          ? "client/_astro/logo.optimized.svg"
+          : "client/_astro/logo.source.svg";
+      },
+    );
     expect(files).not.toContain("function/index.js");
+    expect(files).toEqual([
+      "client/_astro/logo.source.svg",
+      "client/_astro/logo.optimized.svg",
+      "client/about/index.html",
+      "client/index.html",
+      "client/robots.txt",
+      "yandex-cloud.json",
+    ]);
     expect(await manifest("static-functions")).toMatchObject({
       target: "object-storage-functions",
       buildOutput: "static",
       artifacts: { client: "client" },
-      routes: { onDemand: [] },
+      routes: { prerendered: ["/", "/about/"], onDemand: [] },
     });
   });
 
@@ -224,6 +254,56 @@ describe.sequential("Astro artifact builds", () => {
       invocationContext(),
     );
     expect(error.statusCode).toBe(500);
+  });
+
+  it("discovers and executes an integration-injected route", async () => {
+    const deployment = await manifest("mixed");
+    expect(deployment.routes.onDemand).toEqual(
+      expect.arrayContaining(["/injected/[name]"]),
+    );
+
+    const response = await generatedHandler.handler(
+      directHttpEvent({ path: "/injected/Ada" }),
+      invocationContext(),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      source: "integration",
+      name: "Ada",
+    });
+  });
+
+  it("emits and executes a Function Artifact for a server island", async () => {
+    const deployment = await manifest("server-island");
+    expect(deployment).toMatchObject({
+      buildOutput: "server",
+      artifacts: { client: "client", function: "function" },
+      routes: { prerendered: ["/"] },
+    });
+    expect(deployment.routes.onDemand).toEqual(
+      expect.arrayContaining(["/_server-islands/[name]"]),
+    );
+
+    const page = await readFile(
+      join(fixtures, "server-island/dist/client/index.html"),
+      "utf8",
+    );
+    const islandUrl = page
+      .match(/<link rel="preload" as="fetch" href="([^"]+)"/)?.[1]
+      ?.replaceAll("&amp;", "&");
+    expect(islandUrl).toBeDefined();
+
+    const url = new URL(islandUrl!, "https://fixture.example");
+    const handler = await generatedFixtureHandler("server-island", "island=1");
+    const response = await handler.handler(
+      directHttpEvent({
+        path: url.pathname,
+        queryStringParameters: Object.fromEntries(url.searchParams),
+      }),
+      invocationContext(),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('<p id="server-greeting">Hello, Ada.</p>');
   });
 
   it("uses direct HTTPS paths and Host origins", async () => {
@@ -411,26 +491,96 @@ describe.sequential("Astro artifact builds", () => {
   );
 
   it("supports all-server output", async () => {
-    expect(await manifest("server")).toMatchObject({
+    const deployment = await manifest("server");
+    expect(deployment).toMatchObject({
       target: "object-storage-functions",
       buildOutput: "server",
-      routes: { onDemand: ["/"] },
     });
+    expect(deployment.routes.onDemand).toEqual(
+      expect.arrayContaining(["/", "/_image"]),
+    );
 
-    const entrypoint = (await import(
-      `${pathToFileURL(join(fixtures, "server/dist/function/index.js")).href}?server=1`
-    )) as GeneratedHandler;
+    const entrypoint = await generatedFixtureHandler("server", "server=1");
     const response = await entrypoint.handler(
       directHttpEvent({ headers: { host: "server.example" } }),
       invocationContext(),
     );
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain("<h1>Server output</h1>");
+
+    const sourceImage = new Response(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="red" /></svg>',
+      { headers: { "content-type": "image/svg+xml" } },
+    );
+    Object.defineProperty(sourceImage, "url", {
+      value: "https://images.example/source.svg",
+    });
+    const remoteImage = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(sourceImage);
+    let image: YandexCloudHttpResult;
+    try {
+      image = await entrypoint.handler(
+        directHttpEvent({
+          path: "/_image",
+          queryStringParameters: {
+            href: "https://images.example/source.svg",
+            w: "16",
+            f: "svg",
+          },
+        }),
+        invocationContext(),
+      );
+    } finally {
+      remoteImage.mockRestore();
+    }
+    expect(image).toMatchObject({
+      statusCode: 200,
+      isBase64Encoded: false,
+      headers: { "content-type": "image/svg+xml" },
+    });
+    expect(image.body).toContain('<rect width="32" height="32" fill="red"');
   });
 
   it("rejects an Object Storage build containing an on-demand route", async () => {
     await expect(
       build({ root: `${join(fixtures, "rejected")}/`, logLevel: "silent" }),
-    ).rejects.toThrow(/object-storage target cannot serve on-demand routes/);
+    ).rejects.toThrow(
+      /object-storage target cannot serve on-demand routes: \/.*Use target "object-storage-functions" or prerender these routes/,
+    );
+  });
+
+  it("rejects an integration-injected route for Object Storage", async () => {
+    await expect(
+      build({
+        root: `${join(fixtures, "rejected-injected")}/`,
+        logLevel: "silent",
+      }),
+    ).rejects.toThrow(
+      /object-storage target cannot serve on-demand routes: \/injected\/\[name\].*Use target "object-storage-functions" or prerender these routes/,
+    );
+  });
+
+  it("rejects active Astro-internal routes for Object Storage", async () => {
+    let failure: unknown;
+    try {
+      await build({
+        root: `${join(fixtures, "rejected-server-island")}/`,
+        logLevel: "silent",
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    const message = (failure as Error).message;
+    expect(message).toContain(
+      "object-storage target cannot serve on-demand routes",
+    );
+    expect(message).toContain("/_server-islands/[name]");
+    expect(message).toContain("/_image");
+    expect(message).toContain(
+      'Use target "object-storage-functions" or prerender these routes.',
+    );
   });
 });

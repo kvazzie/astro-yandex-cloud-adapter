@@ -1,8 +1,8 @@
 import yandexCloud from "@astro-yandex-cloud/adapter";
 import { defineConfig } from "astro/config";
+import { injectedRoute } from "../shared/injected-route.ts";
 
 export default defineConfig({
-  adapter: yandexCloud({ target: "object-storage-functions" }),
-  image: { domains: ["images.example"] },
-  output: "server",
+  adapter: yandexCloud(),
+  integrations: [injectedRoute],
 });

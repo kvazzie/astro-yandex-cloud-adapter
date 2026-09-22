@@ -105,7 +105,34 @@ importers:
         specifier: ^7.1.0
         version: 7.1.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(jiti@2.7.0)(rollup@4.62.4)
 
+  tests/fixtures/rejected-injected:
+    dependencies:
+      "@astro-yandex-cloud/adapter":
+        specifier: workspace:*
+        version: link:../../../packages/adapter
+      astro:
+        specifier: ^7.1.0
+        version: 7.1.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(jiti@2.7.0)(rollup@4.62.4)
+
+  tests/fixtures/rejected-server-island:
+    dependencies:
+      "@astro-yandex-cloud/adapter":
+        specifier: workspace:*
+        version: link:../../../packages/adapter
+      astro:
+        specifier: ^7.1.0
+        version: 7.1.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(jiti@2.7.0)(rollup@4.62.4)
+
   tests/fixtures/server:
+    dependencies:
+      "@astro-yandex-cloud/adapter":
+        specifier: workspace:*
+        version: link:../../../packages/adapter
+      astro:
+        specifier: ^7.1.0
+        version: 7.1.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(jiti@2.7.0)(rollup@4.62.4)
+
+  tests/fixtures/server-island:
     dependencies:
       "@astro-yandex-cloud/adapter":
         specifier: workspace:*

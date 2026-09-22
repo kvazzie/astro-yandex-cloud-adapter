@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import yandexCloud from "../../packages/adapter/src/index.js";
+import type { AdapterOptions } from "../../packages/adapter/src/types.js";
+
+async function adapterDescription(options?: AdapterOptions) {
+  const hook = yandexCloud(options).hooks["astro:config:done"];
+  let description: unknown;
+
+  await hook?.({
+    config: {},
+    injectTypes: () => {},
+    setAdapter: (adapter: unknown) => {
+      description = adapter;
+    },
+  } as never);
+
+  return description;
+}
 
 describe("adapter options and routes", () => {
   it("defaults to object-storage", () => {
@@ -34,6 +50,44 @@ describe("adapter options and routes", () => {
         logger: {} as never,
       }),
     ).toThrow(/cannot serve on-demand routes.*\/api\/\[id\]/);
+  });
+
+  it("declares only the features supported by the Object Storage Target", async () => {
+    expect(await adapterDescription()).toMatchObject({
+      adapterFeatures: {
+        buildOutput: "static",
+        middlewareMode: "classic",
+        preserveBuildClientDir: true,
+        preserveBuildServerDir: true,
+      },
+      supportedAstroFeatures: {
+        staticOutput: "stable",
+        hybridOutput: "unsupported",
+        serverOutput: "unsupported",
+        sharpImageService: "stable",
+        envGetSecret: "stable",
+        i18nDomains: "unsupported",
+      },
+    });
+  });
+
+  it("declares runtime and limited Sharp support for the Object Storage + Cloud Functions Target", async () => {
+    expect(
+      await adapterDescription({ target: "object-storage-functions" }),
+    ).toMatchObject({
+      supportedAstroFeatures: {
+        staticOutput: "stable",
+        hybridOutput: "stable",
+        serverOutput: "stable",
+        sharpImageService: {
+          support: "limited",
+          message:
+            "Sharp is externalized and has limited support in Yandex Cloud Functions.",
+        },
+        envGetSecret: "stable",
+        i18nDomains: "unsupported",
+      },
+    });
   });
 
   it("preserves every configured Rolldown output for a Runtime Build", () => {
