@@ -6,6 +6,7 @@ import type { InlineConfig } from "vite";
 import {
   hasFunctionArtifact,
   prepareFunctionArtifact,
+  prepareInstallFunctionArtifact,
   writeDeploymentManifest,
 } from "./artifacts.js";
 import { ADAPTER_NAME } from "./constants.js";
@@ -127,16 +128,19 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
     completeBuild: async ({ config, onDemand, prerendered }) => {
       const functionDirectory = new URL("function/", config.outDir);
       const hasFunction = await hasFunctionArtifact(functionDirectory);
-      if (hasFunction && dependencies.strategy === "bundle") {
-        await prepareFunctionArtifact(functionDirectory);
+      if (hasFunction) {
+        if (dependencies.strategy === "bundle") {
+          await prepareFunctionArtifact(functionDirectory);
+        } else {
+          await prepareInstallFunctionArtifact(functionDirectory, config.root);
+        }
       }
-      // Install strategy keeps bare runtime imports in the Function Artifact.
-      // Exact package metadata and lockfile generation arrives in a follow-up.
       await writeDeploymentManifest(config.outDir, config, {
         target,
         hasFunction,
         onDemand: hasFunction ? onDemand : [],
         prerendered,
+        sharpSupport: dependencies.sharpSupport,
       });
     },
   };
@@ -147,7 +151,7 @@ function assertBundleUserExternals(config: AstroConfig): void {
   if (external === undefined) return;
   if (external === true || !Array.isArray(external)) {
     throw new Error(
-      'The "bundle" dependency strategy does not support custom Vite SSR package externals. Remove vite.ssr.external; dependencyStrategy: "install" packaging is not available yet.',
+      'The "bundle" dependency strategy does not support custom Vite SSR package externals. Remove vite.ssr.external or select dependencyStrategy: "install".',
     );
   }
   const unsupported = external.filter(
@@ -156,7 +160,7 @@ function assertBundleUserExternals(config: AstroConfig): void {
   if (unsupported.length) {
     throw new Error(
       `The "bundle" dependency strategy cannot externalize runtime packages: ${unsupported.map(String).join(", ")}. ` +
-        'Remove them from vite.ssr.external; dependencyStrategy: "install" packaging is not available yet.',
+        'Remove them from vite.ssr.external or select dependencyStrategy: "install".',
     );
   }
 }
@@ -220,6 +224,7 @@ interface DependencyStrategyPolicy {
   assertUserExternals: (config: AstroConfig) => void;
   configureServerBuild: (vite: InlineConfig) => InlineConfig;
   sharpImageService: AstroAdapter["supportedAstroFeatures"]["sharpImageService"];
+  sharpSupport: "unsupported" | "limited";
 }
 
 function createDependencyStrategyPolicy(
@@ -234,8 +239,9 @@ function createDependencyStrategyPolicy(
       sharpImageService: {
         support: "unsupported",
         message:
-          'Sharp is a native runtime dependency and cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", whose packaging is not available yet.',
+          'Sharp is a native runtime dependency and cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install".',
       },
+      sharpSupport: "unsupported",
     };
   }
   if (strategy === "install") {
@@ -247,6 +253,7 @@ function createDependencyStrategyPolicy(
         support: "limited",
         message: "Sharp support is experimental in Yandex Cloud Functions.",
       },
+      sharpSupport: "limited",
     };
   }
   throw new TypeError(

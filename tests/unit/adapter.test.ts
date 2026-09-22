@@ -88,7 +88,7 @@ describe("adapter options and routes", () => {
         sharpImageService: {
           support: "unsupported",
           message:
-            'Sharp is a native runtime dependency and cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", whose packaging is not available yet.',
+            'Sharp is a native runtime dependency and cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install".',
         },
         envGetSecret: "stable",
         i18nDomains: "unsupported",
