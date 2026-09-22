@@ -127,9 +127,11 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
     completeBuild: async ({ config, onDemand, prerendered }) => {
       const functionDirectory = new URL("function/", config.outDir);
       const hasFunction = await hasFunctionArtifact(functionDirectory);
-      if (hasFunction) {
+      if (hasFunction && dependencies.strategy === "bundle") {
         await prepareFunctionArtifact(functionDirectory);
       }
+      // Install strategy keeps bare runtime imports in the Function Artifact.
+      // Exact package metadata and lockfile generation arrives in a follow-up.
       await writeDeploymentManifest(config.outDir, config, {
         target,
         hasFunction,
@@ -184,7 +186,37 @@ function serverViteConfig(vite: InlineConfig): InlineConfig {
   };
 }
 
+/** Applies Function Artifact install requirements to Astro's server Vite configuration. */
+function installServerViteConfig(vite: InlineConfig): InlineConfig {
+  const currentBuild = vite.build ?? {};
+  const output = { chunkFileNames: "chunks/[name]-[hash].js" };
+  const currentOutput = currentBuild.rolldownOptions?.output;
+  return {
+    ssr: {
+      ...vite.ssr,
+      // Keep runtime package imports external while leaving application
+      // bundling in Astro's Vite and Rolldown pipeline. A blanket
+      // noExternal would bundle runtime dependencies; drop it but preserve
+      // an explicit user noExternal bundle list.
+      ...(vite.ssr?.noExternal === true ? { noExternal: undefined } : {}),
+    },
+    build: {
+      ...currentBuild,
+      rolldownOptions: {
+        ...currentBuild.rolldownOptions,
+        output: Array.isArray(currentOutput)
+          ? currentOutput.map(
+              /** Adds the required chunk name without collapsing multiple outputs. */
+              (item) => ({ ...item, ...output }),
+            )
+          : { ...currentOutput, ...output },
+      },
+    },
+  };
+}
+
 interface DependencyStrategyPolicy {
+  strategy: DependencyStrategy;
   assertUserExternals: (config: AstroConfig) => void;
   configureServerBuild: (vite: InlineConfig) => InlineConfig;
   sharpImageService: AstroAdapter["supportedAstroFeatures"]["sharpImageService"];
@@ -196,6 +228,7 @@ function createDependencyStrategyPolicy(
   const strategy = selected ?? "bundle";
   if (strategy === "bundle") {
     return {
+      strategy,
       assertUserExternals: assertBundleUserExternals,
       configureServerBuild: serverViteConfig,
       sharpImageService: {
@@ -207,12 +240,9 @@ function createDependencyStrategyPolicy(
   }
   if (strategy === "install") {
     return {
+      strategy,
       assertUserExternals: () => {},
-      configureServerBuild: () => {
-        throw new Error(
-          'The "install" dependency strategy is not available yet. Use "bundle" for JavaScript dependencies.',
-        );
-      },
+      configureServerBuild: installServerViteConfig,
       sharpImageService: {
         support: "limited",
         message: "Sharp support is experimental in Yandex Cloud Functions.",

@@ -795,6 +795,25 @@ describe.sequential("Astro artifact builds", () => {
     );
   });
 
+  it("keeps runtime package imports for the install dependency strategy", async () => {
+    await build({
+      root: `${join(fixtures, "install-basic")}/`,
+      logLevel: "silent",
+    });
+
+    const functionDirectory = join(fixtures, "install-basic/dist/function");
+    const files = await layout(functionDirectory);
+    expect(files).toContain("index.js");
+    expect(files.some((file) => file.startsWith("chunks/"))).toBe(true);
+
+    const sources = await Promise.all(
+      files
+        .filter((file) => file.endsWith(".js") || file.endsWith(".mjs"))
+        .map((file) => readFile(join(functionDirectory, file), "utf8")),
+    );
+    expect(sources.some((source) => source.includes('from "nanoid"'))).toBe(true);
+  });
+
   it("rejects active Astro-internal routes for Object Storage", async () => {
     let failure: unknown;
     try {

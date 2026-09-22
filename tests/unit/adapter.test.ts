@@ -112,6 +112,40 @@ describe("adapter options and routes", () => {
     });
   });
 
+  it("keeps runtime package imports external for the install strategy", () => {
+    const hook = yandexCloud({
+      target: "object-storage-functions",
+      dependencyStrategy: "install",
+    }).hooks["astro:build:setup"];
+    interface UpdatedServerBuild {
+      ssr?: { external?: unknown; noExternal?: unknown };
+      build?: { rolldownOptions?: { output?: unknown } };
+    }
+    let updatedConfig: UpdatedServerBuild | undefined;
+
+    void hook?.({
+      target: "server",
+      vite: {
+        ssr: { external: ["nanoid"], noExternal: true },
+        build: {
+          rolldownOptions: { output: [{ entryFileNames: "first.js" }] },
+        },
+      },
+      updateConfig: (config: unknown) => {
+        updatedConfig = config as UpdatedServerBuild;
+      },
+    } as never);
+
+    expect(updatedConfig?.ssr?.external).toEqual(["nanoid"]);
+    expect(updatedConfig?.ssr?.noExternal).not.toBe(true);
+    expect(updatedConfig?.build?.rolldownOptions?.output).toEqual([
+      {
+        entryFileNames: "first.js",
+        chunkFileNames: "chunks/[name]-[hash].js",
+      },
+    ]);
+  });
+
   it("preserves every configured Rolldown output for a Runtime Build", () => {
     const hook = yandexCloud({
       target: "object-storage-functions",
