@@ -31,7 +31,10 @@ export async function prepareFunctionArtifact(
   functionDirectory: URL,
   appRoot?: URL,
 ): Promise<void> {
-  await validateFunctionArtifact(functionDirectory);
+  const entrypoint = await validateFunctionEntrypoint(functionDirectory);
+  if (!entrypoint.ok) {
+    throw new Error(entrypoint.reason, { cause: entrypoint.cause });
+  }
   await writeFunctionPackage(functionDirectory, appRoot);
 }
 
@@ -119,17 +122,22 @@ export async function writeDeploymentManifest(
   return manifest;
 }
 
-async function validateFunctionArtifact(functionDirectory: URL): Promise<void> {
+type FunctionEntrypointValidation =
+  { ok: true } | { ok: false; reason: string; cause: unknown };
+
+async function validateFunctionEntrypoint(
+  functionDirectory: URL,
+): Promise<FunctionEntrypointValidation> {
   const entrypoint = new URL("index.js", functionDirectory);
   try {
-    await readFile(entrypoint);
+    await access(entrypoint);
+    return { ok: true };
   } catch (error) {
-    throw new Error(
-      `Astro did not emit the expected function entrypoint at ${entrypoint.pathname}.`,
-      {
-        cause: error,
-      },
-    );
+    return {
+      ok: false,
+      reason: `Astro did not emit the expected function entrypoint at ${entrypoint.pathname}.`,
+      cause: error,
+    };
   }
 }
 
