@@ -155,7 +155,7 @@ function extractStaticString(value: unknown): string | undefined {
   return typeof cooked === "string" ? cooked : undefined;
 }
 
-function packageNameFromImportSpecifier(
+function packageNameFromSpecifier(
   importSpecifier: string,
   relativePath: string,
   strategy: DependencyStrategy = "bundle",
@@ -193,7 +193,7 @@ function findImportedPackageNames(
   }) as unknown as SyntaxNode;
 
   const collectPackageImport = (importSpecifier: string): void => {
-    const packageName = packageNameFromImportSpecifier(
+    const packageName = packageNameFromSpecifier(
       importSpecifier,
       relativePath,
       strategy,
