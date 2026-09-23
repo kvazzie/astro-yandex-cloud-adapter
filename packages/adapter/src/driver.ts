@@ -108,7 +108,7 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
         );
         if (hasFunction) assertObjectStorageRoutesSupported(onDemand);
         await writeDeploymentManifest(config.outDir, config, {
-          target,
+          deploymentTarget: target,
           hasFunction: false,
           onDemand: [],
           prerendered,
@@ -135,7 +135,7 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
         );
       }
       await writeDeploymentManifest(config.outDir, config, {
-        target,
+        deploymentTarget: target,
         hasFunction,
         onDemand: hasFunction ? onDemand : [],
         prerendered,

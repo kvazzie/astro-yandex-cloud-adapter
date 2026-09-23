@@ -9,7 +9,10 @@ import { createDriver } from "./driver.js";
 import { runtimeConfigPlugin } from "./runtime-config.js";
 import type { AdapterOptions } from "./types.js";
 
-export { parseDeploymentManifest } from "./deployment-manifest.js";
+export {
+  defineDeploymentManifest,
+  parseDeploymentManifest,
+} from "./deployment-manifest.js";
 export type {
   AdapterOptions,
   ClientArtifactFile,

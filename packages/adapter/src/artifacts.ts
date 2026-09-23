@@ -8,7 +8,10 @@ import type { AstroConfig } from "astro";
 import { glob } from "tinyglobby";
 
 import { ADAPTER_NAME, ADAPTER_VERSION } from "./constants.js";
-import { parseDeploymentManifest } from "./deployment-manifest.js";
+import {
+  defineDeploymentManifest,
+  parseDeploymentManifest,
+} from "./deployment-manifest.js";
 import { defaults, type FunctionSharpSupport } from "./defaults.js";
 import {
   compareNames,
@@ -37,36 +40,38 @@ export async function prepareFunctionArtifact(
 }
 
 export async function hasFunctionArtifact(
-  functionDirectory: URL,
+  candidateDirectory: URL,
 ): Promise<boolean> {
   try {
-    await access(new URL("index.js", functionDirectory));
+    await access(new URL("index.js", candidateDirectory));
     return true;
   } catch {
     return false;
   }
 }
 
-export async function readAstroVersion(root: URL): Promise<string> {
+export async function getAstroVersion(root: URL): Promise<string> {
   return installedVersion(root, "astro");
 }
 
-export function artifactPath(outDir: URL, artifact: URL): string {
+export function relativeArtifactPath(outDir: URL, artifact: URL): string {
   return relative(fileURLToPath(outDir), fileURLToPath(artifact))
     .split(sep)
     .join("/");
 }
 
+interface WriteDeploymentManifestInput {
+  deploymentTarget: Target;
+  prerendered: string[];
+  onDemand: string[];
+  hasFunction: boolean;
+  sharpSupport?: FunctionSharpSupport;
+}
+
 export async function writeDeploymentManifest(
   outDir: URL,
   config: AstroConfig,
-  input: {
-    target: Target;
-    prerendered: string[];
-    onDemand: string[];
-    hasFunction: boolean;
-    sharpSupport?: "unsupported" | "limited";
-  },
+  input: WriteDeploymentManifestInput,
 ): Promise<YandexCloudManifestV1> {
   const client = new URL("client/", outDir);
   const functionDirectory = new URL("function/", outDir);
@@ -76,24 +81,29 @@ export async function writeDeploymentManifest(
     base,
     input.prerendered,
   );
-  const manifest: YandexCloudManifestV1 = {
+  const manifest = defineDeploymentManifest({
     schemaVersion: 1,
     adapter: { name: ADAPTER_NAME, version: ADAPTER_VERSION },
-    astro: { version: await readAstroVersion(config.root) },
-    target: input.target,
+    astro: { version: await getAstroVersion(config.root) },
+    target: input.deploymentTarget,
     buildOutput: input.hasFunction ? "server" : "static",
     base,
     artifacts: {
       client: {
-        path: artifactPath(outDir, client),
+        path: relativeArtifactPath(outDir, client),
         files: clientArtifact.files,
       },
       ...(input.hasFunction
         ? {
-            function: defineFunctionArtifact({
-              path: artifactPath(outDir, functionDirectory),
-              sharp: input.sharpSupport ?? defaults.SHARP_SUPPORT,
-            }),
+            function: {
+              path: relativeArtifactPath(outDir, functionDirectory),
+              runtime: "nodejs22",
+              format: "esm",
+              entrypoint: "index.handler",
+              support: {
+                sharp: input.sharpSupport ?? defaults.SHARP_SUPPORT,
+              },
+            },
           }
         : {}),
     },
@@ -103,7 +113,7 @@ export async function writeDeploymentManifest(
         .sort()
         .map((pattern) => ({ pattern: withBase(base, pattern) })),
     },
-  };
+  });
   parseDeploymentManifest(manifest);
   await mkdir(fileURLToPath(outDir), { recursive: true });
   await writeFile(
@@ -111,19 +121,6 @@ export async function writeDeploymentManifest(
     `${JSON.stringify(manifest, null, 2)}\n`,
   );
   return manifest;
-}
-
-function defineFunctionArtifact(input: {
-  path: string;
-  sharp: FunctionSharpSupport;
-}): NonNullable<YandexCloudManifestV1["artifacts"]["function"]> {
-  return {
-    path: input.path,
-    runtime: "nodejs22",
-    format: "esm",
-    entrypoint: "index.handler",
-    support: { sharp: input.sharp },
-  };
 }
 
 async function validateFunctionArtifact(functionDirectory: URL): Promise<void> {
@@ -143,8 +140,9 @@ async function validateFunctionArtifact(functionDirectory: URL): Promise<void> {
 async function writeFunctionPackage(functionDirectory: URL): Promise<void> {
   const functionDirectoryPath = asDirectoryPath(fileURLToPath(functionDirectory));
   const packageNames = await findRuntimePackageImports(functionDirectoryPath);
-  // A bare sharp import survives the .node scan above, so the package is
-  // rejected by name to point at install instead of misadvising bundling.
+  // The .node scan only sees emitted native modules and specifiers, so a
+  // bare import of a native package (sharp) needs this rejection by name
+  // to point at install instead of misadvising bundling.
   if (packageNames.has("sharp")) {
     throw new Error(
       'The Function Artifact contains the native runtime dependency sharp, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", which keeps runtime package imports with exact package metadata and a lockfile.',
@@ -218,20 +216,18 @@ async function listFunctionScriptPaths(
 ): Promise<string[]> {
   const relativePaths = await emittedRelativePaths(directoryPath);
   const fileNames = relativePaths.map((relativePath) => basename(relativePath));
-  const nativeModuleName = fileNames.find((fileName) =>
-    fileName.endsWith(".node"),
-  );
-  if (nativeModuleName && strategy === "bundle") {
+  const hasNativeModule = fileNames.some((fileName) => fileName.endsWith(".node"));
+  if (hasNativeModule && strategy === "bundle") {
     throw new Error(
-      `The Function Artifact contains the native runtime module ${nativeModuleName}, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", which keeps runtime package imports with exact package metadata and a lockfile.`,
+      'The Function Artifact contains a native runtime module, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", which keeps runtime package imports with exact package metadata and a lockfile.',
     );
   }
-  const commonJsModuleName = fileNames.find((fileName) =>
+  const hasCommonJsModule = fileNames.some((fileName) =>
     fileName.endsWith(".cjs"),
   );
-  if (commonJsModuleName) {
+  if (hasCommonJsModule) {
     throw new Error(
-      `The function artifact contains the unsupported CommonJS module ${commonJsModuleName}. V1 function artifacts must use ESM.`,
+      "The function artifact contains an unsupported CommonJS module. V1 function artifacts must use ESM.",
     );
   }
   return relativePaths

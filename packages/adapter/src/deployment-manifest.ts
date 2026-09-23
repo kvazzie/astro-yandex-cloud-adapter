@@ -112,3 +112,10 @@ export function parseDeploymentManifest(value: unknown): DeploymentManifestV1 {
     .join("; ");
   invalidManifest(details ?? "the value does not match schema version 1.");
 }
+
+/** Builds a Deployment Manifest with compile-time contract checking. */
+export function defineDeploymentManifest(
+  manifest: DeploymentManifestV1,
+): DeploymentManifestV1 {
+  return manifest;
+}
