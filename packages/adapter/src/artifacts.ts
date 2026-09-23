@@ -117,7 +117,7 @@ export async function writeDeploymentManifest(
     routes: {
       prerendered: clientArtifact.routes,
       onDemand: [...new Set(input.onDemand)]
-        .toSorted()
+        .sort()
         .map((pattern) => ({ pattern: withBase(base, pattern) })),
     },
   });
@@ -184,7 +184,7 @@ async function writeFunctionPackageJson(
   }
   if (dependencyNames.size) {
     throw new Error(
-      `The "bundle" dependency strategy left unresolved runtime package imports in the Function Artifact: ${[...dependencyNames].toSorted().join(", ")}. ` +
+      `The "bundle" dependency strategy left unresolved runtime package imports in the Function Artifact: ${[...dependencyNames].sort().join(", ")}. ` +
         'Bundle these packages with Astro/Vite or select dependencyStrategy: "install".',
     );
   }
@@ -264,7 +264,7 @@ async function emittedRelativePaths(
     dot: true,
     onlyFiles: true,
   });
-  return paths.toSorted(compareNames);
+  return paths.sort(compareNames);
 }
 
 function findImportedPackageNames(
@@ -478,7 +478,7 @@ async function resolvePinnedRuntimeDependencies(
   const pending: Array<{
     dependencyName: string;
     resolutionBases: Array<URL | string>;
-  }> = [...directDependencyNames].toSorted().map((dependencyName) => ({
+  }> = [...directDependencyNames].sort().map((dependencyName) => ({
     dependencyName,
     resolutionBases: [appManifestPath],
   }));
@@ -515,10 +515,10 @@ async function resolvePinnedRuntimeDependencies(
       optional: boolean;
     }> = [
       ...Object.entries(metadata.dependencies ?? {})
-        .toSorted(([a], [b]) => compareNames(a, b))
+        .sort(([a], [b]) => compareNames(a, b))
         .map(([name, range]) => ({ name, range, optional: false })),
       ...Object.keys(metadata.optionalDependencies ?? {})
-        .toSorted(compareNames)
+        .sort(compareNames)
         .map((name) => ({ name, range: "", optional: true })),
     ];
     for (const { name: dependencyName, range, optional } of transitiveRanges) {
@@ -780,7 +780,7 @@ async function describeClientArtifact(
     asDirectoryPath(fileURLToPath(clientDirectory)),
   );
   const pathSet = new Set(paths);
-  const uniqueRoutes = [...new Set(prerendered)].toSorted();
+  const uniqueRoutes = [...new Set(prerendered)].sort();
   const routeFileEntries = uniqueRoutes.map(
     (url) => [prerenderedFile(url, pathSet), withBase(base, url)] as const,
   );

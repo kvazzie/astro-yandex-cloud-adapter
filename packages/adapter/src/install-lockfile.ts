@@ -39,7 +39,7 @@ function sortedRecord(
 ): Record<string, string> | undefined {
   if (!record) return undefined;
   const sorted: Record<string, string> = {};
-  for (const key of Object.keys(record).toSorted(compareNames)) {
+  for (const key of Object.keys(record).sort(compareNames)) {
     const value = record[key];
     if (value !== undefined) sorted[key] = value;
   }
