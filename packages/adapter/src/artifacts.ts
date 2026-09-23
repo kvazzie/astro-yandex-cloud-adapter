@@ -32,11 +32,7 @@ export async function prepareFunctionArtifact(
   appRoot?: URL,
 ): Promise<void> {
   await validateFunctionArtifact(functionDirectory);
-  if (appRoot) {
-    await writeInstallFunctionPackage(functionDirectory, appRoot);
-  } else {
-    await writeFunctionPackage(functionDirectory);
-  }
+  await writeFunctionPackage(functionDirectory, appRoot);
 }
 
 export async function hasFunctionArtifact(
@@ -137,8 +133,30 @@ async function validateFunctionArtifact(functionDirectory: URL): Promise<void> {
   }
 }
 
-async function writeFunctionPackage(functionDirectory: URL): Promise<void> {
+async function writeFunctionPackage(
+  functionDirectory: URL,
+  appRoot?: URL,
+): Promise<void> {
   const functionDirectoryPath = asDirectoryPath(fileURLToPath(functionDirectory));
+  if (appRoot) {
+    const directPackageNames = await findRuntimePackageImports(
+      functionDirectoryPath,
+      "install",
+    );
+    const pinnedPackages = await resolvePinnedRuntimePackages(
+      appRoot,
+      directPackageNames,
+    );
+    await writeFile(
+      new URL("package.json", functionDirectory),
+      formatFunctionPackageJson(pinnedPackages),
+    );
+    await writeFile(
+      new URL("package-lock.json", functionDirectory),
+      formatNpmLockfile(pinnedPackages),
+    );
+    return;
+  }
   const packageNames = await findRuntimePackageImports(functionDirectoryPath);
   // The .node scan only sees emitted native modules and specifiers, so a
   // bare import of a native package (sharp) needs this rejection by name
@@ -163,29 +181,6 @@ async function writeFunctionPackage(functionDirectory: URL): Promise<void> {
   await writeFile(
     new URL("package.json", functionDirectory),
     `${JSON.stringify(packageJson, null, 2)}\n`,
-  );
-}
-
-async function writeInstallFunctionPackage(
-  functionDirectory: URL,
-  appRoot: URL,
-): Promise<void> {
-  const functionDirectoryPath = asDirectoryPath(fileURLToPath(functionDirectory));
-  const directPackageNames = await findRuntimePackageImports(
-    functionDirectoryPath,
-    "install",
-  );
-  const pinnedPackages = await resolvePinnedRuntimePackages(
-    appRoot,
-    directPackageNames,
-  );
-  await writeFile(
-    new URL("package.json", functionDirectory),
-    formatFunctionPackageJson(pinnedPackages),
-  );
-  await writeFile(
-    new URL("package-lock.json", functionDirectory),
-    formatNpmLockfile(pinnedPackages),
   );
 }
 
