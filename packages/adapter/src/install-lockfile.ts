@@ -1,6 +1,6 @@
 /** Exact runtime dependency metadata for install Function Artifacts. */
 
-export interface ResolvedRuntimePackage {
+export interface ResolvedRuntimeDependency {
   name: string;
   version: string;
   resolved?: string;
@@ -18,20 +18,20 @@ export function compareNames(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function sortedPackages(
-  packages: ResolvedRuntimePackage[],
-): ResolvedRuntimePackage[] {
-  return [...packages].sort((a, b) => compareNames(a.name, b.name));
+function sortedDependencies(
+  dependencies: ResolvedRuntimeDependency[],
+): ResolvedRuntimeDependency[] {
+  return [...dependencies].sort((a, b) => compareNames(a.name, b.name));
 }
 
 function exactDependencies(
-  packages: ResolvedRuntimePackage[],
+  dependencies: ResolvedRuntimeDependency[],
 ): Record<string, string> {
-  const dependencies: Record<string, string> = {};
-  for (const package_ of sortedPackages(packages)) {
-    dependencies[package_.name] = package_.version;
+  const exact: Record<string, string> = {};
+  for (const dependency of sortedDependencies(dependencies)) {
+    exact[dependency.name] = dependency.version;
   }
-  return dependencies;
+  return exact;
 }
 
 function sortedRecord(
@@ -48,14 +48,14 @@ function sortedRecord(
 
 /** Formats the Function Artifact package.json with exact dependency versions. */
 export function formatFunctionPackageJson(
-  packages: ResolvedRuntimePackage[],
+  dependencies: ResolvedRuntimeDependency[],
 ): string {
   return `${JSON.stringify(
     {
       private: true,
       type: "module",
       engines: { node: FUNCTION_NODE_RANGE },
-      dependencies: exactDependencies(packages),
+      dependencies: exactDependencies(dependencies),
     },
     null,
     2,
@@ -72,33 +72,37 @@ interface NpmLockPackageEntry {
   optionalDependencies?: Record<string, string>;
 }
 
-function lockPackageEntry(package_: ResolvedRuntimePackage): NpmLockPackageEntry {
-  const entry: NpmLockPackageEntry = { version: package_.version };
-  if (package_.resolved !== undefined) entry.resolved = package_.resolved;
-  if (package_.integrity !== undefined) entry.integrity = package_.integrity;
-  if (package_.license !== undefined) entry.license = package_.license;
-  if (package_.engines !== undefined)
-    entry.engines = sortedRecord(package_.engines);
-  const dependencies = sortedRecord(package_.dependencies);
+function lockPackageEntry(
+  dependency: ResolvedRuntimeDependency,
+): NpmLockPackageEntry {
+  const entry: NpmLockPackageEntry = { version: dependency.version };
+  if (dependency.resolved !== undefined) entry.resolved = dependency.resolved;
+  if (dependency.integrity !== undefined) entry.integrity = dependency.integrity;
+  if (dependency.license !== undefined) entry.license = dependency.license;
+  if (dependency.engines !== undefined)
+    entry.engines = sortedRecord(dependency.engines);
+  const dependencies = sortedRecord(dependency.dependencies);
   if (dependencies !== undefined) entry.dependencies = dependencies;
-  const optionalDependencies = sortedRecord(package_.optionalDependencies);
+  const optionalDependencies = sortedRecord(dependency.optionalDependencies);
   if (optionalDependencies !== undefined)
     entry.optionalDependencies = optionalDependencies;
   return entry;
 }
 
 /** Formats a deterministic npm lockfileVersion 3 for install artifacts. */
-export function formatNpmLockfile(packages: ResolvedRuntimePackage[]): string {
-  const sorted = sortedPackages(packages);
+export function formatNpmLockfile(
+  dependencies: ResolvedRuntimeDependency[],
+): string {
+  const sorted = sortedDependencies(dependencies);
   const direct = exactDependencies(sorted);
   const lockPackages: Record<string, NpmLockPackageEntry> = {
     "": { version: "1.0.0", dependencies: direct },
   };
   const legacy: Record<string, NpmLockPackageEntry> = {};
-  for (const package_ of sorted) {
-    const entry = lockPackageEntry(package_);
-    lockPackages[`node_modules/${package_.name}`] = entry;
-    legacy[package_.name] = entry;
+  for (const dependency of sorted) {
+    const entry = lockPackageEntry(dependency);
+    lockPackages[`node_modules/${dependency.name}`] = entry;
+    legacy[dependency.name] = entry;
   }
   return `${JSON.stringify(
     {

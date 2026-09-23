@@ -4,9 +4,9 @@ import {
   formatFunctionPackageJson,
   formatNpmLockfile,
 } from "../../packages/adapter/src/install-lockfile.js";
-import type { ResolvedRuntimePackage } from "../../packages/adapter/src/install-lockfile.js";
+import type { ResolvedRuntimeDependency } from "../../packages/adapter/src/install-lockfile.js";
 
-const nanoid: ResolvedRuntimePackage = {
+const nanoid: ResolvedRuntimeDependency = {
   name: "nanoid",
   version: "3.3.17",
   resolved: "https://registry.npmjs.org/nanoid/-/nanoid-3.3.17.tgz",
@@ -29,7 +29,7 @@ describe("install artifact metadata", () => {
   });
 
   it("orders dependencies alphabetically in package.json", () => {
-    const second: ResolvedRuntimePackage = {
+    const second: ResolvedRuntimeDependency = {
       name: "aproject",
       version: "1.0.0",
     };
