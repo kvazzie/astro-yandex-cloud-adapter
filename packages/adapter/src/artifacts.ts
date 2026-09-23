@@ -46,10 +46,23 @@ export async function finalizeFunctionArtifact(
   await writeFunctionPackageJson(functionDirectory, appRoot);
 }
 
-export async function hasFunctionArtifact(
-  candidateDirectory: URL,
-): Promise<boolean> {
-  return (await validateFunctionEntrypoint(candidateDirectory)).ok;
+type FunctionEntrypointValidation =
+  { ok: true } | { ok: false; reason: string; cause: unknown };
+
+export async function validateFunctionEntrypoint(
+  functionDirectory: URL,
+): Promise<FunctionEntrypointValidation> {
+  const entrypoint = new URL("index.js", functionDirectory);
+  try {
+    await access(entrypoint);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `Astro did not emit the expected function entrypoint at ${entrypoint.pathname}.`,
+      cause: error,
+    };
+  }
 }
 
 export async function getAstroVersion(root: URL): Promise<string> {
@@ -124,25 +137,6 @@ export async function writeDeploymentManifest(
     `${JSON.stringify(manifest, null, 2)}\n`,
   );
   return manifest;
-}
-
-type FunctionEntrypointValidation =
-  { ok: true } | { ok: false; reason: string; cause: unknown };
-
-async function validateFunctionEntrypoint(
-  functionDirectory: URL,
-): Promise<FunctionEntrypointValidation> {
-  const entrypoint = new URL("index.js", functionDirectory);
-  try {
-    await access(entrypoint);
-    return { ok: true };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: `Astro did not emit the expected function entrypoint at ${entrypoint.pathname}.`,
-      cause: error,
-    };
-  }
 }
 
 async function writeFunctionPackageJson(

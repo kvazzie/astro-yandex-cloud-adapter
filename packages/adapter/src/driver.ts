@@ -5,7 +5,7 @@ import type { InlineConfig } from "vite";
 
 import {
   finalizeFunctionArtifact,
-  hasFunctionArtifact,
+  validateFunctionEntrypoint,
   writeDeploymentManifest,
 } from "./artifacts.js";
 import { ADAPTER_NAME } from "./constants.js";
@@ -103,7 +103,7 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
       adapter: (hasOnDemandRoutes) =>
         adapter(hasOnDemandRoutes, objectStorageFeatures),
       completeBuild: async ({ config, onDemand, prerendered }) => {
-        const hasFunction = await hasFunctionArtifact(
+        const { ok: hasFunction } = await validateFunctionEntrypoint(
           new URL("function/", config.outDir),
         );
         if (hasFunction) assertObjectStorageRoutesSupported(onDemand);
@@ -127,7 +127,8 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
       ),
     completeBuild: async ({ config, onDemand, prerendered }) => {
       const functionDirectory = new URL("function/", config.outDir);
-      const hasFunction = await hasFunctionArtifact(functionDirectory);
+      const { ok: hasFunction } =
+        await validateFunctionEntrypoint(functionDirectory);
       if (hasFunction) {
         await finalizeFunctionArtifact(
           functionDirectory,
