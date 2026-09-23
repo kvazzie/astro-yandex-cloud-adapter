@@ -49,12 +49,7 @@ export async function finalizeFunctionArtifact(
 export async function hasFunctionArtifact(
   candidateDirectory: URL,
 ): Promise<boolean> {
-  try {
-    await access(new URL("index.js", candidateDirectory));
-    return true;
-  } catch {
-    return false;
-  }
+  return (await validateFunctionEntrypoint(candidateDirectory)).ok;
 }
 
 export async function getAstroVersion(root: URL): Promise<string> {
