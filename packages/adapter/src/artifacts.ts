@@ -28,22 +28,23 @@ import type {
 } from "./types.js";
 
 /**
- * Finalizes the Function Artifact directory after Astro emits it.
+ * Finalizes the Function Artifact directory Astro emitted, reporting
+ * whether anything was finalized.
  *
- * Always validates the function entrypoint first. When appRoot is provided
- * (the install dependency strategy), pins the bare runtime imports left in
- * the emitted code to exact versions in Package JSON and lockfile files;
- * otherwise writes the bundle Package JSON with no runtime Dependencies.
+ * Returns false and writes nothing when Astro emitted no function
+ * entrypoint (a Static-only Build). Otherwise validates the entrypoint
+ * and writes metadata: with appRoot (the install dependency strategy)
+ * exact Package JSON and lockfile files for the bare runtime imports,
+ * otherwise the bundle Package JSON with no runtime Dependencies.
  */
 export async function finalizeFunctionArtifact(
   functionDirectory: URL,
   appRoot?: URL,
-): Promise<void> {
+): Promise<boolean> {
   const entrypoint = await validateFunctionEntrypoint(functionDirectory);
-  if (!entrypoint.ok) {
-    throw new Error(entrypoint.reason, { cause: entrypoint.cause });
-  }
+  if (!entrypoint.ok) return false;
   await writeFunctionPackageJson(functionDirectory, appRoot);
+  return true;
 }
 
 type FunctionEntrypointValidation =
