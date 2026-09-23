@@ -64,6 +64,10 @@ _Avoid_: Adapter
 The adapter-owned process that produces target-shaped, deployable artifacts and the deployment manifest needed to transfer them to Yandex Cloud.
 _Avoid_: Deployment
 
+**Import Specifier**:
+The string in an import expression that identifies what to load, per Node.js terminology. A bare Import Specifier names a package (`nanoid`, `@scope/pkg/sub`); relative paths, absolute paths, and `node:` builtins are not bare Import Specifiers.
+_Avoid_: Import path
+
 **Deployment**:
 The user-owned process that transfers generated artifacts to existing Yandex Cloud resources and connects them to request routing.
 _Avoid_: Build, publish

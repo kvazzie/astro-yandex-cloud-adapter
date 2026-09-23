@@ -155,29 +155,29 @@ function extractStaticString(value: unknown): string | undefined {
   return typeof cooked === "string" ? cooked : undefined;
 }
 
-function packageNameFromSpecifier(
-  specifier: string,
+function packageNameFromImportSpecifier(
+  importSpecifier: string,
   relativePath: string,
   strategy: DependencyStrategy = "bundle",
 ): string | undefined {
-  if (specifier.endsWith(".node") && strategy === "bundle") {
+  if (importSpecifier.endsWith(".node") && strategy === "bundle") {
     throw new Error(
-      `The Function Artifact contains the native runtime module ${specifier} referenced by ${relativePath}, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", which keeps runtime package imports with exact package metadata and a lockfile.`,
+      `The Function Artifact contains the native runtime module ${importSpecifier} referenced by ${relativePath}, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", which keeps runtime package imports with exact package metadata and a lockfile.`,
     );
   }
   if (
-    specifier.startsWith(".") ||
-    specifier.startsWith("/") ||
-    specifier.startsWith("file:")
+    importSpecifier.startsWith(".") ||
+    importSpecifier.startsWith("/") ||
+    importSpecifier.startsWith("file:")
   ) {
     return undefined;
   }
-  if (isBuiltin(specifier)) return undefined;
+  if (isBuiltin(importSpecifier)) return undefined;
   // Native file imports stay inside the owning package for install builds,
   // so the package itself is pinned; bundle builds cannot carry native code.
-  return specifier.startsWith("@")
-    ? specifier.split("/").slice(0, 2).join("/")
-    : specifier.split("/")[0];
+  return importSpecifier.startsWith("@")
+    ? importSpecifier.split("/").slice(0, 2).join("/")
+    : importSpecifier.split("/")[0];
 }
 
 function findImportedPackageNames(
@@ -192,9 +192,9 @@ function findImportedPackageNames(
     sourceType: "module",
   }) as unknown as SyntaxNode;
 
-  const collectPackageImport = (specifier: string): void => {
-    const packageName = packageNameFromSpecifier(
-      specifier,
+  const collectPackageImport = (importSpecifier: string): void => {
+    const packageName = packageNameFromImportSpecifier(
+      importSpecifier,
       relativePath,
       strategy,
     );
@@ -210,23 +210,20 @@ function findImportedPackageNames(
       `The Function Artifact contains unresolved dynamic or native runtime dependency resolution in ${relativePath}, which cannot use the "bundle" dependency strategy. Bundle a fixed package import or select dependencyStrategy: "install" to keep runtime package imports.`,
     );
   };
-  const staticRequireSpecifier = (value: unknown): string =>
-    extractStaticString(value) ?? rejectDynamicImport();
-
   visitSyntax(program, (node, ancestors) => {
     if (
       node.type === "ImportDeclaration" ||
       node.type === "ExportNamedDeclaration" ||
       node.type === "ExportAllDeclaration"
     ) {
-      const specifier = extractStaticString(node.source);
-      if (specifier) collectPackageImport(specifier);
+      const importSpecifier = extractStaticString(node.source);
+      if (importSpecifier) collectPackageImport(importSpecifier);
       return;
     }
     if (node.type === "ImportExpression") {
-      const specifier = extractStaticString(node.source);
-      if (specifier) {
-        collectPackageImport(specifier);
+      const importSpecifier = extractStaticString(node.source);
+      if (importSpecifier) {
+        collectPackageImport(importSpecifier);
       } else if (!isAstroLoggerImport(node.source, relativePath, ancestors)) {
         rejectDynamicImport();
       }
@@ -242,10 +239,11 @@ function findImportedPackageNames(
       return;
     }
     const arguments_ = node.arguments;
+    const requireArgument: unknown = Array.isArray(arguments_)
+      ? arguments_[0]
+      : undefined;
     collectPackageImport(
-      staticRequireSpecifier(
-        Array.isArray(arguments_) ? arguments_[0] : undefined,
-      ),
+      extractStaticString(requireArgument) ?? rejectDynamicImport(),
     );
   });
   return packageNames;
@@ -284,10 +282,10 @@ async function readJsonFile<T>(filePath: string): Promise<T | undefined> {
 
 function tryResolveModule(
   requireFunction: ReturnType<typeof createRequire>,
-  specifier: string,
+  importSpecifier: string,
 ): string | undefined {
   try {
-    return requireFunction.resolve(specifier);
+    return requireFunction.resolve(importSpecifier);
   } catch {
     return undefined;
   }
