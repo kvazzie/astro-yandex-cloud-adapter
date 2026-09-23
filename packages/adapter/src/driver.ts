@@ -127,10 +127,14 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
       ),
     completeBuild: async ({ config, onDemand, prerendered }) => {
       const functionDirectory = new URL("function/", config.outDir);
-      const hasFunction = await finalizeFunctionArtifact(
-        functionDirectory,
-        dependencies.strategy === "install" ? config.root : undefined,
-      );
+      const { ok: hasFunction } =
+        await validateFunctionEntrypoint(functionDirectory);
+      if (hasFunction) {
+        await finalizeFunctionArtifact(
+          functionDirectory,
+          dependencies.strategy === "install" ? config.root : undefined,
+        );
+      }
       await writeDeploymentManifest(config.outDir, config, {
         deploymentTarget: target,
         hasFunction,

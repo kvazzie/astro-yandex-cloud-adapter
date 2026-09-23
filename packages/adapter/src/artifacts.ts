@@ -28,23 +28,64 @@ import type {
 } from "./types.js";
 
 /**
- * Finalizes the Function Artifact directory Astro emitted, reporting
- * whether anything was finalized.
+ * Finalizes an existing Function Artifact directory.
  *
- * Returns false and writes nothing when Astro emitted no function
- * entrypoint (a Static-only Build). Otherwise validates the entrypoint
- * and writes metadata: with appRoot (the install dependency strategy)
- * exact Package JSON and lockfile files for the bare runtime imports,
- * otherwise the bundle Package JSON with no runtime Dependencies.
+ * Call only after validateFunctionEntrypoint succeeds: writes metadata for
+ * the entrypoint Astro emitted. With appRoot (the install dependency
+ * strategy) pins the bare runtime imports to exact versions in Package
+ * JSON and lockfile files; otherwise writes the bundle Package JSON with
+ * no runtime Dependencies.
  */
 export async function finalizeFunctionArtifact(
   functionDirectory: URL,
   appRoot?: URL,
-): Promise<boolean> {
-  const entrypoint = await validateFunctionEntrypoint(functionDirectory);
-  if (!entrypoint.ok) return false;
-  await writeFunctionPackageJson(functionDirectory, appRoot);
-  return true;
+): Promise<void> {
+  const functionDirectoryPath = asDirectoryPath(fileURLToPath(functionDirectory));
+  if (appRoot) {
+    const directDependencyNames = await findRuntimePackageImports(
+      functionDirectoryPath,
+      "install",
+    );
+    const pinnedDependencies = await resolvePinnedRuntimeDependencies(
+      appRoot,
+      directDependencyNames,
+    );
+    await writeFile(
+      new URL("package.json", functionDirectory),
+      formatFunctionPackageJson(pinnedDependencies),
+    );
+    await writeFile(
+      new URL("package-lock.json", functionDirectory),
+      formatNpmLockfile(pinnedDependencies),
+    );
+    return;
+  }
+  const dependencyNames = await findRuntimePackageImports(functionDirectoryPath);
+  // The .node scan only sees emitted native modules and specifiers, so a
+  // bare import of a native package (sharp) needs this rejection by name
+  // to point at install instead of misadvising bundling.
+  if (dependencyNames.has("sharp")) {
+    throw new Error(
+      'The Function Artifact contains the native runtime dependency sharp, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", which keeps runtime package imports with exact package metadata and a lockfile.',
+    );
+  }
+  if (dependencyNames.size) {
+    // Set order follows discovery; sort for a deterministic message.
+    throw new Error(
+      `The "bundle" dependency strategy left unresolved runtime package imports in the Function Artifact: ${Array.from(dependencyNames).sort().join(", ")}. ` +
+        'Bundle these packages with Astro/Vite or select dependencyStrategy: "install".',
+    );
+  }
+  const packageJson = {
+    private: true,
+    type: "module",
+    engines: { node: ">=22.12.0" },
+    dependencies: {},
+  };
+  await writeFile(
+    new URL("package.json", functionDirectory),
+    `${JSON.stringify(packageJson, null, 2)}\n`,
+  );
 }
 
 type FunctionEntrypointValidation =
@@ -138,58 +179,6 @@ export async function writeDeploymentManifest(
     `${JSON.stringify(manifest, null, 2)}\n`,
   );
   return manifest;
-}
-
-async function writeFunctionPackageJson(
-  functionDirectory: URL,
-  appRoot?: URL,
-): Promise<void> {
-  const functionDirectoryPath = asDirectoryPath(fileURLToPath(functionDirectory));
-  if (appRoot) {
-    const directDependencyNames = await findRuntimePackageImports(
-      functionDirectoryPath,
-      "install",
-    );
-    const pinnedDependencies = await resolvePinnedRuntimeDependencies(
-      appRoot,
-      directDependencyNames,
-    );
-    await writeFile(
-      new URL("package.json", functionDirectory),
-      formatFunctionPackageJson(pinnedDependencies),
-    );
-    await writeFile(
-      new URL("package-lock.json", functionDirectory),
-      formatNpmLockfile(pinnedDependencies),
-    );
-    return;
-  }
-  const dependencyNames = await findRuntimePackageImports(functionDirectoryPath);
-  // The .node scan only sees emitted native modules and specifiers, so a
-  // bare import of a native package (sharp) needs this rejection by name
-  // to point at install instead of misadvising bundling.
-  if (dependencyNames.has("sharp")) {
-    throw new Error(
-      'The Function Artifact contains the native runtime dependency sharp, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", which keeps runtime package imports with exact package metadata and a lockfile.',
-    );
-  }
-  if (dependencyNames.size) {
-    // Set order follows discovery; sort for a deterministic message.
-    throw new Error(
-      `The "bundle" dependency strategy left unresolved runtime package imports in the Function Artifact: ${Array.from(dependencyNames).sort().join(", ")}. ` +
-        'Bundle these packages with Astro/Vite or select dependencyStrategy: "install".',
-    );
-  }
-  const packageJson = {
-    private: true,
-    type: "module",
-    engines: { node: ">=22.12.0" },
-    dependencies: {},
-  };
-  await writeFile(
-    new URL("package.json", functionDirectory),
-    `${JSON.stringify(packageJson, null, 2)}\n`,
-  );
 }
 
 async function findRuntimePackageImports(
