@@ -6,10 +6,10 @@ import type { InlineConfig } from "vite";
 import {
   hasFunctionArtifact,
   prepareFunctionArtifact,
-  prepareInstallFunctionArtifact,
   writeDeploymentManifest,
 } from "./artifacts.js";
 import { ADAPTER_NAME } from "./constants.js";
+import { defaults } from "./defaults.js";
 import type { AdapterOptions, DependencyStrategy } from "./types.js";
 
 interface CompletedBuild {
@@ -129,11 +129,10 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
       const functionDirectory = new URL("function/", config.outDir);
       const hasFunction = await hasFunctionArtifact(functionDirectory);
       if (hasFunction) {
-        if (dependencies.strategy === "bundle") {
-          await prepareFunctionArtifact(functionDirectory);
-        } else {
-          await prepareInstallFunctionArtifact(functionDirectory, config.root);
-        }
+        await prepareFunctionArtifact(
+          functionDirectory,
+          dependencies.strategy === "install" ? config.root : undefined,
+        );
       }
       await writeDeploymentManifest(config.outDir, config, {
         target,
@@ -230,7 +229,7 @@ interface DependencyStrategyPolicy {
 function createDependencyStrategyPolicy(
   selected: DependencyStrategy | undefined,
 ): DependencyStrategyPolicy {
-  const strategy = selected ?? "bundle";
+  const strategy = selected ?? defaults.STRATEGY;
   if (strategy === "bundle") {
     return {
       strategy,

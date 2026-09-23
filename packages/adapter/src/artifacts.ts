@@ -9,6 +9,7 @@ import { glob } from "tinyglobby";
 
 import { ADAPTER_NAME, ADAPTER_VERSION } from "./constants.js";
 import { parseDeploymentManifest } from "./deployment-manifest.js";
+import { defaults, type FunctionSharpSupport } from "./defaults.js";
 import {
   compareNames,
   formatFunctionPackageJson,
@@ -25,17 +26,14 @@ import type {
 
 export async function prepareFunctionArtifact(
   functionDirectory: URL,
+  appRoot?: URL,
 ): Promise<void> {
   await validateFunctionArtifact(functionDirectory);
-  await writeFunctionPackage(functionDirectory);
-}
-
-export async function prepareInstallFunctionArtifact(
-  functionDirectory: URL,
-  appRoot: URL,
-): Promise<void> {
-  await validateFunctionArtifact(functionDirectory);
-  await writeInstallFunctionPackage(functionDirectory, appRoot);
+  if (appRoot) {
+    await writeInstallFunctionPackage(functionDirectory, appRoot);
+  } else {
+    await writeFunctionPackage(functionDirectory);
+  }
 }
 
 export async function hasFunctionArtifact(
@@ -92,13 +90,10 @@ export async function writeDeploymentManifest(
       },
       ...(input.hasFunction
         ? {
-            function: {
+            function: defineFunctionArtifact({
               path: artifactPath(outDir, functionDirectory),
-              runtime: "nodejs22" as const,
-              format: "esm" as const,
-              entrypoint: "index.handler" as const,
-              support: { sharp: input.sharpSupport ?? ("unsupported" as const) },
-            },
+              sharp: input.sharpSupport ?? defaults.SHARP_SUPPORT,
+            }),
           }
         : {}),
     },
@@ -118,6 +113,19 @@ export async function writeDeploymentManifest(
   return manifest;
 }
 
+function defineFunctionArtifact(input: {
+  path: string;
+  sharp: FunctionSharpSupport;
+}): NonNullable<YandexCloudManifestV1["artifacts"]["function"]> {
+  return {
+    path: input.path,
+    runtime: "nodejs22",
+    format: "esm",
+    entrypoint: "index.handler",
+    support: { sharp: input.sharp },
+  };
+}
+
 async function validateFunctionArtifact(functionDirectory: URL): Promise<void> {
   const entrypoint = new URL("index.js", functionDirectory);
   try {
@@ -133,8 +141,10 @@ async function validateFunctionArtifact(functionDirectory: URL): Promise<void> {
 }
 
 async function writeFunctionPackage(functionDirectory: URL): Promise<void> {
-  const functionDirectoryPath = fileURLToPath(functionDirectory);
+  const functionDirectoryPath = asDirectoryPath(fileURLToPath(functionDirectory));
   const packageNames = await findRuntimePackageImports(functionDirectoryPath);
+  // A bare sharp import survives the .node scan above, so the package is
+  // rejected by name to point at install instead of misadvising bundling.
   if (packageNames.has("sharp")) {
     throw new Error(
       'The Function Artifact contains the native runtime dependency sharp, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", which keeps runtime package imports with exact package metadata and a lockfile.',
@@ -162,7 +172,7 @@ async function writeInstallFunctionPackage(
   functionDirectory: URL,
   appRoot: URL,
 ): Promise<void> {
-  const functionDirectoryPath = fileURLToPath(functionDirectory);
+  const functionDirectoryPath = asDirectoryPath(fileURLToPath(functionDirectory));
   const directPackageNames = await findRuntimePackageImports(
     functionDirectoryPath,
     "install",
@@ -182,13 +192,16 @@ async function writeInstallFunctionPackage(
 }
 
 async function findRuntimePackageImports(
-  directory: string,
-  strategy: DependencyStrategy = "bundle",
+  directoryPath: DirectoryPath,
+  strategy: DependencyStrategy = defaults.STRATEGY,
 ): Promise<Set<string>> {
   const packageNames = new Set<string>();
-  for (const absolutePath of await listFunctionScriptPaths(directory, strategy)) {
+  for (const absolutePath of await listFunctionScriptPaths(
+    directoryPath,
+    strategy,
+  )) {
     const moduleSource = await readFile(absolutePath, "utf8");
-    const relativePath = relative(directory, absolutePath);
+    const relativePath = relative(directoryPath, absolutePath);
     for (const packageName of findImportedPackageNames(
       moduleSource,
       relativePath,
@@ -200,10 +213,10 @@ async function findRuntimePackageImports(
 }
 
 async function listFunctionScriptPaths(
-  directory: string,
-  strategy: DependencyStrategy = "bundle",
+  directoryPath: DirectoryPath,
+  strategy: DependencyStrategy = defaults.STRATEGY,
 ): Promise<string[]> {
-  const relativePaths = await emittedRelativePaths(directory);
+  const relativePaths = await emittedRelativePaths(directoryPath);
   const fileNames = relativePaths.map((relativePath) => basename(relativePath));
   const nativeModuleName = fileNames.find((fileName) =>
     fileName.endsWith(".node"),
@@ -223,12 +236,24 @@ async function listFunctionScriptPaths(
   }
   return relativePaths
     .filter((relativePath) => /\.m?js$/.test(basename(relativePath)))
-    .map((relativePath) => join(directory, relativePath));
+    .map((relativePath) => join(directoryPath, relativePath));
 }
 
-async function emittedRelativePaths(directory: string): Promise<string[]> {
+declare const directoryPathBrand: unique symbol;
+
+type DirectoryPath = string & {
+  readonly [directoryPathBrand]: "DirectoryPath";
+};
+
+function asDirectoryPath(path: string): DirectoryPath {
+  return path as DirectoryPath;
+}
+
+async function emittedRelativePaths(
+  directoryPath: DirectoryPath,
+): Promise<string[]> {
   const paths = await glob(["**/*"], {
-    cwd: directory,
+    cwd: directoryPath,
     dot: true,
     onlyFiles: true,
   });
@@ -238,7 +263,7 @@ async function emittedRelativePaths(directory: string): Promise<string[]> {
 function findImportedPackageNames(
   moduleSource: string,
   relativePath: string,
-  strategy: DependencyStrategy = "bundle",
+  strategy: DependencyStrategy = defaults.STRATEGY,
 ): Set<string> {
   const packageNames = new Set<string>();
   const program = parse(moduleSource, {
@@ -248,12 +273,15 @@ function findImportedPackageNames(
   }) as unknown as SyntaxNode;
 
   const collectPackageImport = (importSpecifier: string): void => {
-    const packageName = packageNameFromSpecifier(
-      importSpecifier,
-      relativePath,
-      strategy,
-    );
-    if (packageName) packageNames.add(packageName);
+    if (importSpecifier.endsWith(".node") && strategy === "bundle") {
+      throw new Error(
+        `The Function Artifact contains the native runtime module ${importSpecifier} referenced by ${relativePath}, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", which keeps runtime package imports with exact package metadata and a lockfile.`,
+      );
+    }
+    // Native file imports stay inside the owning package for install builds,
+    // so the package itself is pinned; bundle builds cannot carry native code.
+    if (!isBareImportSpecifier(importSpecifier)) return;
+    packageNames.add(packageNameFromSpecifier(importSpecifier));
   };
   const rejectDynamicImport = (): never => {
     if (strategy === "install") {
@@ -266,70 +294,77 @@ function findImportedPackageNames(
     );
   };
   visitSyntax(program, (node, ancestors) => {
-    if (
-      node.type === "ImportDeclaration" ||
-      node.type === "ExportNamedDeclaration" ||
-      node.type === "ExportAllDeclaration"
-    ) {
-      const importSpecifier = extractStaticString(node.source);
-      if (importSpecifier) collectPackageImport(importSpecifier);
-      return;
-    }
-    if (node.type === "ImportExpression") {
-      const importSpecifier = extractStaticString(node.source);
-      if (importSpecifier) {
-        collectPackageImport(importSpecifier);
-      } else if (!isAstroLoggerImport(node.source, relativePath, ancestors)) {
-        rejectDynamicImport();
+    switch (node.type) {
+      case "ImportDeclaration":
+      case "ExportNamedDeclaration":
+      case "ExportAllDeclaration": {
+        const importSpecifier = getStaticString(node.source);
+        if (importSpecifier) collectPackageImport(importSpecifier);
+        return;
       }
-      return;
+      case "ImportExpression": {
+        const importSpecifier = getStaticString(node.source);
+        if (importSpecifier) {
+          collectPackageImport(importSpecifier);
+        } else if (!isAstroLoggerImport(node.source, relativePath, ancestors)) {
+          rejectDynamicImport();
+        }
+        return;
+      }
+      case "CallExpression": {
+        const callee = node.callee;
+        if (
+          !isSyntaxNode(callee) ||
+          callee.type !== "Identifier" ||
+          (callee.name !== "require" && callee.name !== "__require")
+        ) {
+          return;
+        }
+        const arguments_ = node.arguments;
+        const requireArgument: unknown = Array.isArray(arguments_)
+          ? arguments_[0]
+          : undefined;
+        collectPackageImport(
+          getStaticString(requireArgument) ?? rejectDynamicImport(),
+        );
+        return;
+      }
+      default: {
+        return;
+      }
     }
-    if (node.type !== "CallExpression") return;
-    const callee = node.callee;
-    if (
-      !isSyntaxNode(callee) ||
-      callee.type !== "Identifier" ||
-      (callee.name !== "require" && callee.name !== "__require")
-    ) {
-      return;
-    }
-    const arguments_ = node.arguments;
-    const requireArgument: unknown = Array.isArray(arguments_)
-      ? arguments_[0]
-      : undefined;
-    collectPackageImport(
-      extractStaticString(requireArgument) ?? rejectDynamicImport(),
-    );
   });
   return packageNames;
 }
 
-function packageNameFromSpecifier(
+declare const bareSpecifierBrand: unique symbol;
+
+type BareImportSpecifier = string & {
+  readonly [bareSpecifierBrand]: "BareImportSpecifier";
+};
+
+function isBareImportSpecifier(
   importSpecifier: string,
-  relativePath: string,
-  strategy: DependencyStrategy = "bundle",
-): string | undefined {
-  if (importSpecifier.endsWith(".node") && strategy === "bundle") {
-    throw new Error(
-      `The Function Artifact contains the native runtime module ${importSpecifier} referenced by ${relativePath}, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", which keeps runtime package imports with exact package metadata and a lockfile.`,
-    );
-  }
+): importSpecifier is BareImportSpecifier {
   if (
     importSpecifier.startsWith(".") ||
     importSpecifier.startsWith("/") ||
     importSpecifier.startsWith("file:")
   ) {
-    return undefined;
+    return false;
   }
-  if (isBuiltin(importSpecifier)) return undefined;
-  // Native file imports stay inside the owning package for install builds,
-  // so the package itself is pinned; bundle builds cannot carry native code.
-  return importSpecifier.startsWith("@")
-    ? importSpecifier.split("/").slice(0, 2).join("/")
-    : importSpecifier.split("/")[0];
+  return !isBuiltin(importSpecifier);
 }
 
-function extractStaticString(value: unknown): string | undefined {
+function packageNameFromSpecifier(bareSpecifier: BareImportSpecifier): string {
+  if (bareSpecifier.startsWith("@")) {
+    return bareSpecifier.split("/").slice(0, 2).join("/");
+  }
+  const slashIndex = bareSpecifier.indexOf("/");
+  return slashIndex === -1 ? bareSpecifier : bareSpecifier.slice(0, slashIndex);
+}
+
+function getStaticString(value: unknown): string | undefined {
   if (!isSyntaxNode(value)) return undefined;
   if (value.type === "Literal" && typeof value.value === "string") {
     return value.value;
@@ -429,7 +464,7 @@ async function resolvePinnedRuntimePackages(
   appRoot: URL,
   directPackageNames: Set<string>,
 ): Promise<ResolvedRuntimePackage[]> {
-  const appDirectory = fileURLToPath(appRoot);
+  const appDirectory = asDirectoryPath(fileURLToPath(appRoot));
   const appManifestPath = new URL("package.json", appRoot);
   const pinned = new Map<string, ResolvedRuntimePackage>();
   const visited = new Set<string>();
@@ -578,17 +613,17 @@ async function readJsonFile<T>(filePath: string): Promise<T | undefined> {
   }
 }
 
-function parentDirectory(directory: string): string | undefined {
-  const parent = dirname(directory);
-  return parent === directory ? undefined : parent;
+function parentDirectory(childPath: string): string | undefined {
+  const parent = dirname(childPath);
+  return parent === childPath ? undefined : parent;
 }
 
 async function installedVersion(root: URL, packageName: string): Promise<string> {
-  const installed = await findInstalledPackage(
+  const installedPackage = await findInstalledPackage(
     [new URL("package.json", root)],
     packageName,
   );
-  if (installed) return installed.version;
+  if (installedPackage) return installedPackage.version;
   throw new Error(`Could not determine the installed ${packageName} version.`);
 }
 
@@ -617,7 +652,7 @@ interface NpmLockfile {
 }
 
 async function readLocalLockMetadata(
-  fromDirectory: string,
+  fromDirectory: DirectoryPath,
   packageName: string,
   version: string,
 ): Promise<RegistryVersionMetadata | undefined> {
@@ -640,7 +675,7 @@ async function readLocalLockMetadata(
 }
 
 async function findNearestPackageLock(
-  fromDirectory: string,
+  fromDirectory: DirectoryPath,
 ): Promise<string | undefined> {
   let current: string | undefined = resolve(fromDirectory);
   while (current !== undefined) {
@@ -660,6 +695,8 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
+const NPM_REGISTRY_URL = "https://registry.npmjs.org";
+
 async function fetchRegistryMetadata(
   packageName: string,
   version: string,
@@ -668,7 +705,7 @@ async function fetchRegistryMetadata(
     .split("/")
     .map((segment) => encodeURIComponent(segment))
     .join("/");
-  const url = `https://registry.npmjs.org/${encodedName}/${encodeURIComponent(version)}`;
+  const url = `${NPM_REGISTRY_URL}/${encodedName}/${encodeURIComponent(version)}`;
   let response: Response;
   try {
     response = await fetch(url, { headers: { accept: "application/json" } });
@@ -695,12 +732,12 @@ async function fetchRegistryMetadata(
     optionalDependencies: metadata.optionalDependencies,
     resolved: metadata.dist?.tarball,
     integrity: metadata.dist?.integrity,
-    license: normalizeLicense(metadata.license),
+    license: extractLicenseIdentifier(metadata.license),
     engines: metadata.engines,
   };
 }
 
-function normalizeLicense(license: unknown): string | undefined {
+function extractLicenseIdentifier(license: unknown): string | undefined {
   if (typeof license === "string") return license;
   if (Array.isArray(license)) {
     const types = license
@@ -729,7 +766,9 @@ async function describeClientArtifact(
   files: ClientArtifactFile[];
   routes: PrerenderedRouteRequirement[];
 }> {
-  const paths = await relativeFiles(fileURLToPath(clientDirectory));
+  const paths = await relativeFiles(
+    asDirectoryPath(fileURLToPath(clientDirectory)),
+  );
   const pathSet = new Set(paths);
   const uniqueRoutes = [...new Set(prerendered)].sort();
   const routeFileEntries = uniqueRoutes.map(
@@ -751,9 +790,9 @@ async function describeClientArtifact(
   };
 }
 
-async function relativeFiles(directory: string): Promise<string[]> {
+async function relativeFiles(directoryPath: DirectoryPath): Promise<string[]> {
   // tinyglobby already yields forward-slash relative paths.
-  return emittedRelativePaths(directory);
+  return emittedRelativePaths(directoryPath);
 }
 
 function prerenderedFile(routeUrl: string, clientFiles: Set<string>): string {
