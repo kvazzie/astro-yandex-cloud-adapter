@@ -21,7 +21,7 @@ export function compareNames(a: string, b: string): number {
 function sortedDependencies(
   dependencies: ResolvedRuntimeDependency[],
 ): ResolvedRuntimeDependency[] {
-  return [...dependencies].sort((a, b) => compareNames(a.name, b.name));
+  return dependencies.toSorted((a, b) => compareNames(a.name, b.name));
 }
 
 function exactDependencies(
@@ -39,7 +39,7 @@ function sortedRecord(
 ): Record<string, string> | undefined {
   if (!record) return undefined;
   const sorted: Record<string, string> = {};
-  for (const key of Object.keys(record).sort(compareNames)) {
+  for (const key of Object.keys(record).toSorted(compareNames)) {
     const value = record[key];
     if (value !== undefined) sorted[key] = value;
   }

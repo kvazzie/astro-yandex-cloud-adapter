@@ -4,8 +4,8 @@ import type { AstroAdapter, AstroConfig } from "astro";
 import type { InlineConfig } from "vite";
 
 import {
+  finalizeFunctionArtifact,
   hasFunctionArtifact,
-  prepareFunctionArtifact,
   writeDeploymentManifest,
 } from "./artifacts.js";
 import { ADAPTER_NAME } from "./constants.js";
@@ -129,7 +129,7 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
       const functionDirectory = new URL("function/", config.outDir);
       const hasFunction = await hasFunctionArtifact(functionDirectory);
       if (hasFunction) {
-        await prepareFunctionArtifact(
+        await finalizeFunctionArtifact(
           functionDirectory,
           dependencies.strategy === "install" ? config.root : undefined,
         );

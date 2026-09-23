@@ -68,6 +68,14 @@ _Avoid_: Deployment
 The string in an import expression that identifies what to load, per Node.js terminology. A bare Import Specifier names a package (`nanoid`, `@scope/pkg/sub`); relative paths, absolute paths, and `node:` builtins are not bare Import Specifiers.
 _Avoid_: Import path
 
+**Dependency**:
+A package required at runtime by the Function Artifact. Install builds pin every Dependency to an exact version.
+_Avoid_: Package
+
+**Package JSON**:
+The Function Artifact file that declares exact Dependency versions for installation.
+_Avoid_: Package
+
 **Deployment**:
 The user-owned process that transfers generated artifacts to existing Yandex Cloud resources and connects them to request routing.
 _Avoid_: Build, publish

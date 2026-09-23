@@ -27,7 +27,15 @@ import type {
   YandexCloudManifestV1,
 } from "./types.js";
 
-export async function prepareFunctionArtifact(
+/**
+ * Finalizes the Function Artifact directory after Astro emits it.
+ *
+ * Always validates the function entrypoint first. When appRoot is provided
+ * (the install dependency strategy), pins the bare runtime imports left in
+ * the emitted code to exact versions in Package JSON and lockfile files;
+ * otherwise writes the bundle Package JSON with no runtime Dependencies.
+ */
+export async function finalizeFunctionArtifact(
   functionDirectory: URL,
   appRoot?: URL,
 ): Promise<void> {
@@ -109,7 +117,7 @@ export async function writeDeploymentManifest(
     routes: {
       prerendered: clientArtifact.routes,
       onDemand: [...new Set(input.onDemand)]
-        .sort()
+        .toSorted()
         .map((pattern) => ({ pattern: withBase(base, pattern) })),
     },
   });
@@ -176,7 +184,7 @@ async function writeFunctionPackageJson(
   }
   if (dependencyNames.size) {
     throw new Error(
-      `The "bundle" dependency strategy left unresolved runtime package imports in the Function Artifact: ${[...dependencyNames].sort().join(", ")}. ` +
+      `The "bundle" dependency strategy left unresolved runtime package imports in the Function Artifact: ${[...dependencyNames].toSorted().join(", ")}. ` +
         'Bundle these packages with Astro/Vite or select dependencyStrategy: "install".',
     );
   }
@@ -256,7 +264,7 @@ async function emittedRelativePaths(
     dot: true,
     onlyFiles: true,
   });
-  return paths.sort(compareNames);
+  return paths.toSorted(compareNames);
 }
 
 function findImportedPackageNames(
@@ -470,7 +478,7 @@ async function resolvePinnedRuntimeDependencies(
   const pending: Array<{
     dependencyName: string;
     resolutionBases: Array<URL | string>;
-  }> = [...[...directDependencyNames].sort()].map((dependencyName) => ({
+  }> = [...directDependencyNames].toSorted().map((dependencyName) => ({
     dependencyName,
     resolutionBases: [appManifestPath],
   }));
@@ -507,10 +515,10 @@ async function resolvePinnedRuntimeDependencies(
       optional: boolean;
     }> = [
       ...Object.entries(metadata.dependencies ?? {})
-        .sort(([a], [b]) => compareNames(a, b))
+        .toSorted(([a], [b]) => compareNames(a, b))
         .map(([name, range]) => ({ name, range, optional: false })),
       ...Object.keys(metadata.optionalDependencies ?? {})
-        .sort(compareNames)
+        .toSorted(compareNames)
         .map((name) => ({ name, range: "", optional: true })),
     ];
     for (const { name: dependencyName, range, optional } of transitiveRanges) {
@@ -772,7 +780,7 @@ async function describeClientArtifact(
     asDirectoryPath(fileURLToPath(clientDirectory)),
   );
   const pathSet = new Set(paths);
-  const uniqueRoutes = [...new Set(prerendered)].sort();
+  const uniqueRoutes = [...new Set(prerendered)].toSorted();
   const routeFileEntries = uniqueRoutes.map(
     (url) => [prerenderedFile(url, pathSet), withBase(base, url)] as const,
   );
