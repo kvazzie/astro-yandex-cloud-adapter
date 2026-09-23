@@ -116,7 +116,8 @@ export async function writeDeploymentManifest(
     },
     routes: {
       prerendered: clientArtifact.routes,
-      onDemand: [...new Set(input.onDemand)]
+      // Set order follows discovery; sort for a deterministic manifest.
+      onDemand: Array.from(new Set(input.onDemand))
         .sort()
         .map((pattern) => ({ pattern: withBase(base, pattern) })),
     },
@@ -183,8 +184,9 @@ async function writeFunctionPackageJson(
     );
   }
   if (dependencyNames.size) {
+    // Set order follows discovery; sort for a deterministic message.
     throw new Error(
-      `The "bundle" dependency strategy left unresolved runtime package imports in the Function Artifact: ${[...dependencyNames].sort().join(", ")}. ` +
+      `The "bundle" dependency strategy left unresolved runtime package imports in the Function Artifact: ${Array.from(dependencyNames).sort().join(", ")}. ` +
         'Bundle these packages with Astro/Vite or select dependencyStrategy: "install".',
     );
   }
@@ -475,13 +477,16 @@ async function resolvePinnedRuntimeDependencies(
   const appManifestPath = new URL("package.json", appRoot);
   const pinned = new Map<string, ResolvedRuntimeDependency>();
   const visited = new Set<string>();
+  // Set order follows discovery; sort for a deterministic resolution order.
   const pending: Array<{
     dependencyName: string;
     resolutionBases: Array<URL | string>;
-  }> = [...directDependencyNames].sort().map((dependencyName) => ({
-    dependencyName,
-    resolutionBases: [appManifestPath],
-  }));
+  }> = Array.from(directDependencyNames)
+    .sort()
+    .map((dependencyName) => ({
+      dependencyName,
+      resolutionBases: [appManifestPath],
+    }));
   while (pending.length) {
     const current = pending.shift();
     if (!current || visited.has(current.dependencyName)) continue;
@@ -780,7 +785,8 @@ async function describeClientArtifact(
     asDirectoryPath(fileURLToPath(clientDirectory)),
   );
   const pathSet = new Set(paths);
-  const uniqueRoutes = [...new Set(prerendered)].sort();
+  // Set order follows discovery; sort for deterministic output.
+  const uniqueRoutes = Array.from(new Set(prerendered)).sort();
   const routeFileEntries = uniqueRoutes.map(
     (url) => [prerenderedFile(url, pathSet), withBase(base, url)] as const,
   );
