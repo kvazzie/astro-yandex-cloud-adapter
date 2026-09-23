@@ -5,6 +5,7 @@ dist
 coverage
 *.tgz
 .DS_Store
+.devenv
 
 # Third-party agent skills installed by the Skills CLI.
 .agents/skills/*
