@@ -103,8 +103,15 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
       adapter: (hasOnDemandRoutes) =>
         adapter(hasOnDemandRoutes, objectStorageFeatures),
       completeBuild: async ({ config, onDemand, prerendered }) => {
+        // The route list alone cannot drive this check: Astro always
+        // registers internal routes (/_server-islands, /_image, /404) as
+        // non-prerendered, even for pure static output. Only emitted server
+        // output proves an on-demand route slipped through, so the
+        // entrypoint probe gates the rejection. The probed directory comes
+        // from Astro's resolved config (set by configureBuild above), never
+        // from a hardcoded folder name, so per-service layouts stay correct.
         const { ok: hasFunction } = await validateFunctionEntrypoint(
-          new URL("function/", config.outDir),
+          config.build.server,
         );
         if (hasFunction) assertObjectStorageRoutesSupported(onDemand);
         await writeDeploymentManifest(config.outDir, config, {
@@ -126,7 +133,7 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
         functionsFeatures(dependencies.sharpImageService),
       ),
     completeBuild: async ({ config, onDemand, prerendered }) => {
-      const functionDirectory = new URL("function/", config.outDir);
+      const functionDirectory = config.build.server;
       const { ok: hasFunction } =
         await validateFunctionEntrypoint(functionDirectory);
       if (hasFunction) {
