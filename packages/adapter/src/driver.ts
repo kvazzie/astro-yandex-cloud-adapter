@@ -90,67 +90,106 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
     throw new TypeError(`Unknown Yandex Cloud adapter target: ${String(target)}.`);
   }
   const dependencies = createDependencyStrategyPolicy(options?.dependencyStrategy);
-  const dependencyConfiguration = {
-    assertUserExternals: dependencies.assertUserExternals,
-    configureServerBuild: dependencies.configureServerBuild,
-  };
-
   if (target === "object-storage") {
-    return {
-      ...dependencyConfiguration,
-      configureBuild,
-      assertRoutesSupported: assertObjectStorageRoutesSupported,
-      adapter: (hasOnDemandRoutes) =>
-        adapter(hasOnDemandRoutes, objectStorageFeatures),
-      completeBuild: async ({ config, onDemand, prerendered }) => {
-        // The route list alone cannot drive this check: Astro always
-        // registers internal routes (/_server-islands, /_image, /404) as
-        // non-prerendered, even for pure static output. Only emitted server
-        // output proves an on-demand route slipped through, so the
-        // entrypoint probe gates the rejection. The probed directory comes
-        // from Astro's resolved config (set by configureBuild above), never
-        // from a hardcoded folder name, so per-service layouts stay correct.
-        const { ok: hasFunction } = await validateFunctionEntrypoint(
-          config.build.server,
-        );
-        if (hasFunction) assertObjectStorageRoutesSupported(onDemand);
-        await writeDeploymentManifest(config.outDir, config, {
-          deploymentTarget: target,
-          hasFunction: false,
-          onDemand: [],
-          prerendered,
-        });
-      },
-    };
+    return new ObjectStorageDriver(dependencies);
   }
-  return {
-    ...dependencyConfiguration,
-    configureBuild,
-    assertRoutesSupported: () => {},
-    adapter: (hasOnDemandRoutes) =>
-      adapter(
-        hasOnDemandRoutes,
-        functionsFeatures(dependencies.sharpImageService),
-      ),
-    completeBuild: async ({ config, onDemand, prerendered }) => {
-      const functionDirectory = config.build.server;
-      const { ok: hasFunction } =
-        await validateFunctionEntrypoint(functionDirectory);
-      if (hasFunction) {
-        await finalizeFunctionArtifact(
-          functionDirectory,
-          dependencies.strategy === "install" ? config.root : undefined,
-        );
-      }
-      await writeDeploymentManifest(config.outDir, config, {
-        deploymentTarget: target,
-        hasFunction,
-        onDemand: hasFunction ? onDemand : [],
-        prerendered,
-        sharpSupport: dependencies.sharpSupport,
-      });
-    },
-  };
+  return new ObjectStorageFunctionsDriver(dependencies);
+}
+
+class ObjectStorageDriver implements TargetDriver {
+  constructor(private readonly dependencies: DependencyStrategyPolicy) {}
+
+  assertUserExternals(config: AstroConfig): void {
+    this.dependencies.assertUserExternals(config);
+  }
+
+  configureServerBuild(vite: InlineConfig): InlineConfig {
+    return this.dependencies.configureServerBuild(vite);
+  }
+
+  configureBuild(outDir: URL): Record<string, unknown> {
+    return configureBuild(outDir);
+  }
+
+  assertRoutesSupported(onDemand: string[]): void {
+    assertObjectStorageRoutesSupported(onDemand);
+  }
+
+  adapter(hasOnDemandRoutes: boolean): AstroAdapter {
+    return adapter(hasOnDemandRoutes, objectStorageFeatures);
+  }
+
+  async completeBuild({
+    config,
+    onDemand,
+    prerendered,
+  }: CompletedBuild): Promise<void> {
+    // The route list alone cannot drive this check: Astro always
+    // registers internal routes (/_server-islands, /_image, /404) as
+    // non-prerendered, even for pure static output. Only emitted server
+    // output proves an on-demand route slipped through, so the
+    // entrypoint probe gates the rejection. The probed directory comes
+    // from Astro's resolved config (set by configureBuild above), never
+    // from a hardcoded folder name, so per-service layouts stay correct.
+    const { ok: hasFunction } = await validateFunctionEntrypoint(
+      config.build.server,
+    );
+    if (hasFunction) assertObjectStorageRoutesSupported(onDemand);
+    await writeDeploymentManifest(config.outDir, config, {
+      deploymentTarget: "object-storage",
+      hasFunction: false,
+      onDemand: [],
+      prerendered,
+    });
+  }
+}
+
+class ObjectStorageFunctionsDriver implements TargetDriver {
+  constructor(private readonly dependencies: DependencyStrategyPolicy) {}
+
+  assertUserExternals(config: AstroConfig): void {
+    this.dependencies.assertUserExternals(config);
+  }
+
+  configureServerBuild(vite: InlineConfig): InlineConfig {
+    return this.dependencies.configureServerBuild(vite);
+  }
+
+  configureBuild(outDir: URL): Record<string, unknown> {
+    return configureBuild(outDir);
+  }
+
+  assertRoutesSupported(): void {}
+
+  adapter(hasOnDemandRoutes: boolean): AstroAdapter {
+    return adapter(
+      hasOnDemandRoutes,
+      functionsFeatures(this.dependencies.sharpImageService),
+    );
+  }
+
+  async completeBuild({
+    config,
+    onDemand,
+    prerendered,
+  }: CompletedBuild): Promise<void> {
+    const functionDirectory = config.build.server;
+    const { ok: hasFunction } =
+      await validateFunctionEntrypoint(functionDirectory);
+    if (hasFunction) {
+      await finalizeFunctionArtifact(
+        functionDirectory,
+        this.dependencies.strategy === "install" ? config.root : undefined,
+      );
+    }
+    await writeDeploymentManifest(config.outDir, config, {
+      deploymentTarget: "object-storage-functions",
+      hasFunction,
+      onDemand: hasFunction ? onDemand : [],
+      prerendered,
+      sharpSupport: this.dependencies.sharpSupport,
+    });
+  }
 }
 
 function assertBundleUserExternals(config: AstroConfig): void {
