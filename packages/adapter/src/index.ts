@@ -5,7 +5,7 @@ import type {
 } from "astro";
 
 import { ADAPTER_NAME } from "./constants.js";
-import { createDriver } from "./driver.js";
+import { createDriver } from "./driver/index.js";
 import { injectedRuntimeTypes } from "./injected-types.js";
 import { needsConfiguredRuntime, routePathname, routePattern } from "./routes.js";
 import { runtimeConfigPlugin } from "./runtime-config.js";
