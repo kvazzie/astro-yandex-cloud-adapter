@@ -1,5 +1,7 @@
 /** Exact runtime dependency metadata for install Function Artifacts. */
 
+import type { PackageJson } from "pkg-types";
+
 export interface ResolvedRuntimeDependency {
   name: string;
   version: string;
@@ -50,16 +52,13 @@ function sortedRecord(
 export function formatFunctionPackageJson(
   dependencies: ResolvedRuntimeDependency[],
 ): string {
-  return `${JSON.stringify(
-    {
-      private: true,
-      type: "module",
-      engines: { node: FUNCTION_NODE_RANGE },
-      dependencies: exactDependencies(dependencies),
-    },
-    null,
-    2,
-  )}\n`;
+  const packageJson: PackageJson = {
+    private: true,
+    type: "module",
+    engines: { node: FUNCTION_NODE_RANGE },
+    dependencies: exactDependencies(dependencies),
+  };
+  return `${JSON.stringify(packageJson, null, 2)}\n`;
 }
 
 interface NpmLockPackageEntry {

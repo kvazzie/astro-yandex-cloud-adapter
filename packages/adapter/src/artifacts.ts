@@ -5,6 +5,7 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 
 import { parse } from "acorn";
 import type { AstroConfig } from "astro";
+import type { PackageJson } from "pkg-types";
 import { glob } from "tinyglobby";
 
 import { ADAPTER_NAME, ADAPTER_VERSION } from "./constants.js";
@@ -76,7 +77,7 @@ export async function finalizeFunctionArtifact(
         'Bundle these packages with Astro/Vite or select dependencyStrategy: "install".',
     );
   }
-  const packageJson = {
+  const packageJson: PackageJson = {
     private: true,
     type: "module",
     engines: { node: ">=22.12.0" },
@@ -566,7 +567,7 @@ async function findPackageFromBase(
     `${packageName}/package.json`,
   );
   if (manifestPath) {
-    const manifest = await readJsonFile<{ version?: string }>(manifestPath);
+    const manifest = await readJsonFile<PackageJson>(manifestPath);
     if (manifest?.version !== undefined)
       return { version: manifest.version, directory: dirname(manifestPath) };
   }
@@ -574,7 +575,7 @@ async function findPackageFromBase(
   if (!entryPoint) return undefined;
   let current: string | undefined = dirname(entryPoint);
   while (current !== undefined) {
-    const manifest = await readJsonFile<{ name?: string; version?: string }>(
+    const manifest = await readJsonFile<PackageJson>(
       join(current, "package.json"),
     );
     if (

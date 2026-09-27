@@ -59,6 +59,7 @@
   },
   "devDependencies": {
     "astro": "^7.1.0",
+    "pkg-types": "^2.3.3",
     "tsdown": "^0.15.1",
     "typescript": "^5.9.2",
     "vite": "^8.0.13"
