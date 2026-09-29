@@ -58,6 +58,8 @@ application code or Function Artifacts.
 
 ## Deployment Manifest
 
+The fields below describe the current unpublished build output. The [prepublication contract decision](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/63#issuecomment-5900071837) revises draft schema version 1 before the first npm release; implementation is tracked in #7, #67, #68, #69, and #70.
+
 The schema version 1 Deployment Manifest records the selected Target, the application base,
 artifact paths, every Client Artifact file, canonical Object Storage keys, and the complete
 Prerendered and On-demand Route requirements. Client file entries include their public URL so a

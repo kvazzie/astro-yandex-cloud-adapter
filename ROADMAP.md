@@ -10,11 +10,13 @@ The Bare Adapter owns Artifact Generation only. Its immediate priorities are:
 
 - Correct Static-only and Runtime Build classification, including Astro-internal and integration-injected routes.
 - Working Astro Actions through API Gateway payload `0.1`.
-- Direct Function Invocation for stateless endpoints and form actions.
+- Direct Function Invocation for stateless user-defined endpoints, including forms with an explicit public origin and Astro's origin check preserved.
+- Target Modifiers, including an API Gateway Modifier that emits a customizable OpenAPI specification template without creating a Gateway.
+- Optional recursive static 404 pages for Object Storage builds with API Gateway, including concrete dynamic scopes.
 - Working preview for both build classes.
 - Non-root base placement.
 - Bundle and install dependency strategies using Astro's build pipeline.
-- A provider-neutral, JSON-Schema-validated Deployment Manifest.
+- A deployment-product-neutral, JSON-Schema-validated Deployment Manifest of actual artifacts, route requirements, and build provenance.
 - Deployment-shaped local S3 and packed-consumer conformance tests.
 - Honest beta documentation and supply-chain-safe publication.
 
@@ -50,7 +52,8 @@ The component will:
 - Provision Yandex Target resources by default using public Pulumi/Yandex primitives.
 - Keep SST state-backend selection entirely user-owned.
 - Accept concrete SST Resource Links through component configuration rather than serializing them into the Manifest.
-- Decide explicitly, from component configuration, whether to provision API Gateway or another routing topology.
+- Respect the build's selected API Gateway Modifier and allow users to customize the generated OpenAPI template and Gateway resource.
+- Expose Function and Object Storage or CDN URLs as Pulumi outputs that the application can use in a staged Astro build.
 - Return deployment outputs and expose created resources for customization.
 - Avoid coupling to undocumented SST internal modules and publish an SST/Pulumi compatibility matrix.
 
@@ -65,6 +68,7 @@ The Action will:
 - Avoid Provisioning in its initial version.
 - Create immutable Cloud Function versions.
 - Upload Client Artifact objects with the required keys and metadata.
+- Enumerate Client Artifact files from its declared directory rather than expecting a file inventory in the Manifest.
 - Avoid destructive object pruning by default.
 - Expose deployment outputs and support verification and rollback workflows.
 
@@ -73,6 +77,10 @@ The Action will:
 Keep Manifest schema/types/validation in the Bare Adapter until the SST component or GitHub Action becomes the second real consumer. Then extract only the proven shared contract into a small package.
 
 Keep the Function Runtime Bridge separate from the Manifest package: invocation translation and deployment requirements change for different reasons.
+
+## Deployment runbook CLI
+
+The planned npx CLI reads only the Deployment Manifest JSON and emits a Markdown runbook for the completed build. It does not provision resources or require the generated OpenAPI template as an input.
 
 ## GitHub issue draft: prove Sharp in Yandex Cloud Functions
 
@@ -93,7 +101,7 @@ The adapter currently describes Sharp/runtime image transformation as limited or
 - Record artifact size, dependency installation result, cold-start behavior, runtime version, memory, and timeout settings.
 - Verify failure messages for unsupported architectures, dependency installation failure, and packages exceeding deployment limits.
 - Run the adapter's generated artifact—not a bridge-only fixture or a hand-authored function.
-- Update adapter feature declarations, Manifest support metadata, tests, and documentation to state the exact proven support envelope.
+- Update adapter feature declarations, tests, and documentation to state the exact proven support envelope. The Manifest does not carry Sharp support metadata.
 
 ### Evidence required
 
