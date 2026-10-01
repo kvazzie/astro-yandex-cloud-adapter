@@ -1,11 +1,6 @@
-import { Ajv2020, type ErrorObject } from "ajv/dist/2020.js";
+import { Schema } from "effect";
 
-import schema from "./deployment-manifest.schema.json" with { type: "json" };
-import type { DeploymentManifestV1 } from "./types.js";
-
-const validate = new Ajv2020({ allErrors: true }).compile<DeploymentManifestV1>(
-  schema,
-);
+import { ManifestV1Schema, type DeploymentManifestV1 } from "./manifest/schema.js";
 
 function invalidManifest(detail: string): never {
   throw new TypeError(`Invalid Deployment Manifest: ${detail}`);
@@ -33,87 +28,108 @@ function belongsToBase(base: string, path: string): boolean {
   return base === "/" || path === base || path.startsWith(`${base}/`);
 }
 
-function validatePlacement(manifest: DeploymentManifestV1): void {
-  if (!isCanonicalUrlPath(manifest.base)) {
+function checkReferences(manifest: DeploymentManifestV1): void {
+  if (
+    !isCanonicalUrlPath(manifest.base) ||
+    (manifest.base !== "/" && manifest.base.endsWith("/"))
+  ) {
     invalidManifest(`base ${manifest.base} must be a canonical URL path.`);
   }
-  const keyPrefix = manifest.base === "/" ? "" : `${manifest.base.slice(1)}/`;
-  const clientRoutes = new Set<string>();
-  const clientPaths = new Set<string>();
-
-  for (const file of manifest.artifacts.client.files) {
-    if (clientPaths.has(file.path))
-      invalidManifest(`duplicate Client Artifact path ${file.path}.`);
-    clientPaths.add(file.path);
-
-    const expectedKey = `${keyPrefix}${file.path}`;
-    if (file.objectKey !== expectedKey) {
-      invalidManifest(
-        `Client Artifact file ${file.path} must use Object Storage key ${expectedKey} for base ${manifest.base}.`,
-      );
-    }
-    if (!isCanonicalUrlPath(file.url)) {
-      invalidManifest(
-        `Client Artifact URL ${file.url} must be a canonical URL path.`,
-      );
-    }
-    if (!belongsToBase(manifest.base, file.url)) {
-      invalidManifest(
-        `Client Artifact URL ${file.url} must be placed under base ${manifest.base}.`,
-      );
-    }
-    clientRoutes.add(`${file.url}\0${file.objectKey}`);
+  const ids = new Set<string>([manifest.artifacts.client.id]);
+  for (const artifact of manifest.artifacts.functions) {
+    if (ids.has(artifact.id))
+      invalidManifest(`duplicate artifact ID ${artifact.id}.`);
+    ids.add(artifact.id);
   }
-
+  if (
+    manifest.target === "object-storage" &&
+    manifest.artifacts.functions.length
+  ) {
+    invalidManifest("the Object Storage Target cannot emit Function Artifacts.");
+  }
+  if (manifest.modifiers.apiGateway !== Boolean(manifest.gatewayTemplate)) {
+    invalidManifest("the API Gateway modifier and template reference must agree.");
+  }
+  if (manifest.directInvocation && manifest.modifiers.apiGateway) {
+    invalidManifest("direct invocation cannot accompany an API Gateway template.");
+  }
+  const functionIds = new Set(manifest.artifacts.functions.map(({ id }) => id));
+  const staticUrls = new Set<string>();
+  const prefix = manifest.base === "/" ? "" : `${manifest.base.slice(1)}/`;
   for (const route of manifest.routes.prerendered) {
-    if (!isCanonicalUrlPath(route.url)) {
+    if (
+      !isCanonicalUrlPath(route.url) ||
+      !belongsToBase(manifest.base, route.url)
+    ) {
       invalidManifest(
-        `Prerendered Route URL ${route.url} must be a canonical URL path.`,
+        `Prerendered Route ${route.url} must be under base ${manifest.base}.`,
       );
     }
-    if (!belongsToBase(manifest.base, route.url)) {
+    if (
+      !route.objectKey.startsWith(prefix) ||
+      route.artifactId !== manifest.artifacts.client.id
+    ) {
       invalidManifest(
-        `Prerendered Route URL ${route.url} must be placed under base ${manifest.base}.`,
+        `Prerendered Route ${route.url} has an invalid Client Artifact reference or Object Storage key.`,
       );
     }
-    if (!clientRoutes.has(`${route.url}\0${route.objectKey}`)) {
-      invalidManifest(
-        `Prerendered Route ${route.url} must reference an uploaded Client Artifact file.`,
-      );
-    }
+    if (staticUrls.has(route.url))
+      invalidManifest(`duplicate Prerendered Route ${route.url}.`);
+    staticUrls.add(route.url);
   }
-
+  const onDemandPatterns = new Set<string>();
   for (const route of manifest.routes.onDemand) {
-    if (!isCanonicalUrlPath(route.pattern)) {
+    if (
+      !isCanonicalUrlPath(route.pattern) ||
+      !belongsToBase(manifest.base, route.pattern)
+    ) {
       invalidManifest(
-        `On-demand Route pattern ${route.pattern} must be a canonical URL path.`,
+        `On-demand Route ${route.pattern} must be under base ${manifest.base}.`,
       );
     }
-    if (!belongsToBase(manifest.base, route.pattern)) {
+    if (!functionIds.has(route.artifactId)) {
       invalidManifest(
-        `On-demand Route pattern ${route.pattern} must be placed under base ${manifest.base}.`,
+        `On-demand Route ${route.pattern} has no matching Function Artifact.`,
+      );
+    }
+    if (onDemandPatterns.has(route.pattern))
+      invalidManifest(`duplicate On-demand Route ${route.pattern}.`);
+    onDemandPatterns.add(route.pattern);
+  }
+  if (!manifest.routes.onDemand.length && manifest.artifacts.functions.length) {
+    invalidManifest("Function Artifacts need On-demand Routes.");
+  }
+  for (const scope of manifest.routes.notFound) {
+    if (
+      !isCanonicalUrlPath(scope.scope) ||
+      !belongsToBase(manifest.base, scope.scope) ||
+      !isCanonicalUrlPath(scope.url) ||
+      !belongsToBase(manifest.base, scope.url) ||
+      !scope.objectKey.startsWith(prefix) ||
+      scope.artifactId !== manifest.artifacts.client.id ||
+      (scope.functionArtifactId !== undefined &&
+        !functionIds.has(scope.functionArtifactId))
+    ) {
+      invalidManifest(
+        `404 scope ${scope.scope} has invalid placement or artifact references.`,
       );
     }
   }
 }
 
-/** Parses and validates the supported Deployment Manifest contract. */
+/** Parses the synchronous, additive v1 Deployment Manifest contract. */
 export function parseDeploymentManifest(value: unknown): DeploymentManifestV1 {
-  if (validate(value)) {
-    validatePlacement(value);
-    return value;
+  let manifest: DeploymentManifestV1;
+  try {
+    manifest = Schema.decodeUnknownSync(ManifestV1Schema)(value);
+  } catch (error) {
+    invalidManifest(String(error));
   }
-
-  const details = validate.errors
-    ?.map(
-      (error: ErrorObject) =>
-        `${error.instancePath || "/"} ${error.message ?? "is invalid"}`,
-    )
-    .join("; ");
-  invalidManifest(details ?? "the value does not match schema version 1.");
+  checkReferences(manifest);
+  return manifest;
 }
 
-/** Builds a Deployment Manifest with compile-time contract checking. */
+/** Compile-time contract checking for a generated Manifest. */
 export function defineDeploymentManifest(
   manifest: DeploymentManifestV1,
 ): DeploymentManifestV1 {

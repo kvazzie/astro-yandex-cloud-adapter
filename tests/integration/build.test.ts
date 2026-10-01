@@ -146,9 +146,15 @@ describe.sequential("Astro artifact builds", () => {
         : "client/_astro/logo.source.svg";
     });
     expect(files).toEqual([
+      "client/404.html",
       "client/_astro/logo.source.svg",
       "client/_astro/logo.optimized.svg",
       "client/about/index.html",
+      "client/api/items/a.json",
+      "client/api/items/b.json",
+      "client/blog/a/index.html",
+      "client/blog/b/index.html",
+      "client/feed.xml",
       "client/index.html",
       "client/robots.txt",
       "yandex-cloud.json",
@@ -157,32 +163,75 @@ describe.sequential("Astro artifact builds", () => {
     expect(deployment).toMatchObject({
       schemaVersion: 1,
       target: "object-storage",
-      buildOutput: "static",
       base: "/docs",
-      artifacts: { client: { path: "client" } },
+      artifacts: {
+        client: { id: "client:primary", path: "client" },
+        functions: [],
+      },
       routes: {
         prerendered: [
-          { url: "/docs/", objectKey: "docs/index.html" },
-          { url: "/docs/about/", objectKey: "docs/about/index.html" },
+          {
+            kind: "page",
+            url: "/docs/",
+            objectKey: "docs/index.html",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "page",
+            url: "/docs/404/",
+            objectKey: "docs/404.html",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "page",
+            url: "/docs/about/",
+            objectKey: "docs/about/index.html",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "endpoint",
+            url: "/docs/api/items/a.json",
+            objectKey: "docs/api/items/a.json",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "endpoint",
+            url: "/docs/api/items/b.json",
+            objectKey: "docs/api/items/b.json",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "page",
+            url: "/docs/blog/a/",
+            objectKey: "docs/blog/a/index.html",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "page",
+            url: "/docs/blog/b/",
+            objectKey: "docs/blog/b/index.html",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "endpoint",
+            url: "/docs/feed.xml",
+            objectKey: "docs/feed.xml",
+            artifactId: "client:primary",
+          },
         ],
         onDemand: [],
+        notFound: [
+          {
+            scope: "/docs",
+            url: "/docs/404/",
+            objectKey: "docs/404.html",
+            artifactId: "client:primary",
+          },
+        ],
       },
     });
-    expect(
-      deployment.artifacts.client.files.find((file) => file.path === "robots.txt"),
-    ).toEqual({
-      path: "robots.txt",
-      url: "/docs/robots.txt",
-      objectKey: "docs/robots.txt",
-    });
-    const browserAssets = deployment.artifacts.client.files.filter((file) =>
-      file.path.startsWith("_astro/"),
-    );
-    expect(browserAssets.length).toBeGreaterThan(0);
-    for (const asset of browserAssets) {
-      expect(asset.url).toMatch(/^\/docs\/_astro\//);
-      expect(asset.objectKey).toMatch(/^docs\/_astro\//);
-    }
+    expect(deployment.artifacts.client).not.toHaveProperty("files");
+    expect(files).toContain("client/robots.txt");
   });
 
   it("emits a mixed client/function layout and deployment metadata", async () => {
@@ -196,38 +245,35 @@ describe.sequential("Astro artifact builds", () => {
     expect(deployment).toMatchObject({
       schemaVersion: 1,
       target: "object-storage-functions",
-      buildOutput: "server",
       base: "/",
       artifacts: {
         client: { path: "client" },
-        function: {
-          path: "function",
-          runtime: "nodejs22",
-          format: "esm",
-          entrypoint: "index.handler",
-          support: { sharp: "unsupported" },
-        },
+        functions: [
+          {
+            id: "function:shared",
+            path: "function",
+            runtime: "nodejs22",
+            entrypoint: "index.handler",
+          },
+        ],
       },
     });
     expect(deployment.routes.prerendered).toEqual([
-      { url: "/", objectKey: "index.html" },
+      {
+        kind: "page",
+        url: "/",
+        objectKey: "index.html",
+        artifactId: "client:primary",
+      },
     ]);
     expect(deployment.routes.onDemand.map((route) => route.pattern)).toEqual(
       expect.arrayContaining(["/runtime"]),
     );
-    expect(
-      deployment.artifacts.client.files.find((file) => file.path === "public.txt"),
-    ).toEqual({
-      path: "public.txt",
-      url: "/public.txt",
-      objectKey: "public.txt",
-    });
-    const browserAsset = deployment.artifacts.client.files.find((file) =>
-      file.path.startsWith("_astro/"),
+    expect(deployment.routes.onDemand.map((route) => route.pattern)).not.toEqual(
+      expect.arrayContaining(["/_image", "/_server-islands/[name]", "/404"]),
     );
-    expect(browserAsset).toBeDefined();
-    expect(browserAsset?.url).toMatch(/^\/_astro\//);
-    expect(browserAsset?.objectKey).toMatch(/^_astro\//);
+    expect(deployment.artifacts.client).not.toHaveProperty("files");
+    expect(files).toContain("client/public.txt");
   });
 
   it("omits a Function Artifact for a Static-only Build on the Object Storage + Cloud Functions Target", async () => {
@@ -250,13 +296,22 @@ describe.sequential("Astro artifact builds", () => {
     ]);
     expect(await manifest("static-functions")).toMatchObject({
       target: "object-storage-functions",
-      buildOutput: "static",
       base: "/",
-      artifacts: { client: { path: "client" } },
+      artifacts: { client: { path: "client" }, functions: [] },
       routes: {
         prerendered: [
-          { url: "/", objectKey: "index.html" },
-          { url: "/about/", objectKey: "about/index.html" },
+          {
+            kind: "page",
+            url: "/",
+            objectKey: "index.html",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "page",
+            url: "/about/",
+            objectKey: "about/index.html",
+            artifactId: "client:primary",
+          },
         ],
         onDemand: [],
       },
@@ -379,26 +434,19 @@ describe.sequential("Astro artifact builds", () => {
     expect(deployment.base).toBe("/docs");
     expect(deployment.routes.prerendered).toEqual([
       {
+        kind: "page",
         url: "/docs/prerendered/",
         objectKey: "docs/prerendered/index.html",
+        artifactId: "client:primary",
       },
     ]);
     expect(deployment.routes.onDemand.map((route) => route.pattern)).toEqual(
       expect.arrayContaining(["/docs/_actions/[...path]"]),
     );
-    expect(
-      deployment.artifacts.client.files.find((file) => file.path === "public.txt"),
-    ).toEqual({
-      path: "public.txt",
-      url: "/docs/public.txt",
-      objectKey: "docs/public.txt",
-    });
-    const browserAsset = deployment.artifacts.client.files.find((file) =>
-      file.path.startsWith("_astro/"),
+    expect(deployment.artifacts.client).not.toHaveProperty("files");
+    expect(await layout(join(fixtures, "actions/dist/client"))).toContain(
+      "public.txt",
     );
-    expect(browserAsset).toBeDefined();
-    expect(browserAsset?.url).toMatch(/^\/docs\/_astro\//);
-    expect(browserAsset?.objectKey).toMatch(/^docs\/_astro\//);
     expect(JSON.stringify(deployment)).not.toContain("/docs/docs/");
   });
 
@@ -470,7 +518,13 @@ describe.sequential("Astro artifact builds", () => {
   it("discovers and executes an integration-injected route", async () => {
     const deployment = await manifest("mixed");
     expect(deployment.routes.onDemand).toEqual(
-      expect.arrayContaining([{ pattern: "/injected/[name]" }]),
+      expect.arrayContaining([
+        {
+          kind: "endpoint",
+          pattern: "/injected/[name]",
+          artifactId: "function:shared",
+        },
+      ]),
     );
 
     const response = await generatedHandler.handler(
@@ -487,15 +541,29 @@ describe.sequential("Astro artifact builds", () => {
   it("emits and executes a Function Artifact for a server island", async () => {
     const deployment = await manifest("server-island");
     expect(deployment).toMatchObject({
-      buildOutput: "server",
       artifacts: {
         client: { path: "client" },
-        function: { path: "function" },
+        functions: [{ path: "function" }],
       },
-      routes: { prerendered: [{ url: "/", objectKey: "index.html" }] },
+      routes: {
+        prerendered: [
+          {
+            kind: "page",
+            url: "/",
+            objectKey: "index.html",
+            artifactId: "client:primary",
+          },
+        ],
+      },
     });
     expect(deployment.routes.onDemand).toEqual(
-      expect.arrayContaining([{ pattern: "/_server-islands/[name]" }]),
+      expect.arrayContaining([
+        {
+          kind: "page",
+          pattern: "/_server-islands/[name]",
+          artifactId: "function:shared",
+        },
+      ]),
     );
 
     const page = await readFile(
@@ -708,10 +776,12 @@ describe.sequential("Astro artifact builds", () => {
     const deployment = await manifest("server");
     expect(deployment).toMatchObject({
       target: "object-storage-functions",
-      buildOutput: "server",
+      artifacts: { functions: [{ id: "function:shared" }] },
     });
     expect(deployment.routes.onDemand).toEqual(
-      expect.arrayContaining([{ pattern: "/" }]),
+      expect.arrayContaining([
+        { kind: "page", pattern: "/", artifactId: "function:shared" },
+      ]),
     );
 
     const entrypoint = await generatedFixtureHandler("server", "server=1");
@@ -819,6 +889,10 @@ describe.sequential("Astro artifact builds", () => {
     const functionDirectory = join(fixtures, "install-basic/dist/function");
 
     await build({ root: fixtureRoot, logLevel: "silent" });
+    expect((await manifest("install-basic")).modifiers).toEqual({
+      apiGateway: false,
+      dependencyStrategy: "install",
+    });
     const packageJsonRaw = await readFile(
       join(functionDirectory, "package.json"),
       "utf8",
@@ -905,7 +979,7 @@ describe.sequential("Astro artifact builds", () => {
       "object-storage target cannot serve on-demand routes",
     );
     expect(message).toContain("/_server-islands/[name]");
-    expect(message).toContain("/_image");
+    expect(message).not.toContain("/_image");
     expect(message).toContain(
       'Use target "object-storage-functions" or prerender these routes.',
     );

@@ -3,50 +3,38 @@ import { isBuiltin } from "node:module";
 import type { AstroAdapter, AstroConfig } from "astro";
 import type { InlineConfig } from "vite";
 
-import { defaults } from "../defaults.js";
 import type { DependencyStrategy } from "../types.js";
 
-export interface DependencyStrategyPolicy {
-  strategy: DependencyStrategy;
-  assertUserExternals: (config: AstroConfig) => void;
-  configureServerBuild: (vite: InlineConfig) => InlineConfig;
-  sharpImageService: AstroAdapter["supportedAstroFeatures"]["sharpImageService"];
-  sharpSupport: "unsupported" | "limited";
+export function assertUserExternals(
+  config: AstroConfig,
+  strategy: DependencyStrategy,
+): void {
+  if (strategy === "bundle") assertBundleUserExternals(config);
 }
 
-export function createDependencyStrategyPolicy(
-  selected: DependencyStrategy | undefined,
-): DependencyStrategyPolicy {
-  const strategy = selected ?? defaults.STRATEGY;
-  if (strategy === "bundle") return bundle;
-  if (strategy === "install") return install;
-  throw new TypeError(
-    `Unknown Yandex Cloud adapter dependency strategy: ${String(strategy)}.`,
-  );
+export function configureServerBuild(
+  vite: InlineConfig,
+  strategy: DependencyStrategy,
+): InlineConfig {
+  return strategy === "bundle"
+    ? serverViteConfig(vite)
+    : installServerViteConfig(vite);
 }
 
-export const bundle: DependencyStrategyPolicy = {
-  strategy: "bundle",
-  assertUserExternals: assertBundleUserExternals,
-  configureServerBuild: serverViteConfig,
-  sharpImageService: {
-    support: "unsupported",
-    message:
-      'Sharp is a native runtime dependency and cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install".',
-  },
-  sharpSupport: "unsupported",
-};
-
-export const install: DependencyStrategyPolicy = {
-  strategy: "install",
-  assertUserExternals: () => {},
-  configureServerBuild: installServerViteConfig,
-  sharpImageService: {
-    support: "limited",
-    message: "Sharp support is experimental in Yandex Cloud Functions.",
-  },
-  sharpSupport: "limited",
-};
+export function sharpImageService(
+  strategy: DependencyStrategy,
+): AstroAdapter["supportedAstroFeatures"]["sharpImageService"] {
+  return strategy === "bundle"
+    ? {
+        support: "unsupported",
+        message:
+          'Sharp is a native runtime dependency and cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install".',
+      }
+    : {
+        support: "limited",
+        message: "Sharp support is experimental in Yandex Cloud Functions.",
+      };
+}
 
 function assertBundleUserExternals(config: AstroConfig): void {
   const external = config.vite.ssr?.external;

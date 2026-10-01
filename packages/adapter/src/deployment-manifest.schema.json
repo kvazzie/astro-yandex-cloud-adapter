@@ -1,216 +1,275 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:astro-yandex-cloud:deployment-manifest:v1",
-  "title": "Astro Yandex Cloud Deployment Manifest version 1",
-  "$comment": "Version 1 permits additive fields. Removing or changing a field, or tightening an existing invariant, requires a new schemaVersion.",
   "type": "object",
   "required": [
     "schemaVersion",
     "adapter",
-    "astro",
     "target",
-    "buildOutput",
+    "modifiers",
     "base",
     "artifacts",
     "routes"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "adapter": {
-      "type": "object",
-      "required": ["name", "version"],
-      "properties": {
-        "name": { "const": "@astro-yandex-cloud/adapter" },
-        "version": { "type": "string", "minLength": 1 }
-      }
+    "schemaVersion": {
+      "type": "number",
+      "enum": [1]
     },
-    "astro": {
+    "adapter": {
       "type": "object",
       "required": ["version"],
       "properties": {
-        "version": { "type": "string", "minLength": 1 }
+        "version": {
+          "type": "string",
+          "description": "a string at least 1 character(s) long",
+          "title": "minLength(1)",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": {
+        "title": "unknown"
       }
     },
     "target": {
+      "type": "string",
       "enum": ["object-storage", "object-storage-functions"]
     },
-    "buildOutput": { "enum": ["static", "server"] },
+    "modifiers": {
+      "type": "object",
+      "required": ["apiGateway"],
+      "properties": {
+        "apiGateway": {
+          "type": "boolean"
+        },
+        "dependencyStrategy": {
+          "type": "string",
+          "enum": ["bundle", "install"]
+        }
+      },
+      "additionalProperties": {
+        "title": "unknown"
+      }
+    },
     "base": {
       "type": "string",
-      "pattern": "^/(?:|(?!\\.{1,2}(?:/|$))[^/?#]+(?:/(?!\\.{1,2}(?:/|$))[^/?#]+)*)$",
-      "description": "Canonical Astro base. Every Client Artifact URL, route requirement, and Object Storage key is placed under this base."
+      "description": "a string matching the pattern ^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*)$",
+      "pattern": "^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*)$"
+    },
+    "assetsPrefix": {
+      "type": "string",
+      "description": "a string at least 1 character(s) long",
+      "title": "minLength(1)",
+      "minLength": 1
     },
     "artifacts": {
       "type": "object",
-      "required": ["client"],
+      "required": ["client", "functions"],
       "properties": {
-        "client": { "$ref": "#/$defs/clientArtifact" },
-        "function": { "$ref": "#/$defs/functionArtifact" }
+        "client": {
+          "type": "object",
+          "required": ["id", "path"],
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "a string at least 1 character(s) long",
+              "title": "minLength(1)",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "description": "a string matching the pattern ^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$",
+              "title": "minLength(1)",
+              "minLength": 1,
+              "pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$"
+            }
+          },
+          "additionalProperties": {
+            "title": "unknown"
+          }
+        },
+        "functions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "path", "runtime", "entrypoint"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "a string at least 1 character(s) long",
+                "title": "minLength(1)",
+                "minLength": 1
+              },
+              "path": {
+                "type": "string",
+                "description": "a string matching the pattern ^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$",
+                "title": "minLength(1)",
+                "minLength": 1,
+                "pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$"
+              },
+              "runtime": {
+                "type": "string",
+                "enum": ["nodejs22"]
+              },
+              "entrypoint": {
+                "type": "string",
+                "enum": ["index.handler"]
+              }
+            },
+            "additionalProperties": {
+              "title": "unknown"
+            }
+          }
+        }
+      },
+      "additionalProperties": {
+        "title": "unknown"
       }
     },
     "routes": {
       "type": "object",
-      "required": ["prerendered", "onDemand"],
+      "required": ["prerendered", "onDemand", "notFound"],
       "properties": {
         "prerendered": {
           "type": "array",
-          "items": { "$ref": "#/$defs/prerenderedRoute" },
-          "uniqueItems": true
+          "items": {
+            "type": "object",
+            "required": ["kind", "url", "objectKey", "artifactId"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["page", "endpoint"]
+              },
+              "url": {
+                "type": "string",
+                "description": "a string matching the pattern ^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$",
+                "pattern": "^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$"
+              },
+              "objectKey": {
+                "type": "string",
+                "description": "a string matching the pattern ^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$",
+                "title": "minLength(1)",
+                "minLength": 1,
+                "pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$"
+              },
+              "artifactId": {
+                "type": "string",
+                "description": "a string at least 1 character(s) long",
+                "title": "minLength(1)",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": {
+              "title": "unknown"
+            }
+          }
         },
         "onDemand": {
           "type": "array",
-          "items": { "$ref": "#/$defs/onDemandRoute" },
-          "uniqueItems": true
-        }
-      }
-    }
-  },
-  "$defs": {
-    "relativePath": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$)).+$"
-    },
-    "urlPath": {
-      "type": "string",
-      "pattern": "^/(?:|(?!\\.{1,2}(?:/|$))[^/?#]+(?:/(?!\\.{1,2}(?:/|$))[^/?#]+)*/?)$"
-    },
-    "objectKey": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$)).+$"
-    },
-    "clientArtifactFile": {
-      "type": "object",
-      "required": ["path", "url", "objectKey"],
-      "properties": {
-        "path": { "$ref": "#/$defs/relativePath" },
-        "url": {
-          "$ref": "#/$defs/urlPath",
-          "description": "Public URL under the manifest base."
+          "items": {
+            "type": "object",
+            "required": ["kind", "pattern", "artifactId"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["page", "endpoint"]
+              },
+              "pattern": {
+                "type": "string",
+                "description": "a string matching the pattern ^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$",
+                "pattern": "^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$"
+              },
+              "artifactId": {
+                "type": "string",
+                "description": "a string at least 1 character(s) long",
+                "title": "minLength(1)",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": {
+              "title": "unknown"
+            }
+          }
         },
-        "objectKey": {
-          "$ref": "#/$defs/objectKey",
-          "description": "The canonical Object Storage key formed from the manifest base and this file's path."
-        }
-      }
-    },
-    "clientArtifact": {
-      "type": "object",
-      "required": ["path", "files"],
-      "properties": {
-        "path": { "$ref": "#/$defs/relativePath" },
-        "files": {
+        "notFound": {
           "type": "array",
-          "items": { "$ref": "#/$defs/clientArtifactFile" },
-          "uniqueItems": true
-        }
-      }
-    },
-    "functionArtifact": {
-      "type": "object",
-      "required": ["path", "runtime", "format", "entrypoint", "support"],
-      "properties": {
-        "path": { "$ref": "#/$defs/relativePath" },
-        "runtime": { "const": "nodejs22" },
-        "format": { "const": "esm" },
-        "entrypoint": { "const": "index.handler" },
-        "support": {
-          "type": "object",
-          "required": ["sharp"],
-          "properties": {
-            "sharp": { "enum": ["unsupported", "limited"] }
+          "items": {
+            "type": "object",
+            "required": ["scope", "url", "objectKey", "artifactId"],
+            "properties": {
+              "scope": {
+                "type": "string",
+                "description": "a string matching the pattern ^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$",
+                "pattern": "^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$"
+              },
+              "url": {
+                "type": "string",
+                "description": "a string matching the pattern ^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$",
+                "pattern": "^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$"
+              },
+              "objectKey": {
+                "type": "string",
+                "description": "a string matching the pattern ^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$",
+                "title": "minLength(1)",
+                "minLength": 1,
+                "pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$"
+              },
+              "artifactId": {
+                "type": "string",
+                "description": "a string at least 1 character(s) long",
+                "title": "minLength(1)",
+                "minLength": 1
+              },
+              "functionArtifactId": {
+                "type": "string",
+                "description": "a string at least 1 character(s) long",
+                "title": "minLength(1)",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": {
+              "title": "unknown"
+            }
           }
         }
+      },
+      "additionalProperties": {
+        "title": "unknown"
       }
     },
-    "prerenderedRoute": {
+    "directInvocation": {
       "type": "object",
-      "required": ["url", "objectKey"],
+      "required": ["requestTargetParameter"],
       "properties": {
-        "url": {
-          "$ref": "#/$defs/urlPath",
-          "description": "Prerendered request URL under the manifest base."
-        },
-        "objectKey": {
-          "$ref": "#/$defs/objectKey",
-          "description": "Object Storage key of the Client Artifact file that serves this URL."
+        "requestTargetParameter": {
+          "type": "string",
+          "description": "a string at least 1 character(s) long",
+          "title": "minLength(1)",
+          "minLength": 1
         }
+      },
+      "additionalProperties": {
+        "title": "unknown"
       }
     },
-    "onDemandRoute": {
+    "gatewayTemplate": {
       "type": "object",
-      "required": ["pattern"],
+      "required": ["path"],
       "properties": {
-        "pattern": {
-          "$ref": "#/$defs/urlPath",
-          "description": "Request pattern under the manifest base that requires the Function Artifact."
+        "path": {
+          "type": "string",
+          "description": "a string matching the pattern ^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$",
+          "title": "minLength(1)",
+          "minLength": 1,
+          "pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$"
         }
+      },
+      "additionalProperties": {
+        "title": "unknown"
       }
     }
   },
-  "allOf": [
-    {
-      "if": {
-        "properties": { "target": { "const": "object-storage" } },
-        "required": ["target"]
-      },
-      "then": {
-        "properties": {
-          "buildOutput": { "const": "static" },
-          "artifacts": {
-            "type": "object",
-            "not": { "type": "object", "required": ["function"] }
-          },
-          "routes": {
-            "type": "object",
-            "properties": {
-              "onDemand": { "type": "array", "maxItems": 0 }
-            },
-            "required": ["onDemand"]
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": { "buildOutput": { "const": "static" } },
-        "required": ["buildOutput"]
-      },
-      "then": {
-        "properties": {
-          "artifacts": {
-            "type": "object",
-            "not": { "type": "object", "required": ["function"] }
-          },
-          "routes": {
-            "type": "object",
-            "properties": {
-              "onDemand": { "type": "array", "maxItems": 0 }
-            },
-            "required": ["onDemand"]
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": { "buildOutput": { "const": "server" } },
-        "required": ["buildOutput"]
-      },
-      "then": {
-        "properties": {
-          "target": { "const": "object-storage-functions" },
-          "artifacts": { "type": "object", "required": ["function"] },
-          "routes": {
-            "type": "object",
-            "properties": {
-              "onDemand": { "type": "array", "minItems": 1 }
-            },
-            "required": ["onDemand"]
-          }
-        }
-      }
-    }
-  ]
+  "additionalProperties": {
+    "title": "unknown"
+  },
+  "$id": "urn:astro-yandex-cloud:deployment-manifest:v1"
 }

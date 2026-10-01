@@ -1,180 +1,153 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
 import { parseDeploymentManifest } from "../../packages/adapter/src/deployment-manifest.js";
+import schema from "../../packages/adapter/src/deployment-manifest.schema.json" with { type: "json" };
 
-interface ManifestInput {
-  [key: string]: unknown;
-  schemaVersion: number;
-  adapter: { [key: string]: unknown; name: string; version: string };
-  astro: { [key: string]: unknown; version: string };
-  target: string;
-  buildOutput: string;
-  base: string;
-  artifacts: {
-    [key: string]: unknown;
-    client: {
-      [key: string]: unknown;
-      path: string;
-      files: Array<{
-        [key: string]: unknown;
-        path: string;
-        url: string;
-        objectKey: string;
-      }>;
-    };
-    function?: Record<string, unknown>;
-  };
-  routes: {
-    [key: string]: unknown;
-    prerendered: Array<{ url: string; objectKey: string }>;
-    onDemand: Array<{ pattern: string }>;
-  };
-}
+const validateSchema = new Ajv2020().compile(schema);
 
-function staticManifest(): ManifestInput {
+function staticManifest() {
   return {
     schemaVersion: 1,
-    adapter: {
-      name: "@astro-yandex-cloud/adapter",
-      version: "0.1.0",
-    },
-    astro: { version: "7.1.0" },
-    target: "object-storage",
-    buildOutput: "static",
-    base: "/",
+    adapter: { version: "0.1.0" },
+    target: "object-storage" as string,
+    modifiers: { apiGateway: false },
+    base: "/docs",
     artifacts: {
-      client: {
-        path: "client",
-        files: [{ path: "index.html", url: "/", objectKey: "index.html" }],
-      },
+      client: { id: "client:primary", path: "client" },
+      functions: [] as Array<Record<string, unknown>>,
     },
     routes: {
-      prerendered: [{ url: "/", objectKey: "index.html" }],
-      onDemand: [],
+      prerendered: [
+        {
+          kind: "page",
+          url: "/docs/",
+          objectKey: "docs/index.html",
+          artifactId: "client:primary",
+        },
+      ],
+      onDemand: [] as Array<Record<string, unknown>>,
+      notFound: [] as Array<Record<string, unknown>>,
     },
   };
 }
 
 describe("Deployment Manifest consumers", () => {
-  it("accepts a schema version 1 manifest", () => {
-    const manifest = staticManifest();
-
-    expect(parseDeploymentManifest(manifest)).toBe(manifest);
-  });
-
-  it("accepts additive fields within schema version 1", () => {
-    const manifest = staticManifest();
-    manifest.futureRequirement = true;
-    manifest.adapter.futureVersionFact = "supported";
-    manifest.artifacts.client.files[0]!.futureObjectFact = 1;
-
-    expect(parseDeploymentManifest(manifest)).toBe(manifest);
-  });
-
-  it("rejects unknown schema versions", () => {
-    const manifest = staticManifest();
-    manifest.schemaVersion = 2;
-
-    expect(() => parseDeploymentManifest(manifest)).toThrow(
-      /Invalid Deployment Manifest.*schemaVersion.*equal to constant/i,
-    );
-  });
-
-  it.each([
-    ["unknown Target", (manifest: ManifestInput) => (manifest.target = "vm")],
-    ["invalid base", (manifest: ManifestInput) => (manifest.base = "docs/")],
-    [
-      "absolute artifact path",
-      (manifest: ManifestInput) => (manifest.artifacts.client.path = "/client"),
-    ],
-    [
-      "absolute Object Storage key",
-      (manifest: ManifestInput) =>
-        (manifest.artifacts.client.files[0]!.objectKey = "/index.html"),
-    ],
-  ])("rejects an %s", (_name, change) => {
-    const manifest = staticManifest();
-    change(manifest);
-
-    expect(() => parseDeploymentManifest(manifest)).toThrow(
-      /Invalid Deployment Manifest/,
-    );
-  });
-
-  it.each([
-    [
-      "Static-only Build with a Function Artifact",
-      (manifest: ManifestInput) => {
-        manifest.artifacts.function = {
-          path: "function",
-          runtime: "nodejs22",
-          format: "esm",
-          entrypoint: "index.handler",
-          support: { sharp: "unsupported" },
-        };
-      },
-    ],
-    [
-      "Runtime Build without a Function Artifact",
-      (manifest: ManifestInput) => {
-        manifest.target = "object-storage-functions";
-        manifest.buildOutput = "server";
-        manifest.routes.onDemand = [{ pattern: "/runtime" }];
-      },
-    ],
-    [
-      "Object Storage Target with an On-demand Route",
-      (manifest: ManifestInput) => {
-        manifest.routes.onDemand = [{ pattern: "/runtime" }];
-      },
-    ],
-  ])("rejects the invalid combination: %s", (_name, change) => {
-    const manifest = staticManifest();
-    change(manifest);
-
-    expect(() => parseDeploymentManifest(manifest)).toThrow(
-      /Invalid Deployment Manifest/,
-    );
-  });
-
-  it("rejects Client Artifact placement outside the required base", () => {
-    const manifest = staticManifest();
-    manifest.base = "/docs";
-
-    expect(() => parseDeploymentManifest(manifest)).toThrow(
-      /Invalid Deployment Manifest.*base/i,
-    );
-  });
-
-  it("rejects a Prerendered Route that does not reference an uploaded client file", () => {
-    const manifest = staticManifest();
-    manifest.routes.prerendered[0]!.objectKey = "missing.html";
-
-    expect(() => parseDeploymentManifest(manifest)).toThrow(
-      /Invalid Deployment Manifest.*Prerendered Route/i,
-    );
-  });
-
-  it.each([
-    "/docs/../index.html",
-    "/docs/%2e%2e/index.html",
-    "/docs/index.html?download=1",
-    "/docs/index.html#file",
-  ])("rejects the non-canonical URL path %s", (url) => {
-    const manifest = staticManifest();
-    manifest.base = "/docs";
-    manifest.artifacts.client.files[0] = {
-      path: "index.html",
-      url,
-      objectKey: "docs/index.html",
+  it("accepts v1 with additive fields at every depth", () => {
+    const value = {
+      ...staticManifest(),
+      futureRequirement: true,
     };
-    manifest.routes.prerendered[0] = {
-      url,
-      objectKey: "docs/index.html",
-    };
+    Object.assign(value.artifacts.client, { futurePlacement: 1 });
+    Object.assign(value.routes.prerendered[0]!, { futureRouteFact: ["x"] });
 
-    expect(() => parseDeploymentManifest(manifest)).toThrow(
-      /Invalid Deployment Manifest/,
-    );
+    expect(parseDeploymentManifest(value)).toEqual(value);
+    expect(validateSchema(value)).toBe(true);
+  });
+
+  it("accepts a Function Artifact referenced by an endpoint", () => {
+    const value = staticManifest();
+    value.target = "object-storage-functions";
+    value.artifacts.functions.push({
+      id: "function:shared",
+      path: "function",
+      runtime: "nodejs22",
+      entrypoint: "index.handler",
+    });
+    value.routes.onDemand.push({
+      kind: "endpoint",
+      pattern: "/docs/api/ping",
+      artifactId: "function:shared",
+    });
+
+    expect(parseDeploymentManifest(value)).toEqual(value);
+    expect(validateSchema(value)).toBe(true);
+  });
+
+  it.each([
+    [
+      "schema version",
+      (value: ReturnType<typeof staticManifest>) =>
+        Object.assign(value, { schemaVersion: 2 }),
+    ],
+    [
+      "target",
+      (value: ReturnType<typeof staticManifest>) => {
+        value.target = "vm";
+      },
+    ],
+    [
+      "absolute path",
+      (value: ReturnType<typeof staticManifest>) => {
+        value.artifacts.client.path = "/client";
+      },
+    ],
+    [
+      "noncanonical route URL",
+      (value: ReturnType<typeof staticManifest>) => {
+        value.routes.prerendered[0]!.url = "/docs//index";
+      },
+    ],
+    [
+      "missing route kind",
+      (value: ReturnType<typeof staticManifest>) => {
+        delete (
+          value.routes.prerendered[0] as Partial<
+            (typeof value.routes.prerendered)[number]
+          >
+        ).kind;
+      },
+    ],
+  ])("rejects invalid known %s in parser and JSON Schema", (_name, change) => {
+    const value = staticManifest();
+    change(value);
+    expect(() => parseDeploymentManifest(value)).toThrow(TypeError);
+    expect(validateSchema(value)).toBe(false);
+  });
+
+  it("rejects a route pointing to the wrong artifact kind", () => {
+    const value = staticManifest();
+    value.routes.prerendered[0]!.artifactId = "function:shared";
+
+    expect(() => parseDeploymentManifest(value)).toThrow(/Prerendered Route/);
+  });
+
+  it("rejects duplicate artifact IDs", () => {
+    const value = staticManifest();
+    value.target = "object-storage-functions";
+    value.artifacts.functions.push({
+      id: "client:primary",
+      path: "function",
+      runtime: "nodejs22",
+      entrypoint: "index.handler",
+    });
+
+    expect(() => parseDeploymentManifest(value)).toThrow(/duplicate artifact ID/);
+  });
+
+  it("rejects a Function Artifact on the Object Storage Target", () => {
+    const value = staticManifest();
+    value.artifacts.functions.push({
+      id: "function:shared",
+      path: "function",
+      runtime: "nodejs22",
+      entrypoint: "index.handler",
+    });
+
+    expect(() => parseDeploymentManifest(value)).toThrow(/Object Storage Target/);
+  });
+
+  it("rejects invalid base placement", () => {
+    const value = staticManifest();
+    value.routes.prerendered[0]!.url = "/other/";
+
+    expect(() => parseDeploymentManifest(value)).toThrow(/Prerendered Route/);
+  });
+
+  it("rejects noncanonical URLs", () => {
+    const value = staticManifest();
+    value.routes.prerendered[0]!.url = "/docs/%2e%2e/";
+
+    expect(() => parseDeploymentManifest(value)).toThrow(/Prerendered Route/);
   });
 });

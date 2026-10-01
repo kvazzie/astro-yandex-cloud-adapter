@@ -1,12 +1,10 @@
 import { createApp } from "astro/app/entrypoint";
 import { setGetEnv } from "astro/env/setup";
 import { site } from "virtual:yandex-cloud-runtime-config";
+import { Effect, Either } from "effect";
 
 import {
-  fromWebResponse,
-  getClientAddress,
-  runtimeLocals,
-  toWebRequest,
+  invoke,
   type YandexCloudHttpEvent,
   type YandexCloudHttpResult,
   type YandexCloudInvocationContext,
@@ -19,11 +17,17 @@ export async function handler(
   event: YandexCloudHttpEvent,
   context: YandexCloudInvocationContext,
 ): Promise<YandexCloudHttpResult> {
-  const request = toWebRequest(event, site);
-  const response = await app.render(request, {
-    addCookieHeader: true,
-    clientAddress: getClientAddress(event),
-    locals: runtimeLocals(event, context),
-  });
-  return fromWebResponse(response);
+  const result = await Effect.runPromise(
+    Effect.either(
+      invoke(event, context, site, (request, clientAddress, locals) =>
+        app.render(request, {
+          addCookieHeader: true,
+          clientAddress,
+          locals,
+        }),
+      ),
+    ),
+  );
+  if (Either.isLeft(result)) throw result.left;
+  return result.right;
 }

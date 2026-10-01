@@ -51,7 +51,7 @@ A schema-versioned, machine-readable declaration of the Serving Artifacts actual
 _Avoid_: Build metadata, deployment configuration
 
 **API Gateway Specification Template**:
-An OpenAPI description of the build's page and endpoint Request Routing through API Gateway, derived from the Deployment Manifest when the API Gateway Modifier is selected. Deployment supplies resource identifiers and may customize the specification.
+An OpenAPI description of the build's page and endpoint Request Routing through API Gateway, derived from the same route requirements as the Deployment Manifest when the API Gateway Modifier is selected. Deployment supplies resource identifiers and may customize the specification.
 
 **Function Runtime Bridge**:
 A reusable translation between Yandex Cloud Functions invocations and Web Standards requests and responses. Its compatibility is established against real Yandex Cloud deployments and then shared by products that emit Function Artifacts.
