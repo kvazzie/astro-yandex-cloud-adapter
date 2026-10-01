@@ -47,6 +47,18 @@ interface RouteEvidence {
   hasFunction: boolean;
 }
 
+/** Preliminary route compatibility before Astro emits build artifacts. */
+export function registeredOnDemandRoutes(
+  routes: readonly IntegrationResolvedRoute[],
+): IntegrationResolvedRoute[] {
+  return routes.filter(
+    (route) =>
+      (route.type === "page" || route.type === "endpoint") &&
+      !route.isPrerendered &&
+      route.origin !== "internal",
+  );
+}
+
 function withBase(base: string, urlPath: string): string {
   const suffix = `/${urlPath.replace(/^\/+/, "")}`;
   if (base === "/") return suffix;

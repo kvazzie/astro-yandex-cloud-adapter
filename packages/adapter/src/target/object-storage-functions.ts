@@ -3,11 +3,13 @@ import { Effect } from "effect";
 import type { InlineConfig } from "vite";
 
 import { completeBuild } from "../build/complete.js";
+import { registeredOnDemandRoutes } from "../build/routes.js";
 import {
   assertUserExternals,
   configureServerBuild,
   sharpImageService,
 } from "../function/config.js";
+import { prepareFunctionArtifact } from "../function/package.js";
 import type { BuildPlan } from "../integration/options.js";
 import type { CompletedBuild } from "../integration/session.js";
 import type { TargetModule } from "./module.js";
@@ -32,9 +34,7 @@ export function objectStorageFunctionsModule(
       });
     },
     astroAdapter(routes: readonly IntegrationResolvedRoute[]) {
-      const hasOnDemand = routes.some(
-        (route) => !route.isPrerendered && route.origin !== "internal",
-      );
+      const hasOnDemand = registeredOnDemandRoutes(routes).length > 0;
       return Effect.succeed(
         adapter(hasOnDemand, {
           staticOutput: "stable",
@@ -50,7 +50,25 @@ export function objectStorageFunctionsModule(
       return configureServerBuild(vite, plan.dependencyStrategy);
     },
     generateArtifacts(build: CompletedBuild) {
-      return completeBuild(build, plan);
+      return completeBuild(build, {
+        target: plan.target,
+        dependencyStrategy: plan.dependencyStrategy,
+        prepareArtifacts: (build, _routePlan, hasFunction) =>
+          hasFunction
+            ? prepareFunctionArtifact(
+                build.config.build.server,
+                plan.dependencyStrategy === "install"
+                  ? build.config.root
+                  : undefined,
+              ).pipe(
+                Effect.mapError((cause) => ({
+                  _tag: "UnresolvedDependency" as const,
+                  message: cause.message,
+                  cause,
+                })),
+              )
+            : Effect.void,
+      });
     },
   };
 }

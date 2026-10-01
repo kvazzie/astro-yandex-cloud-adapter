@@ -35,26 +35,38 @@ describe("adapter options and routes", () => {
     );
   });
 
-  it("rejects on-demand routes for object storage", () => {
-    const hook = yandexCloud().hooks["astro:routes:resolved"];
+  it("rejects install dependencies for Object Storage", () => {
     expect(() =>
-      hook?.({
-        routes: [
-          {
-            type: "page",
-            origin: "project",
-            params: ["id"],
-            segments: [],
-            pattern: "/api/[id]",
-            patternRegex: /^\/api\/([^/]+?)$/,
-            entrypoint: "src/pages/api/[id].ts",
-            isPrerendered: false,
-            fallbackRoutes: [],
-            generate: () => "/api/id",
-          },
-        ],
-        logger: {} as never,
-      }),
+      yandexCloud({ target: "object-storage", dependencyStrategy: "install" }),
+    ).toThrow(/dependency strategy.*Object Storage/i);
+  });
+
+  it("rejects on-demand routes for object storage", () => {
+    const hooks = yandexCloud().hooks;
+    const hook = hooks["astro:routes:resolved"];
+    void hook?.({
+      routes: [
+        {
+          type: "page",
+          origin: "project",
+          params: ["id"],
+          segments: [],
+          pattern: "/api/[id]",
+          patternRegex: /^\/api\/([^/]+?)$/,
+          entrypoint: "src/pages/api/[id].ts",
+          isPrerendered: false,
+          fallbackRoutes: [],
+          generate: () => "/api/id",
+        },
+      ],
+      logger: {} as never,
+    });
+    expect(() =>
+      hooks["astro:config:done"]?.({
+        config: {},
+        injectTypes: () => {},
+        setAdapter: () => {},
+      } as never),
     ).toThrow(/cannot serve on-demand routes.*\/api\/\[id\]/);
   });
 

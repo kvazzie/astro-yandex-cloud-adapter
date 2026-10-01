@@ -99,7 +99,16 @@ function checkReferences(manifest: DeploymentManifestV1): void {
   if (!manifest.routes.onDemand.length && manifest.artifacts.functions.length) {
     invalidManifest("Function Artifacts need On-demand Routes.");
   }
+  const notFoundScopes = new Set<string>();
   for (const scope of manifest.routes.notFound) {
+    const expectedUrl = `${scope.scope === "/" ? "" : scope.scope}/404`;
+    const matchingPage = manifest.routes.prerendered.some(
+      (route) =>
+        route.kind === "page" &&
+        route.url === scope.url &&
+        route.objectKey === scope.objectKey &&
+        route.artifactId === scope.artifactId,
+    );
     if (
       !isCanonicalUrlPath(scope.scope) ||
       !belongsToBase(manifest.base, scope.scope) ||
@@ -108,12 +117,16 @@ function checkReferences(manifest: DeploymentManifestV1): void {
       !scope.objectKey.startsWith(prefix) ||
       scope.artifactId !== manifest.artifacts.client.id ||
       (scope.functionArtifactId !== undefined &&
-        !functionIds.has(scope.functionArtifactId))
+        !functionIds.has(scope.functionArtifactId)) ||
+      (scope.url !== expectedUrl && scope.url !== `${expectedUrl}/`) ||
+      !matchingPage ||
+      notFoundScopes.has(scope.scope)
     ) {
       invalidManifest(
         `404 scope ${scope.scope} has invalid placement or artifact references.`,
       );
     }
+    notFoundScopes.add(scope.scope);
   }
 }
 

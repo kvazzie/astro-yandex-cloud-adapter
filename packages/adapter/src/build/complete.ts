@@ -12,11 +12,7 @@ import {
   parseDeploymentManifest,
 } from "../deployment-manifest.js";
 import type { Target, YandexCloudManifestV1 } from "../types.js";
-import {
-  finalizeFunctionArtifact,
-  validateFunctionEntrypoint,
-} from "../function/package.js";
-import type { BuildPlan } from "../integration/options.js";
+import { validateFunctionEntrypoint } from "../function/package.js";
 import type { CompletedBuild } from "../integration/session.js";
 import type { BuildError } from "../target/module.js";
 import { manifestRoutes, reconcileRoutes, type RoutePlan } from "./routes.js";
@@ -30,9 +26,19 @@ function failure(_tag: BuildError["_tag"], error: unknown): BuildError {
 }
 
 /** Completes the selected Target from emitted Astro output. */
+export interface BuildCompletionPolicy {
+  target: Target;
+  dependencyStrategy?: "bundle" | "install";
+  prepareArtifacts(
+    build: CompletedBuild,
+    routePlan: RoutePlan,
+    hasFunction: boolean,
+  ): Effect.Effect<void, BuildError>;
+}
+
 export function completeBuild(
   build: CompletedBuild,
-  plan: BuildPlan,
+  policy: BuildCompletionPolicy,
 ): Effect.Effect<YandexCloudManifestV1, BuildError> {
   return Effect.gen(function* () {
     const { config } = build;
@@ -45,31 +51,13 @@ export function completeBuild(
       try: () => inspectRoutes(build, hasFunction),
       catch: (error) => failure("InvalidArtifact", error),
     });
-    if (hasFunction && plan.target === "object-storage") {
-      const onDemand = manifestRoutes(routePlan).onDemand.map(
-        (route) => route.pattern,
-      );
-      return yield* Effect.fail<BuildError>({
-        _tag: "UnsupportedRoute",
-        message: `The object-storage target cannot serve on-demand routes: ${onDemand.join(", ")}. Use target "object-storage-functions" or prerender these routes.`,
-      });
-    }
-    if (hasFunction && plan.target === "object-storage-functions") {
-      yield* Effect.tryPromise({
-        try: () =>
-          finalizeFunctionArtifact(
-            config.build.server,
-            plan.dependencyStrategy === "install" ? config.root : undefined,
-          ),
-        catch: (error) => failure("UnresolvedDependency", error),
-      });
-    }
+    yield* policy.prepareArtifacts(build, routePlan, hasFunction);
     return yield* Effect.tryPromise({
       try: () =>
         writeDeploymentManifest(config.outDir, config, {
-          deploymentTarget: plan.target,
-          ...(plan.target === "object-storage-functions"
-            ? { dependencyStrategy: plan.dependencyStrategy }
+          deploymentTarget: policy.target,
+          ...(policy.dependencyStrategy
+            ? { dependencyStrategy: policy.dependencyStrategy }
             : {}),
           routePlan,
           hasFunction,

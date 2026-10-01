@@ -64,8 +64,7 @@ export default function yandexCloud(options?: AdapterOptions): AstroIntegration 
         });
       },
       "astro:routes:resolved": ({ routes }) => {
-        const snapshot = session.recordRoutes(routes);
-        runHook(target.astroAdapter(snapshot));
+        session.recordRoutes(routes);
       },
       "astro:config:done": ({ config, injectTypes, setAdapter }) => {
         const snapshot = session.recordConfig(config);

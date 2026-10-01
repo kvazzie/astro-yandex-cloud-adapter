@@ -150,4 +150,16 @@ describe("Deployment Manifest consumers", () => {
 
     expect(() => parseDeploymentManifest(value)).toThrow(/Prerendered Route/);
   });
+
+  it("rejects a 404 scope without a matching prerendered page", () => {
+    const value = staticManifest();
+    value.routes.notFound.push({
+      scope: "/docs",
+      url: "/docs/404/",
+      objectKey: "docs/404.html",
+      artifactId: "client:primary",
+    });
+
+    expect(() => parseDeploymentManifest(value)).toThrow(/404 scope/);
+  });
 });

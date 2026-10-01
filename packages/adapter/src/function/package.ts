@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { access, writeFile } from "node:fs/promises";
 
 import type { PackageJson } from "pkg-types";
+import { Effect } from "effect";
 
 import {
   formatFunctionPackageJson,
@@ -11,16 +12,24 @@ import { npmRegistry, type Registry } from "./registry.js";
 import { asDirectoryPath, findRuntimePackageImports } from "./imports.js";
 import { resolvePinnedRuntimeDependencies } from "./dependencies.js";
 
-/**
- * Finalizes an existing Function Artifact directory.
- *
- * Call only after validateFunctionEntrypoint succeeds: writes metadata for
- * the entrypoint Astro emitted. With appRoot (the install dependency
- * strategy) pins the bare runtime imports to exact versions in Package
- * JSON and lockfile files; otherwise writes the bundle Package JSON with
- * no runtime Dependencies.
- */
-export async function finalizeFunctionArtifact(
+/** Validates and packages an emitted Function Artifact as one operation. */
+export function prepareFunctionArtifact(
+  functionDirectory: URL,
+  appRoot?: URL,
+  registry: Registry = npmRegistry,
+): Effect.Effect<void, Error> {
+  return Effect.tryPromise({
+    try: async () => {
+      const entrypoint = await validateFunctionEntrypoint(functionDirectory);
+      if (!entrypoint.ok)
+        throw new Error(entrypoint.reason, { cause: entrypoint.cause });
+      await finalizeFunctionArtifact(functionDirectory, appRoot, registry);
+    },
+    catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+  });
+}
+
+async function finalizeFunctionArtifact(
   functionDirectory: URL,
   appRoot?: URL,
   registry: Registry = npmRegistry,

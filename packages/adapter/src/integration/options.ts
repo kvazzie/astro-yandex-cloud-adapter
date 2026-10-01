@@ -51,7 +51,13 @@ export function decodeOptions(value: unknown): BuildPlan {
     throw new TypeError("Invalid Yandex Cloud adapter options.");
   }
   const target: Target = options.target ?? "object-storage";
-  if (target === "object-storage") return { target, routing: { kind: "direct" } };
+  if (target === "object-storage") {
+    if (options.dependencyStrategy && options.dependencyStrategy !== "bundle")
+      throw new TypeError(
+        `The ${options.dependencyStrategy} dependency strategy requires the Object Storage + Cloud Functions Target.`,
+      );
+    return { target, routing: { kind: "direct" } };
+  }
   return {
     target,
     routing: { kind: "direct" },
