@@ -2,7 +2,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
 import { parseDeploymentManifest } from "../../packages/adapter/src/deployment-manifest.js";
-import schema from "../../packages/adapter/src/deployment-manifest.schema.json" with { type: "json" };
+import schema from "../../packages/adapter/.generated/deployment-manifest.schema.json" with { type: "json" };
 
 const validateSchema = new Ajv2020().compile(schema);
 

@@ -21,6 +21,6 @@ function removeUnknownIds(value) {
 removeUnknownIds(schema);
 schema.$id = "urn:astro-yandex-cloud:deployment-manifest:v1";
 await writeFile(
-  new URL("../src/deployment-manifest.schema.json", import.meta.url),
+  new URL("../.generated/deployment-manifest.schema.json", import.meta.url),
   `${JSON.stringify(schema, null, 2)}\n`,
 );

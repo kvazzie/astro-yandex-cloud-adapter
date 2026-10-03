@@ -55,7 +55,7 @@
   },
   "scripts": {
     "build": "tsdown",
-    "schema:generate": "node --experimental-strip-types scripts/generate-manifest-schema.mjs && pnpm exec prettier --write src/deployment-manifest.schema.json",
+    "schema:generate": "node --experimental-strip-types scripts/generate-manifest-schema.mjs && pnpm exec prettier --write .generated/deployment-manifest.schema.json",
     "prepack": "pnpm build"
   },
   "peerDependencies": {
