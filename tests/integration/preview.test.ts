@@ -91,6 +91,9 @@ describe.sequential("preview from an installed adapter tarball", () => {
         "utf8",
       ),
     ) as { version: string };
+    const workspacePackage = JSON.parse(
+      await readFile(resolve(import.meta.dirname, "../../package.json"), "utf8"),
+    ) as { pnpm: { overrides: { unifont: string } } };
     await writeFile(
       join(root, "package.json"),
       JSON.stringify({
@@ -101,13 +104,19 @@ describe.sequential("preview from an installed adapter tarball", () => {
           astro: astroPackage.version,
           nanoid: "3.3.17",
         },
+        // Match the workspace's Astro dependency pin on the supported Node minimum.
+        overrides: { unifont: workspacePackage.pnpm.overrides.unifont },
       }),
     );
-    await runCommand("npm", ["install", "--no-audit", "--no-fund"], {
-      cwd: root,
-      timeout: 120_000,
-      env: { ...process.env, SHARP_IGNORE_GLOBAL_LIBVIPS: "1" },
-    });
+    await runCommand(
+      "npm",
+      ["install", "--engine-strict", "--no-audit", "--no-fund"],
+      {
+        cwd: root,
+        timeout: 120_000,
+        env: { ...process.env, SHARP_IGNORE_GLOBAL_LIBVIPS: "1" },
+      },
+    );
     const require = createRequire(join(root, "package.json"));
     astro = (await import(
       pathToFileURL(require.resolve("astro")).href
