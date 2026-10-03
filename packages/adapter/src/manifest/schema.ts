@@ -31,6 +31,10 @@ const functionArtifact = extensible({
   path: relativePath,
   runtime: Schema.Literal("nodejs22"),
   entrypoint: Schema.Literal("index.handler"),
+  support: extensible({
+    sharp: Schema.Literal("unsupported", "experimental"),
+    runtimeImageTransformation: Schema.Literal("unsupported", "experimental"),
+  }),
 });
 const prerenderedRoute = extensible({
   kind: Schema.Literal("page", "endpoint"),

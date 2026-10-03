@@ -53,6 +53,7 @@ describe("Deployment Manifest consumers", () => {
       path: "function",
       runtime: "nodejs22",
       entrypoint: "index.handler",
+      support: { sharp: "unsupported", runtimeImageTransformation: "unsupported" },
     });
     value.routes.onDemand.push({
       kind: "endpoint",
@@ -120,6 +121,7 @@ describe("Deployment Manifest consumers", () => {
       path: "function",
       runtime: "nodejs22",
       entrypoint: "index.handler",
+      support: { sharp: "unsupported", runtimeImageTransformation: "unsupported" },
     });
 
     expect(() => parseDeploymentManifest(value)).toThrow(/duplicate artifact ID/);
@@ -132,6 +134,7 @@ describe("Deployment Manifest consumers", () => {
       path: "function",
       runtime: "nodejs22",
       entrypoint: "index.handler",
+      support: { sharp: "unsupported", runtimeImageTransformation: "unsupported" },
     });
 
     expect(() => parseDeploymentManifest(value)).toThrow(/Object Storage Target/);

@@ -108,12 +108,12 @@ export function reconcileRoutes(evidence: RouteEvidence): RoutePlan {
     hasFunction,
   } = evidence;
   const files = new Set(evidence.clientFiles);
-  const staticRoutes = new Map<
+  const prerenderedRoutes = new Map<
     string,
     Extract<PlannedRoute, { kind: "prerendered" }>
   >();
   const seenUrls = new Set<string>();
-  const addStatic = (
+  const addPrerendered = (
     route: IntegrationResolvedRoute,
     url: string,
     file: string,
@@ -126,7 +126,7 @@ export function reconcileRoutes(evidence: RouteEvidence): RoutePlan {
     if (seenUrls.has(publicUrl))
       throw new Error(`Ambiguous Prerendered Route ${publicUrl}.`);
     seenUrls.add(publicUrl);
-    let planned = staticRoutes.get(route.pattern);
+    let planned = prerenderedRoutes.get(route.pattern);
     if (!planned) {
       planned = {
         kind: "prerendered",
@@ -134,7 +134,7 @@ export function reconcileRoutes(evidence: RouteEvidence): RoutePlan {
         pattern: withBase(base, route.pattern),
         paths: [],
       };
-      staticRoutes.set(route.pattern, planned);
+      prerenderedRoutes.set(route.pattern, planned);
     }
     planned.paths.push({
       url: publicUrl,
@@ -157,7 +157,7 @@ export function reconcileRoutes(evidence: RouteEvidence): RoutePlan {
     const route = exact ?? (matches.length === 1 ? matches[0] : undefined);
     if (!route)
       throw new Error(`Could not identify the Astro route that emitted ${url}.`);
-    addStatic(route, url, pageFile(url, files));
+    addPrerendered(route, url, pageFile(url, files));
   }
 
   const clientPath = fileURLToPath(clientDirectory);
@@ -166,7 +166,7 @@ export function reconcileRoutes(evidence: RouteEvidence): RoutePlan {
     for (const asset of emittedAssets.get(route.pattern) ?? []) {
       const file = relative(clientPath, fileURLToPath(asset)).split(sep).join("/");
       if (!files.has(file)) continue;
-      addStatic(
+      addPrerendered(
         route,
         `/${file.split("/").map(encodeURIComponent).join("/")}`,
         file,
@@ -189,10 +189,10 @@ export function reconcileRoutes(evidence: RouteEvidence): RoutePlan {
           artifactId: functionId,
         }))
     : [];
-  for (const route of staticRoutes.values())
+  for (const route of prerenderedRoutes.values())
     route.paths.sort((a, b) => a.url.localeCompare(b.url));
   return {
-    routes: [...staticRoutes.values(), ...onDemand].sort((a, b) =>
+    routes: [...prerenderedRoutes.values(), ...onDemand].sort((a, b) =>
       a.pattern.localeCompare(b.pattern),
     ),
   };

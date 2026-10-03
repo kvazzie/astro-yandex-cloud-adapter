@@ -52,8 +52,9 @@ Vite and Rolldown pipeline. Finalization writes exact dependency versions to the
 Artifact `package.json` and a deterministic npm `package-lock.json` (lockfileVersion 3) covering
 the unresolved runtime packages found in the build. The same resolved inputs produce
 byte-identical metadata and lockfiles with no version ranges. Install the artifact the way Yandex
-Cloud does with `npm ci --production`; only `dependencies` are installed. Sharp support through
-`install` is experimental. `tsdown` builds this adapter package only; it does not rebuild
+Cloud does with `npm ci --production`; only `dependencies` are installed. Sharp and runtime image
+transformation through `install` are experimental. The Deployment Manifest records both support
+levels for each Function Artifact. `tsdown` builds this adapter package only; it does not rebuild
 application code or Function Artifacts.
 
 ## Deployment Manifest

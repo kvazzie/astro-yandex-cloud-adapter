@@ -2,16 +2,11 @@ import * as Schema from "effect/Schema";
 
 import type { DependencyStrategy, Target } from "../types.js";
 
-export type RoutingPlan =
-  { kind: "direct" } | { kind: "gateway"; recursive404: boolean };
-
 export type BuildPlan =
-  | { target: "object-storage"; routing: RoutingPlan }
+  | { target: "object-storage" }
   | {
       target: "object-storage-functions";
-      routing: RoutingPlan;
       dependencyStrategy: DependencyStrategy;
-      functionLayout: "shared" | "per-route";
     };
 
 const optionsSchema = Schema.Struct({
@@ -56,12 +51,10 @@ export function decodeOptions(value: unknown): BuildPlan {
       throw new TypeError(
         `The ${options.dependencyStrategy} dependency strategy requires the Object Storage + Cloud Functions Target.`,
       );
-    return { target, routing: { kind: "direct" } };
+    return { target };
   }
   return {
     target,
-    routing: { kind: "direct" },
     dependencyStrategy: options.dependencyStrategy ?? "bundle",
-    functionLayout: "shared",
   };
 }

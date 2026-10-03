@@ -21,10 +21,12 @@ export async function resolvePinnedRuntimeDependencies(
   const appManifestPath = new URL("package.json", appRoot);
   const pinned = new Map<string, ResolvedRuntimeDependency>();
   const visited = new Set<string>();
+  const discoveredVersions = new Map<string, string>();
   // Set order follows discovery; sort for a deterministic resolution order.
   const pending: Array<{
     dependencyName: string;
     resolutionBases: Array<URL | string>;
+    installedPackage?: { version: string; directory: string };
   }> = Array.from(directDependencyNames)
     .sort()
     .map((dependencyName) => ({
@@ -33,17 +35,25 @@ export async function resolvePinnedRuntimeDependencies(
     }));
   while (pending.length) {
     const current = pending.shift();
-    if (!current || visited.has(current.dependencyName)) continue;
-    visited.add(current.dependencyName);
-    const installedPackage = await findInstalledPackage(
-      current.resolutionBases,
-      current.dependencyName,
-    );
+    if (!current) continue;
+    const installedPackage =
+      current.installedPackage ??
+      (await findInstalledPackage(
+        current.resolutionBases,
+        current.dependencyName,
+      ));
     if (!installedPackage) {
       throw new Error(
         `The "install" dependency strategy cannot resolve the runtime package "${current.dependencyName}" imported by the Function Artifact. Install it as an application dependency so its exact version can be written to the Function Artifact.`,
       );
     }
+    assertCompatibleVersion(
+      discoveredVersions,
+      current.dependencyName,
+      installedPackage.version,
+    );
+    if (visited.has(current.dependencyName)) continue;
+    visited.add(current.dependencyName);
     const localMetadata = await readLocalLockMetadata(
       appDirectory,
       current.dependencyName,
@@ -78,6 +88,11 @@ export async function resolvePinnedRuntimeDependencies(
           `The "install" dependency strategy cannot resolve the runtime package "${dependencyName}" (required by "${current.dependencyName}" as "${range}"). Install it as an application dependency so its exact version can be written to the Function Artifact.`,
         );
       }
+      assertCompatibleVersion(
+        discoveredVersions,
+        dependencyName,
+        installedDependency.version,
+      );
       (optional ? optionalDependencies : dependencies)[dependencyName] =
         installedDependency.version;
       if (!visited.has(dependencyName))
@@ -87,6 +102,7 @@ export async function resolvePinnedRuntimeDependencies(
             join(installedDependency.directory, "package.json"),
             appManifestPath,
           ],
+          installedPackage: installedDependency,
         });
     }
     pinned.set(current.dependencyName, {
@@ -105,6 +121,20 @@ export async function resolvePinnedRuntimeDependencies(
     });
   }
   return [...pinned.values()];
+}
+
+function assertCompatibleVersion(
+  discoveredVersions: Map<string, string>,
+  dependencyName: string,
+  version: string,
+): void {
+  const previous = discoveredVersions.get(dependencyName);
+  if (previous !== undefined && previous !== version) {
+    throw new Error(
+      `The "install" dependency strategy found conflicting versions of the runtime package "${dependencyName}" (${previous} and ${version}). The Function Artifact lockfile cannot represent both. Align dependency versions or use dependencyStrategy: "bundle" when the package can be bundled.`,
+    );
+  }
+  discoveredVersions.set(dependencyName, version);
 }
 
 async function findInstalledPackage(

@@ -121,7 +121,8 @@ describe("adapter options and routes", () => {
       supportedAstroFeatures: {
         sharpImageService: {
           support: "limited",
-          message: "Sharp support is experimental in Yandex Cloud Functions.",
+          message:
+            "Sharp and runtime image transformation are experimental in Yandex Cloud Functions.",
         },
       },
     });

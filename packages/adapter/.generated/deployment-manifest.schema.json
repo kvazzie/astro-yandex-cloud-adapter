@@ -91,7 +91,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["id", "path", "runtime", "entrypoint"],
+            "required": ["id", "path", "runtime", "entrypoint", "support"],
             "properties": {
               "id": {
                 "type": "string",
@@ -113,6 +113,23 @@
               "entrypoint": {
                 "type": "string",
                 "enum": ["index.handler"]
+              },
+              "support": {
+                "type": "object",
+                "required": ["sharp", "runtimeImageTransformation"],
+                "properties": {
+                  "sharp": {
+                    "type": "string",
+                    "enum": ["unsupported", "experimental"]
+                  },
+                  "runtimeImageTransformation": {
+                    "type": "string",
+                    "enum": ["unsupported", "experimental"]
+                  }
+                },
+                "additionalProperties": {
+                  "title": "unknown"
+                }
               }
             },
             "additionalProperties": {

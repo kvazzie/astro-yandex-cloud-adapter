@@ -144,6 +144,16 @@ export async function writeDeploymentManifest(
               path: relativeArtifactPath(outDir, functionDirectory),
               runtime: "nodejs22",
               entrypoint: "index.handler",
+              support: {
+                sharp:
+                  input.dependencyStrategy === "install"
+                    ? "experimental"
+                    : "unsupported",
+                runtimeImageTransformation:
+                  input.dependencyStrategy === "install"
+                    ? "experimental"
+                    : "unsupported",
+              },
             },
           ]
         : [],

@@ -62,7 +62,7 @@ export function objectStorageModule(
               _tag: "UnsupportedRoute" as const,
               message: onDemand.length
                 ? `The object-storage target cannot serve on-demand routes: ${onDemand.join(", ")}. Use target "object-storage-functions" or prerender these routes.`
-                : 'The object-storage target cannot deploy a Function Artifact. Use target "object-storage-functions".',
+                : 'The object-storage target cannot produce a Function Artifact. Use target "object-storage-functions".',
             });
           return Effect.void;
         },

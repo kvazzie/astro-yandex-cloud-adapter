@@ -32,7 +32,8 @@ export function sharpImageService(
       }
     : {
         support: "limited",
-        message: "Sharp support is experimental in Yandex Cloud Functions.",
+        message:
+          "Sharp and runtime image transformation are experimental in Yandex Cloud Functions.",
       };
 }
 
@@ -57,34 +58,17 @@ function assertBundleUserExternals(config: AstroConfig): void {
 
 /** Applies Function Artifact bundling requirements to Astro's server Vite configuration. */
 function serverViteConfig(vite: InlineConfig): InlineConfig {
-  const currentBuild = vite.build ?? {};
-  const output = { chunkFileNames: "chunks/[name]-[hash].js" };
-  const currentOutput = currentBuild.rolldownOptions?.output;
   return {
     ssr: {
       ...vite.ssr,
       noExternal: true,
     },
-    build: {
-      ...currentBuild,
-      rolldownOptions: {
-        ...currentBuild.rolldownOptions,
-        output: Array.isArray(currentOutput)
-          ? currentOutput.map(
-              /** Adds the required chunk name without collapsing multiple outputs. */
-              (item) => ({ ...item, ...output }),
-            )
-          : { ...currentOutput, ...output },
-      },
-    },
+    build: chunkedBuild(vite),
   };
 }
 
 /** Applies Function Artifact install requirements to Astro's server Vite configuration. */
 function installServerViteConfig(vite: InlineConfig): InlineConfig {
-  const currentBuild = vite.build ?? {};
-  const output = { chunkFileNames: "chunks/[name]-[hash].js" };
-  const currentOutput = currentBuild.rolldownOptions?.output;
   return {
     ssr: {
       ...vite.ssr,
@@ -94,17 +78,24 @@ function installServerViteConfig(vite: InlineConfig): InlineConfig {
       // an explicit user noExternal bundle list.
       ...(vite.ssr?.noExternal === true ? { noExternal: undefined } : {}),
     },
-    build: {
-      ...currentBuild,
-      rolldownOptions: {
-        ...currentBuild.rolldownOptions,
-        output: Array.isArray(currentOutput)
-          ? currentOutput.map(
-              /** Adds the required chunk name without collapsing multiple outputs. */
-              (item) => ({ ...item, ...output }),
-            )
-          : { ...currentOutput, ...output },
-      },
+    build: chunkedBuild(vite),
+  };
+}
+
+function chunkedBuild(vite: InlineConfig): InlineConfig["build"] {
+  const currentBuild = vite.build ?? {};
+  const output = { chunkFileNames: "chunks/[name]-[hash].js" };
+  const currentOutput = currentBuild.rolldownOptions?.output;
+  return {
+    ...currentBuild,
+    rolldownOptions: {
+      ...currentBuild.rolldownOptions,
+      output: Array.isArray(currentOutput)
+        ? currentOutput.map(
+            /** Adds the required chunk name without collapsing multiple outputs. */
+            (item) => ({ ...item, ...output }),
+          )
+        : { ...currentOutput, ...output },
     },
   };
 }

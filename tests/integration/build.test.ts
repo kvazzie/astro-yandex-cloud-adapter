@@ -1,7 +1,9 @@
-import { cp, mkdtemp, readFile, readdir } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { cp, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
 import { build } from "astro";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -14,6 +16,7 @@ import type {
 } from "../../packages/adapter/src/types.js";
 
 const fixtures = resolve(import.meta.dirname, "../fixtures");
+const runCommand = promisify(execFile);
 
 interface GeneratedHandler {
   handler(
@@ -254,6 +257,10 @@ describe.sequential("Astro artifact builds", () => {
             path: "function",
             runtime: "nodejs22",
             entrypoint: "index.handler",
+            support: {
+              sharp: "unsupported",
+              runtimeImageTransformation: "unsupported",
+            },
           },
         ],
       },
@@ -888,7 +895,7 @@ describe.sequential("Astro artifact builds", () => {
     );
   });
 
-  it("keeps runtime package imports for the install dependency strategy", async () => {
+  it("installs and runs an external dependency from a clean Function Artifact", async () => {
     await build({
       root: `${join(fixtures, "install-basic")}/`,
       logLevel: "silent",
@@ -905,7 +912,76 @@ describe.sequential("Astro artifact builds", () => {
         .map((file) => readFile(join(functionDirectory, file), "utf8")),
     );
     expect(sources.some((source) => source.includes('from "nanoid"'))).toBe(true);
-  });
+
+    const isolated = await mkdtemp(join(tmpdir(), "astro-yandex-install-"));
+    try {
+      await cp(functionDirectory, isolated, { recursive: true });
+      await runCommand("npm", ["ci", "--production", "--no-audit", "--no-fund"], {
+        cwd: isolated,
+        timeout: 120_000,
+      });
+      const installed = (await import(
+        `${pathToFileURL(join(isolated, "index.js")).href}?installed=1`
+      )) as GeneratedHandler;
+      const response = await installed.handler(
+        directHttpEvent({ path: "/api/id", headers: { host: "install.example" } }),
+        invocationContext(),
+      );
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body)).toMatchObject({ alphabetLength: 64 });
+    } finally {
+      await rm(isolated, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("packages and executes Sharp with the install strategy", async () => {
+    await build({
+      root: `${join(fixtures, "install-sharp")}/`,
+      logLevel: "silent",
+    });
+
+    const functionDirectory = join(fixtures, "install-sharp/dist/function");
+    const packageJson = JSON.parse(
+      await readFile(join(functionDirectory, "package.json"), "utf8"),
+    ) as { dependencies: Record<string, string> };
+    const lockfile = JSON.parse(
+      await readFile(join(functionDirectory, "package-lock.json"), "utf8"),
+    ) as { packages: Record<string, { version?: string }> };
+    expect(packageJson.dependencies.sharp).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(lockfile.packages["node_modules/sharp"]?.version).toBe(
+      packageJson.dependencies.sharp,
+    );
+    expect(
+      (await manifest("install-sharp")).artifacts.functions[0]?.support,
+    ).toEqual({
+      sharp: "experimental",
+      runtimeImageTransformation: "experimental",
+    });
+
+    const isolated = await mkdtemp(join(tmpdir(), "astro-yandex-sharp-"));
+    try {
+      await cp(functionDirectory, isolated, { recursive: true });
+      await runCommand("npm", ["ci", "--production", "--no-audit", "--no-fund"], {
+        cwd: isolated,
+        timeout: 120_000,
+      });
+      const installed = (await import(
+        `${pathToFileURL(join(isolated, "index.js")).href}?installed=sharp`
+      )) as GeneratedHandler;
+      const response = await installed.handler(
+        directHttpEvent({
+          path: "/api/resize",
+          headers: { host: "install-sharp.example" },
+        }),
+        invocationContext(),
+      );
+      expect(response.statusCode).toBe(200);
+      const resized = JSON.parse(response.body) as { bytes: number };
+      expect(resized.bytes).toBeGreaterThan(0);
+    } finally {
+      await rm(isolated, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   it("emits exact package metadata and a deterministic lockfile for the install strategy", async () => {
     const fixtureRoot = `${join(fixtures, "install-basic")}/`;
