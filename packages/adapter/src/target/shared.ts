@@ -18,7 +18,7 @@ export function adapter(
     name: ADAPTER_NAME,
     entrypointResolution: "auto",
     serverEntrypoint: new URL("./server.js", import.meta.url),
-    previewEntrypoint: new URL("./preview.js", import.meta.url),
+    previewEntrypoint: `${ADAPTER_NAME}/preview`,
     adapterFeatures: {
       buildOutput: hasOnDemandRoutes ? "server" : "static",
       middlewareMode: "classic",

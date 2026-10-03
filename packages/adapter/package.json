@@ -37,6 +37,10 @@
       "import": "./dist/deployment-manifest.js"
     },
     "./deployment-manifest.schema.json": "./dist/deployment-manifest.schema.json",
+    "./preview": {
+      "types": "./dist/preview.d.ts",
+      "default": "./dist/preview.js"
+    },
     "./runtime": {
       "types": "./dist/runtime.d.ts",
       "import": "./dist/runtime.js"

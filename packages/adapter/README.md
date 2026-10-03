@@ -23,6 +23,15 @@ server islands and the image endpoint count as on-demand routes. This means an A
 `output: "static"` project can still require a Function Artifact. `dist/yandex-cloud.json`
 describes all deployable artifacts.
 
+## Local preview
+
+Run `astro build`, then `astro preview` to serve the generated application locally.
+Static-only Builds serve the Client Artifact on either Target without a Function Artifact.
+Runtime Builds serve Prerendered Routes and browser assets from the Client Artifact and
+send On-demand Route requests to the generated handler. Preview preserves the configured
+Astro `base` in page and asset URLs and uses the local HTTP origin for runtime requests,
+including same-origin POST requests and Actions.
+
 ## Function Artifact dependencies
 
 `dependencyStrategy` selects one strategy for the whole Function Artifact. It defaults to

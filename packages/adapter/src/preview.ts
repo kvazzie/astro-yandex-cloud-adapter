@@ -21,6 +21,7 @@ import type {
 type Handler = (
   event: YandexCloudHttpEvent,
   context: YandexCloudInvocationContext,
+  previewUrl: URL,
 ) => Promise<YandexCloudHttpResult>;
 
 async function requestBody(request: IncomingMessage): Promise<string | undefined> {
@@ -40,6 +41,7 @@ function contentType(path: string): string {
     case ".css":
       return "text/css; charset=utf-8";
     case ".js":
+    case ".mjs":
       return "text/javascript; charset=utf-8";
     case ".json":
       return "application/json; charset=utf-8";
@@ -83,9 +85,11 @@ async function serveClient(
   const root = fileURLToPath(options.client);
   const route = decoded.replace(/^\/+/, "");
   const candidates =
-    route === "" || route.endsWith("/")
-      ? [`${route}index.html`]
-      : [route, `${route}/index.html`, `${route}.html`];
+    route === ""
+      ? ["index.html"]
+      : route.endsWith("/")
+        ? [`${route}index.html`, `${route.slice(0, -1)}.html`]
+        : [route, `${route}/index.html`, `${route}.html`];
   for (const candidate of candidates) {
     const file = resolve(root, candidate);
     const fromRoot = relative(root, file);
@@ -129,7 +133,10 @@ const preview: PreviewModule["default"] = async (
     outgoing: ServerResponse,
   ) => {
     try {
-      const requestUrl = new URL(incoming.url ?? "/", "http://preview.local");
+      const requestUrl = new URL(
+        incoming.url ?? "/",
+        `http://${incoming.headers.host ?? `localhost:${incoming.socket.localPort}`}`,
+      );
       if (await serveClient(options, incoming, outgoing, requestUrl.pathname))
         return;
       if (!handler) {
@@ -164,7 +171,7 @@ const preview: PreviewModule["default"] = async (
         getPayload: () => event.body,
         getRemainingTimeInMillis: () => Number.POSITIVE_INFINITY,
       };
-      const result = await handler(event, context);
+      const result = await handler(event, context, requestUrl);
       outgoing.writeHead(result.statusCode, {
         ...options.headers,
         ...result.headers,
