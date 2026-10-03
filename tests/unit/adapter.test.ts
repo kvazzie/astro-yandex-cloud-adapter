@@ -41,10 +41,10 @@ describe("adapter options and routes", () => {
     ).toThrow(/dependency strategy.*Object Storage/i);
   });
 
-  it("rejects on-demand routes for object storage", () => {
+  it("rejects on-demand routes for object storage", async () => {
     const hooks = yandexCloud().hooks;
     const hook = hooks["astro:routes:resolved"];
-    void hook?.({
+    await hook?.({
       routes: [
         {
           type: "page",
@@ -61,13 +61,13 @@ describe("adapter options and routes", () => {
       ],
       logger: {} as never,
     });
-    expect(() =>
+    await expect(
       hooks["astro:config:done"]?.({
         config: {},
         injectTypes: () => {},
         setAdapter: () => {},
       } as never),
-    ).toThrow(/cannot serve on-demand routes.*\/api\/\[id\]/);
+    ).rejects.toThrow(/cannot serve on-demand routes.*\/api\/\[id\]/);
   });
 
   it("declares only the features supported by the Object Storage Target", async () => {
@@ -124,7 +124,7 @@ describe("adapter options and routes", () => {
     });
   });
 
-  it("keeps runtime package imports external for the install strategy", () => {
+  it("keeps runtime package imports external for the install strategy", async () => {
     const hook = yandexCloud({
       target: "object-storage-functions",
       dependencyStrategy: "install",
@@ -135,7 +135,7 @@ describe("adapter options and routes", () => {
     }
     let updatedConfig: UpdatedServerBuild | undefined;
 
-    void hook?.({
+    await hook?.({
       target: "server",
       vite: {
         ssr: { external: ["nanoid"], noExternal: true },
@@ -158,13 +158,13 @@ describe("adapter options and routes", () => {
     ]);
   });
 
-  it("preserves every configured Rolldown output for a Runtime Build", () => {
+  it("preserves every configured Rolldown output for a Runtime Build", async () => {
     const hook = yandexCloud({
       target: "object-storage-functions",
     }).hooks["astro:build:setup"];
     let updatedConfig: unknown;
 
-    void hook?.({
+    await hook?.({
       target: "server",
       vite: {
         build: {
