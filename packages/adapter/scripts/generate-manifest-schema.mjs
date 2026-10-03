@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { URL } from "node:url";
 
-import { JSONSchema } from "effect";
+import * as JSONSchema from "effect/JSONSchema";
 
 import { ManifestV1Schema } from "../src/manifest/schema.ts";
 

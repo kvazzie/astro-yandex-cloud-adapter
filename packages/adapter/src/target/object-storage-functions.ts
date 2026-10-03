@@ -1,5 +1,5 @@
 import type { AstroConfig, IntegrationResolvedRoute } from "astro";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import type { InlineConfig } from "vite";
 
 import { completeBuild } from "../build/complete.js";

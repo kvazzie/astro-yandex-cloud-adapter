@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { access, writeFile } from "node:fs/promises";
 
 import type { PackageJson } from "pkg-types";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 
 import {
   formatFunctionPackageJson,

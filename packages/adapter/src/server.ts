@@ -1,7 +1,8 @@
 import { createApp } from "astro/app/entrypoint";
 import { setGetEnv } from "astro/env/setup";
 import { site } from "virtual:yandex-cloud-runtime-config";
-import { Effect, Either } from "effect";
+import * as Effect from "effect/Effect";
+import * as Either from "effect/Either";
 
 import {
   invoke,

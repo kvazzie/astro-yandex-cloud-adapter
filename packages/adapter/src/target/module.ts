@@ -1,5 +1,5 @@
 import type { AstroAdapter, AstroConfig, IntegrationResolvedRoute } from "astro";
-import type { Effect } from "effect";
+import type * as Effect from "effect/Effect";
 import type { InlineConfig } from "vite";
 
 import type { CompletedBuild } from "../integration/session.js";

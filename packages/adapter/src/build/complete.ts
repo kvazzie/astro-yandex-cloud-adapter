@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 import type { AstroConfig } from "astro";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { glob } from "tinyglobby";
 
 import { ADAPTER_VERSION } from "../constants.js";

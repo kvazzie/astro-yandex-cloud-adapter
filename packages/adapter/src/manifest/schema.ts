@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 
 // Every object in v1 accepts additive fields, including nested route entries.
 const extensible = <Fields extends Schema.Struct.Fields>(fields: Fields) =>

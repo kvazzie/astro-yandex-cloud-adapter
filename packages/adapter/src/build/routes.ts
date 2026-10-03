@@ -2,7 +2,7 @@ import { relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { IntegrationResolvedRoute } from "astro";
-import type { Brand } from "effect";
+import type * as Brand from "effect/Brand";
 
 import type {
   DeploymentManifestV1,

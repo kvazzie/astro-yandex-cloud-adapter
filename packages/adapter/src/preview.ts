@@ -8,7 +8,9 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { PreviewModule, PreviewServer, PreviewServerParams } from "astro";
-import { Effect, Exit, Scope } from "effect";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 
 import type {
   YandexCloudHttpEvent,
