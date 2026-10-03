@@ -799,8 +799,11 @@ describe.sequential("Astro artifact builds", () => {
         root: `${join(fixtures, "rejected-external")}/`,
         logLevel: "silent",
       }),
-    ).rejects.toThrow(
-      /bundle.*cannot externalize runtime packages: nanoid.*dependencyStrategy: "install"/,
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(
+        /bundle.*cannot externalize runtime packages: nanoid.*dependencyStrategy: "install"/,
+      ),
     );
   });
 
@@ -810,8 +813,11 @@ describe.sequential("Astro artifact builds", () => {
         root: `${join(fixtures, "rejected-unresolved")}/`,
         logLevel: "silent",
       }),
-    ).rejects.toThrow(
-      /bundle.*unresolved runtime package imports in the Function Artifact: missing-runtime-package\. Bundle.*dependencyStrategy: "install"/,
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(
+        /bundle.*unresolved runtime package imports in the Function Artifact: missing-runtime-package\. Bundle.*dependencyStrategy: "install"/,
+      ),
     );
   });
 
@@ -821,8 +827,11 @@ describe.sequential("Astro artifact builds", () => {
         root: `${join(fixtures, "rejected-dynamic")}/`,
         logLevel: "silent",
       }),
-    ).rejects.toThrow(
-      /unresolved dynamic or native runtime dependency resolution.*Bundle a fixed package import.*dependencyStrategy: "install"/,
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(
+        /unresolved dynamic or native runtime dependency resolution.*Bundle a fixed package import.*dependencyStrategy: "install"/,
+      ),
     );
   });
 
@@ -832,8 +841,11 @@ describe.sequential("Astro artifact builds", () => {
         root: `${join(fixtures, "rejected-dynamic-import")}/`,
         logLevel: "silent",
       }),
-    ).rejects.toThrow(
-      /unresolved dynamic or native runtime dependency resolution.*Bundle a fixed package import.*dependencyStrategy: "install"/,
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(
+        /unresolved dynamic or native runtime dependency resolution.*Bundle a fixed package import.*dependencyStrategy: "install"/,
+      ),
     );
   });
 
@@ -843,14 +855,22 @@ describe.sequential("Astro artifact builds", () => {
         root: `${join(fixtures, "rejected-native")}/`,
         logLevel: "silent",
       }),
-    ).rejects.toThrow(/native runtime dependency.*dependencyStrategy: "install"/);
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(
+        /native runtime dependency.*dependencyStrategy: "install"/,
+      ),
+    );
   });
 
   it("rejects an Object Storage build containing an on-demand route", async () => {
     await expect(
       build({ root: `${join(fixtures, "rejected")}/`, logLevel: "silent" }),
-    ).rejects.toThrow(
-      /object-storage target cannot serve on-demand routes: \/.*Use target "object-storage-functions" or prerender these routes/,
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(
+        /object-storage target cannot serve on-demand routes: \/.*Use target "object-storage-functions" or prerender these routes/,
+      ),
     );
   });
 
@@ -860,8 +880,11 @@ describe.sequential("Astro artifact builds", () => {
         root: `${join(fixtures, "rejected-injected")}/`,
         logLevel: "silent",
       }),
-    ).rejects.toThrow(
-      /object-storage target cannot serve on-demand routes: \/injected\/\[name\].*Use target "object-storage-functions" or prerender these routes/,
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(
+        /object-storage target cannot serve on-demand routes: \/injected\/\[name\].*Use target "object-storage-functions" or prerender these routes/,
+      ),
     );
   });
 
@@ -974,7 +997,7 @@ describe.sequential("Astro artifact builds", () => {
     }
 
     expect(failure).toBeInstanceOf(Error);
-    const message = (failure as Error).message;
+    const message = (failure as Error & { cause: Error }).cause.message;
     expect(message).toContain(
       "object-storage target cannot serve on-demand routes",
     );

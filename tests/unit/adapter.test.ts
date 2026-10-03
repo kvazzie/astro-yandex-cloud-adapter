@@ -67,7 +67,10 @@ describe("adapter options and routes", () => {
         injectTypes: () => {},
         setAdapter: () => {},
       } as never),
-    ).rejects.toThrow(/cannot serve on-demand routes.*\/api\/\[id\]/);
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(/cannot serve on-demand routes.*\/api\/\[id\]/),
+    );
   });
 
   it("declares only the features supported by the Object Storage Target", async () => {

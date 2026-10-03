@@ -1,5 +1,4 @@
 import { Effect } from "effect";
-import type { AstroIntegration } from "astro";
 import {
   defineIntegration,
   EffectifyIntegrationHookError,
@@ -46,10 +45,7 @@ function hookError(
 }
 
 /** Creates the Bare Adapter integration for the selected Yandex Cloud Target. */
-const effectIntegration = defineIntegration<
-  AdapterOptions | undefined,
-  AdapterOptions
->({
+export default defineIntegration<AdapterOptions | undefined, AdapterOptions>({
   name: ADAPTER_NAME,
   setup: ({ options }) => {
     const plan = decodeOptions(options);
@@ -105,40 +101,3 @@ const effectIntegration = defineIntegration<
     };
   },
 });
-
-async function surfaceHookError(run: () => void | Promise<void>): Promise<void> {
-  try {
-    await run();
-  } catch (error) {
-    if (
-      error instanceof EffectifyIntegrationHookError &&
-      error.cause instanceof Error
-    ) {
-      throw new EffectifyIntegrationHookError({
-        hook: error.hook,
-        message: error.cause.message,
-        cause: error,
-      });
-    }
-    throw error;
-  }
-}
-
-function yandexCloud(options?: AdapterOptions): AstroIntegration {
-  const integration = effectIntegration(options);
-  const { hooks } = integration;
-  return {
-    ...integration,
-    hooks: {
-      ...hooks,
-      "astro:config:setup": (params) =>
-        surfaceHookError(() => hooks["astro:config:setup"]?.(params)),
-      "astro:config:done": (params) =>
-        surfaceHookError(() => hooks["astro:config:done"]?.(params)),
-      "astro:build:done": (params) =>
-        surfaceHookError(() => hooks["astro:build:done"]?.(params)),
-    },
-  };
-}
-
-export default yandexCloud;
