@@ -50,10 +50,7 @@ jobs:
         run: devenv test --no-tui
       - name: Show local S3 results
         if: always()
-        run: |
-          if [ -f .artifacts/local-s3.log ]; then
-            cat .artifacts/local-s3.log
-          fi
+        run: node scripts/show-s3-log.mjs
       - name: Retain local S3 release evidence
         if: always()
         uses: actions/upload-artifact@v7

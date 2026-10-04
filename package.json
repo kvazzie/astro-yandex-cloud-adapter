@@ -15,7 +15,7 @@
     "test": "pnpm build && vitest run",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
-    "test:s3": "pnpm build && vitest run --config vitest.s3.config.ts",
+    "test:s3": "node scripts/test-s3.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pack:check": "pnpm --filter @astro-yandex-cloud/adapter pack --pack-destination .artifacts"
   },

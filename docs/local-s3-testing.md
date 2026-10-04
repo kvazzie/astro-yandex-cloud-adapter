@@ -14,7 +14,7 @@ The process binds to loopback and uses fixed local test credentials. No Docker o
 cloud credentials are needed.
 
 Each test builds an isolated application for `/` or `/docs`. The upload helper in
-[`tests/integration/helpers/s3.ts`](../tests/integration/helpers/s3.ts) parses the
+[`tests/integration/helpers/client-artifact.ts`](../tests/integration/helpers/client-artifact.ts) parses the
 generated Deployment Manifest, reads its Client Artifact directory, and uses the
 declared route object keys. It places the remaining public files and browser
 assets under the manifest's base prefix. Each `PutObject` includes a MIME type
@@ -33,6 +33,13 @@ The upload procedure only adds or overwrites artifact keys. It leaves old hashed
 assets and unrelated keys in place. It does not infer deletion or cache policy.
 Deployment and Provisioning remain outside the Bare Adapter; all upload code and
 S3 dependencies live in test tooling.
+
+The test file declares the expected page keys, base placement, MIME types, and
+update behavior. Reusable S3 assertions live in
+[`tests/integration/lib/s3.ts`](../tests/integration/lib/s3.ts), with callers supplying
+the expected keys, bytes, and metadata. Fixture setup and builds contain no assertions.
+Devenv's Node scripts call `scripts/local-s3.mjs` for the service and
+`scripts/test-s3.mjs` for test orchestration and logging.
 
 ## Repeatability and results
 
