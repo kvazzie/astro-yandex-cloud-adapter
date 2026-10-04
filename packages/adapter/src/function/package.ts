@@ -96,7 +96,8 @@ export async function validateFunctionEntrypoint(
   } catch (error) {
     return {
       ok: false,
-      reason: `Astro did not emit the expected function entrypoint at ${entrypoint.pathname}.`,
+      reason:
+        "Astro did not emit the expected Function Artifact entrypoint index.js.",
       cause: error,
     };
   }
