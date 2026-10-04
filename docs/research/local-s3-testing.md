@@ -37,7 +37,7 @@ The environment variables configure test credentials and create the bucket. `S3_
 
 The default S3 endpoint is `http://127.0.0.1:8333`. Pass the native service's configured endpoint to Vitest through environment configuration. Account for port conflicts across concurrent test runs. Configure the S3 client for path-style bucket addressing to avoid local bucket DNS setup.
 
-Wait with a bounded retry loop for an authenticated `HeadBucket` on the configured bucket, rather than a fixed sleep or a TCP connection alone. This checks bucket creation and credentials as well as the listener. On timeout, report the last S3 error and container logs. This is a proposed readiness contract for our tooling.
+Wait with a bounded retry loop for an authenticated `HeadBucket` on the configured bucket, rather than a fixed sleep or a TCP connection alone. This checks bucket creation and credentials as well as the listener. On timeout, report the last S3 error and service logs. This is a proposed readiness contract for our tooling.
 
 ## Object checks and limits
 
@@ -49,4 +49,4 @@ SeaweedFS has directory semantics that differ from S3: a path cannot be both an 
 
 ## Validation status
 
-This recommendation uses current primary documentation and the versioned SeaweedFS source. The pinned Nix package and its `mini` command were checked in source. A disposable Docker smoke run with SeaweedFS 4.48 was attempted, but the image pull stopped making progress and was cancelled before startup. Neither a native service startup nor an object roundtrip has been verified. Verify startup, bytes, explicit Content-Type, overwrite behavior, listing, and exact-key deletion before finalizing the test service. Issue #11's integration tests remain to be implemented.
+The recommendation is now implemented. On 2026-10-04, both `/` and `/docs` scenarios passed through `devenv test` using devenv 2.1.2, Node.js 22.23.2, and the locked SeaweedFS 4.46. A second cold run with `S3_TEST_PORT_OFFSET=1000` also passed. The suite verifies authenticated startup, complete object listings, bytes, explicit Content-Type, changed uploads, preservation of unrelated objects, repeated uploads, and cleanup. SeaweedFS's empty directories require recursive deletion of test-owned buckets after exact file-key cleanup. See [the procedure and CI evidence](../local-s3-testing.md).

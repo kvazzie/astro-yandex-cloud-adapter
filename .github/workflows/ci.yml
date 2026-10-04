@@ -32,6 +32,39 @@ jobs:
         working-directory: packages/adapter
         run: npm publish --dry-run
 
+  local-s3:
+    name: Local S3 uploads and updates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v16
+        with:
+          name: devenv
+      - name: Install devenv
+        run: nix profile add nixpkgs#devenv
+      - name: Install workspace dependencies
+        run: devenv shell -- pnpm install --frozen-lockfile
+      - name: Test local S3 uploads and updates
+        run: devenv test --no-tui
+      - name: Show local S3 results
+        if: always()
+        run: |
+          if [ -f .artifacts/local-s3.log ]; then
+            cat .artifacts/local-s3.log
+          fi
+      - name: Retain local S3 release evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: local-s3-results
+          path: |
+            .artifacts/local-s3.log
+            .artifacts/local-s3.xml
+            .devenv/s3.log
+          include-hidden-files: true
+
   astro-compatibility:
     continue-on-error: ${{ matrix.experimental }}
     strategy:

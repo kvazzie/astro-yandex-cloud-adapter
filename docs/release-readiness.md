@@ -10,6 +10,10 @@ The [beta specification][beta-spec] owns the detailed application behavior, impl
 
 - [ ] Account for every in-scope requirement in the beta specification with links to its implementation, user documentation, and verification evidence. An implementation ticket being closed is not sufficient evidence.
 - [ ] Record passing results for every required check in the specification's Testing Decisions, including supported Astro and Node combinations, local S3 tests, and tests of the exact packed candidate in a clean application. Record the non-blocking `astro@next` result separately.
+
+  For local S3 evidence, use the **Local S3 uploads and updates** CI job and its
+  `local-s3-results` artifact. See [the local procedure and coverage](local-s3-testing.md).
+
 - [ ] Review the installation and manual deployment instructions against the specification's user requirements. Put the beta and unverified-cloud warning before installation, and keep Sharp experimental.
 - [ ] Confirm the public GitHub and npm identities and package links. Record who monitors private vulnerability reports.
 - [ ] Record the required branch, workflow, and publication-environment protections. Confirm that version preparation and publication have separate permissions and that publication requires human approval.
