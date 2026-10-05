@@ -18,7 +18,7 @@ The [beta specification][beta-spec] owns the detailed application behavior, impl
   release job's `publication-candidate` artifact. Both include the exact tarball
   and its SHA-512 validation report. See [the package check](package-check.md).
 
-- [ ] Review the installation and manual deployment instructions against the specification's user requirements. Put the beta and unverified-cloud warning before installation, and keep Sharp experimental.
+- [ ] Review the [installation and manual deployment instructions](../packages/adapter/README.md) against the specification's user requirements. Put the beta and unverified-cloud warning before installation, and keep Sharp experimental. Recheck the guide's pending-feature table against #67–#70 and update examples when those implementations and the first beta publication are available.
 - [ ] Review the [artifact size report and Astro-owned path limitation](artifact-reports.md). Confirm the documented Yandex limits are current and the output scans permit only the identified upstream metadata.
 - [ ] Confirm the public GitHub and npm identities and package links. Record who monitors private vulnerability reports.
 - [ ] Record the required branch, workflow, and publication-environment protections. Confirm that version preparation and publication have separate permissions and that publication requires human approval.
