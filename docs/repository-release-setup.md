@@ -10,8 +10,8 @@ The canonical repository is
 [`kvazzie/astro-yandex-cloud-adapter`][repository], matching the current tracker
 and package metadata. The `astro-yandex-cloud/adapter` repository named in the
 parent specification is not an instruction to transfer or rename this repository.
-The maintainer confirmed this identity on 2026-10-05. Public visibility is still
-pending.
+The maintainer confirmed this identity on 2026-10-05 and authorized public
+visibility on 2026-10-06. The repository is now public.
 
 | Link                          | Value                                                                           |
 | ----------------------------- | ------------------------------------------------------------------------------- |
@@ -29,25 +29,25 @@ repository for trusted publishing and GitHub releases.
 
 ## Observed settings
 
-Read-only GitHub API inspection on 2026-10-05 found:
+GitHub settings were configured and verified through the API on 2026-10-06:
 
-| Requirement                     | Observed state                                                                             | Remaining work                                                                     |
-| ------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| Public repository               | Canonical identity confirmed; repository is private                                        | Make it public                                                                     |
-| npm scope/package permissions   | No authenticated npm account in the agent session                                          | Maintainer confirms permission to create `@astro-yandex-cloud/adapter`             |
-| Publication approval            | `npm` exists, with no protection rules and administrator bypass enabled                    | Add a human reviewer and disable administrator bypass                              |
-| Publication branch              | `npm.deployment_branch_policy` is `null`                                                   | Permit only the `main` branch, with no tag rules                                   |
-| Main protection                 | `main.protected` is `false`; the protection API requires GitHub Pro or a public repository | Apply the review and CI requirements below after making the repository public      |
-| Workflow ownership              | No `CODEOWNERS` on the setup PR's base                                                     | Merge the [ownership rules](../.github/CODEOWNERS), then require code-owner review |
-| Independent review              | `@kvazzie` is the only collaborator                                                        | Arrange a reviewer with write access for owner-authored PRs                        |
-| Private vulnerability reporting | API returned 404 while the repository is private                                           | Name a monitor before enabling and verifying reporting on the public repository    |
-| Bootstrap credential            | `npm` has no secrets                                                                       | Create a temporary granular token and store it only as an environment secret       |
-| Version preparation             | Actions cannot create or approve pull requests                                             | Enable Actions pull-request creation for the version workflow                      |
+| Requirement                     | Observed state                                                                                                                         | Remaining work                                                                                     |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Public repository               | `visibility: public`                                                                                                                   | Complete                                                                                           |
+| npm scope/package permissions   | No authenticated npm account in the agent session                                                                                      | Maintainer confirms permission to create `@astro-yandex-cloud/adapter`                             |
+| Publication approval            | Required reviewer `@kvazzie`; `can_admins_bypass: false`                                                                               | Complete                                                                                           |
+| Publication branch              | Exactly one deployment rule, `main`, with type `branch`                                                                                | Complete                                                                                           |
+| Main protection                 | One approval, latest-push approval, stale-approval dismissal, strict CI, administrator enforcement; force pushes and deletion disabled | Add the rehearsal and local S3 checks after their workflows reach `main`                           |
+| Workflow protection             | Main's required review and checks apply to workflow changes                                                                            | Ownership declarations are included in this PR                                                     |
+| Automated review                | CodeRabbit's repository settings have Request Changes Workflow enabled and author approval overrides disabled                          | Verify an approving review after the next completed review; this PR also records the configuration |
+| Private vulnerability reporting | `enabled: true`; monitor `@kvazzie` confirmed                                                                                          | Complete                                                                                           |
+| Bootstrap credential            | `npm` has no secrets                                                                                                                   | Create a temporary granular token and store it only as an environment secret                       |
+| Version preparation             | Default workflow permissions `read`; `can_approve_pull_request_reviews: true`                                                          | Complete                                                                                           |
 
 On 2026-10-05, the maintainer confirmed that `@kvazzie` will monitor private
 vulnerability reports and handle bootstrap-token revocation, environment-secret
 deletion, and trusted-publishing setup immediately after first publication.
-Reporting still needs to be enabled. Do not add `SECURITY.md`.
+Private vulnerability reporting is enabled. No `SECURITY.md` is needed.
 
 ## Required settings
 
@@ -57,30 +57,48 @@ In [repository branch settings][branches], protect `main` with:
 
 - Pull requests and at least one approving review.
 - Dismissal of stale approvals when the reviewed changes change.
-- Required code-owner review. The ownership file covers `.github/`, including
-  itself, release scripts, Changesets configuration, package metadata, and
-  dependency locks.
+- Approval of the latest push by someone other than its pusher. CodeRabbit can
+  supply an approving review when its Request Changes Workflow is enabled.
+- Optional code-owner approval for solo maintenance. The ownership file identifies
+  the maintainer of `.github/`, review configuration, release scripts, Changesets,
+  package metadata, and dependency locks; it does not add a second approval gate.
 - Required status checks and branches up to date before merging. Select GitHub
   Actions as the expected source of each check.
 - Protection applied to administrators, with force pushes and deletion disabled.
 
-Use these exact required check names from the release setup in PR #77:
+These checks are currently required, with GitHub Actions as their expected source:
 
 - `quality`
-- `Beta release rehearsal`
-- `Local S3 uploads and updates`
 - `Astro compatibility (Node 22.12 / Astro 7.1)`
 - `Astro compatibility (Node 22.15 / latest Astro 7)`
 - `Astro compatibility (Node 24 LTS / latest Astro 7)`
 
 Keep `Astro compatibility (Node 24 LTS / Astro next)` non-blocking. The rehearsal
 and local S3 jobs are part of the pending PR stack; require them when that stack
-reaches `main`. Verify the check names against the merged `ci.yml` and a CI run.
+reaches `main`, using the exact names `Beta release rehearsal` and
+`Local S3 uploads and updates`. Requiring absent jobs now would block earlier PRs
+in the stack. Verify the check names against the merged `ci.yml` and a CI run.
 
-A PR author cannot approve their own PR. With `@kvazzie` as the only code owner,
-workflow changes authored by `@kvazzie` need another consenting code owner with
-write access. Add that person to the ownership rules before relying on owner
-review for owner-authored workflow PRs. Do not bypass review to work around this.
+A PR author cannot approve their own PR, but a separate human collaborator is not
+required for this repository's ordinary review gate. CodeRabbit can request
+changes and submit approval after reviewing the latest commit, resolving its
+required threads, and passing its pre-merge checks. Its comments or status check
+alone are not approving reviews.
+
+The [CodeRabbit configuration](../.coderabbit.yaml) enables
+`reviews.request_changes_workflow` and disables author-triggered approval
+overrides with `reviews.allow_author_approval: false`. Inheritance preserves
+other existing CodeRabbit settings. These values were also saved in
+[CodeRabbit's repository settings][coderabbit-settings] on 2026-10-06, with
+inheritance enabled, so existing PRs do not need to wait for this file to merge.
+The review workflow switch is on and the author approval switch is off. CodeRabbit
+uses the configuration on the feature branch under review. See
+[CodeRabbit's workflow][coderabbit] and [YAML configuration][coderabbit-yaml].
+
+Required code-owner approval stays disabled because `@kvazzie` is the sole code
+owner and cannot approve their own PR. All main-bound PRs, including workflow and
+review-configuration changes, still require an approving review and the required
+CI checks. Publication approval remains a separate human decision.
 
 In [Actions settings][actions], retain default read-only workflow permissions and
 enable **Allow GitHub Actions to create and approve pull requests**. The version
@@ -98,7 +116,7 @@ In [environment settings][environments], edit `npm`:
 - Use selected deployment branches and tags with exactly one branch rule,
   `main`, and no tag rules.
 - Allow the maintainer to approve their manually dispatched release if they are
-  the sole deployment reviewer. Independent PR review still happens before the
+  the sole deployment reviewer. Required PR review still happens before the
   version commit reaches `main`.
 
 The release workflow references `environment: npm`; that reference does not
@@ -144,19 +162,29 @@ Replace each pending entry with the responsible person's confirmation, a date,
 and an API result or settings link. Do not infer permission from a successful
 package build or from the existence of the `npm` environment.
 
-- [ ] Canonical public repository confirmed, public visibility verified, and
-      package and release links reviewed. Evidence: pending.
+- [x] Canonical public repository confirmed, public visibility verified, and
+      package and release links reviewed. Evidence: maintainer confirmation and
+      repository API `visibility: public`, verified 2026-10-06.
 - [ ] npm username and scope/package creation permission recorded. Evidence:
       pending.
-- [ ] `main` requires the blocking CI checks, review, and code-owner approval;
+- [x] `main` requires currently available blocking CI checks and an approving review;
       force pushes and deletion are disabled, including for administrators.
-      Evidence: pending.
-- [ ] Workflow ownership rules are effective on `main`, and an independent
-      reviewer is available for owner-authored PRs. Evidence: pending.
-- [ ] `npm` requires human approval, disables administrator bypass, and allows
-      only the `main` branch. Evidence: pending.
-- [ ] Named vulnerability-report monitor has accepted the role and reporting is
-      enabled. Evidence: pending.
+      Evidence: [branch protection settings][branches] and protection API,
+      verified 2026-10-06. Add the two pending CI jobs when their workflows land.
+- [x] Workflow changes require the same review and CI as other main-bound PRs.
+      Evidence: main's protection API, verified 2026-10-06. Code ownership remains
+      informational for the solo maintainer.
+- [x] CodeRabbit's Request Changes Workflow is enabled and author approval
+      overrides are disabled. Evidence: saved repository settings, verified
+      2026-10-06, and matching configuration in this PR.
+- [ ] An approving CodeRabbit review is verified after a completed review.
+      Evidence: pending; this setup PR remains a draft during npm setup.
+- [x] `npm` requires human approval, disables administrator bypass, and allows
+      only the `main` branch. Evidence: environment and deployment-branch-policy
+      APIs, verified 2026-10-06.
+- [x] Named vulnerability-report monitor has accepted the role and reporting is
+      enabled. Evidence: `@kvazzie` confirmed; reporting API `enabled: true`,
+      verified 2026-10-06.
 - [ ] Temporary bootstrap token is available only through the protected `npm`
       environment; its scope and expiration are recorded without its value.
       Evidence: pending.
@@ -164,8 +192,10 @@ package build or from the existence of the `npm` environment.
       deletion, and trusted-publishing setup after first publication. Evidence:
       `@kvazzie` confirmed this responsibility on 2026-10-05; retain the confirmation
       in the setup PR.
-- [ ] Version preparation can create its PR while publication remains separately
-      approved. Evidence: pending.
+- [x] Version preparation is permitted to create its PR while publication remains
+      separately approved. Evidence: Actions workflow-permissions API has default
+      `read` permissions and `can_approve_pull_request_reviews: true`; `npm`
+      requires `@kvazzie` approval, verified 2026-10-06.
 
 [issue]: https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/16
 [repository]: https://github.com/kvazzie/astro-yandex-cloud-adapter
@@ -175,3 +205,6 @@ package build or from the existence of the `npm` environment.
 [security]: https://github.com/kvazzie/astro-yandex-cloud-adapter/settings/security_analysis
 [npm-organization]: https://docs.npmjs.com/creating-an-organization
 [npm-tokens]: https://docs.npmjs.com/creating-and-viewing-access-tokens
+[coderabbit]: https://docs.coderabbit.ai/pr-reviews/request-changes-workflow
+[coderabbit-settings]: https://app.coderabbit.ai/repository/1348871130/settings/review/settings
+[coderabbit-yaml]: https://docs.coderabbit.ai/getting-started/yaml-configuration

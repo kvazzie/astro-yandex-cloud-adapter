@@ -1,6 +1,7 @@
-# Require code-owner review on main for workflow and publication changes.
-# Keep this file owned too, so a PR cannot remove ownership without review.
+# Identify the maintainer for workflow and publication changes.
+# Main requires an approving review; code-owner approval is optional for solo maintenance.
 /.github/ @kvazzie
+/.coderabbit.yaml @kvazzie
 /scripts/ @kvazzie
 /.changeset/ @kvazzie
 /package.json @kvazzie

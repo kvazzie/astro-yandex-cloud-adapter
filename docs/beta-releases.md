@@ -18,10 +18,11 @@ of the live settings. Its pending entries must be completed before closing #16.
 - Protect `main` with review and the blocking CI jobs: `quality`,
   `Beta release rehearsal`, `Local S3 uploads and updates`, and the three
   non-experimental Astro compatibility jobs. Keep Astro next non-blocking.
-  Require code-owner review for `.github/` and the publication files covered by
-  `CODEOWNERS`, including changes to `CODEOWNERS` itself. Disable force pushes,
-  deletion, and administrator bypass. Arrange an independent reviewer for
-  owner-authored PRs.
+  Require one approving review, dismiss stale approvals, and require approval
+  of the latest push. CodeRabbit can supply the approval through its Request
+  Changes Workflow. Keep code-owner approval optional for solo maintenance;
+  `CODEOWNERS` identifies the maintainer of workflow and publication files.
+  Disable force pushes, deletion, and administrator bypass.
 - In **Settings > Actions > General**, allow GitHub Actions to create pull
   requests. Version preparation uses the default `GITHUB_TOKEN`, without a
   separate long-lived credential. GitHub requires approval to run CI on PRs that
