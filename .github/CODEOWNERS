@@ -1,0 +1,10 @@
+# Require code-owner review on main for workflow and publication changes.
+# Keep this file owned too, so a PR cannot remove ownership without review.
+/.github/ @kvazzie
+/scripts/ @kvazzie
+/.changeset/ @kvazzie
+/package.json @kvazzie
+/pnpm-lock.yaml @kvazzie
+/pnpm-workspace.yaml @kvazzie
+/packages/adapter/package.json @kvazzie
+/packages/adapter/tsdown.config.ts @kvazzie
