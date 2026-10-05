@@ -29,12 +29,14 @@ repository for trusted publishing and GitHub releases.
 
 ## Observed settings
 
-GitHub settings were configured and verified through the API on 2026-10-06:
+GitHub settings were configured and verified through the API on 2026-10-06.
+The npm organization was created by the maintainer and its membership page
+verified on the same date:
 
 | Requirement                     | Observed state                                                                                                                         | Remaining work                                                                                     |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | Public repository               | `visibility: public`                                                                                                                   | Complete                                                                                           |
-| npm scope/package permissions   | No authenticated npm account in the agent session                                                                                      | Maintainer confirms permission to create `@astro-yandex-cloud/adapter`                             |
+| npm scope/package permissions   | `kvazzie` owns `astro-yandex-cloud`; 2FA enabled                                                                                       | Complete                                                                                           |
 | Publication approval            | Required reviewer `@kvazzie`; `can_admins_bypass: false`                                                                               | Complete                                                                                           |
 | Publication branch              | Exactly one deployment rule, `main`, with type `branch`                                                                                | Complete                                                                                           |
 | Main protection                 | One approval, latest-push approval, stale-approval dismissal, strict CI, administrator enforcement; force pushes and deletion disabled | Add the rehearsal and local S3 checks after their workflows reach `main`                           |
@@ -165,8 +167,11 @@ package build or from the existence of the `npm` environment.
 - [x] Canonical public repository confirmed, public visibility verified, and
       package and release links reviewed. Evidence: maintainer confirmation and
       repository API `visibility: public`, verified 2026-10-06.
-- [ ] npm username and scope/package creation permission recorded. Evidence:
-      pending.
+- [x] npm username and scope/package creation permission recorded. Evidence:
+      maintainer confirmed organization creation on 2026-10-06;
+      [npm membership settings][npm-members] show `kvazzie` as owner, with 2FA
+      enabled. New packages under the scope join the Developers team with
+      read/write access. No package has been published.
 - [x] `main` requires currently available blocking CI checks and an approving review;
       force pushes and deletion are disabled, including for administrators.
       Evidence: [branch protection settings][branches] and protection API,
@@ -204,6 +209,7 @@ package build or from the existence of the `npm` environment.
 [environments]: https://github.com/kvazzie/astro-yandex-cloud-adapter/settings/environments
 [security]: https://github.com/kvazzie/astro-yandex-cloud-adapter/settings/security_analysis
 [npm-organization]: https://docs.npmjs.com/creating-an-organization
+[npm-members]: https://www.npmjs.com/settings/astro-yandex-cloud/members
 [npm-tokens]: https://docs.npmjs.com/creating-and-viewing-access-tokens
 [coderabbit]: https://docs.coderabbit.ai/pr-reviews/request-changes-workflow
 [coderabbit-settings]: https://app.coderabbit.ai/repository/1348871130/settings/review/settings
