@@ -1,45 +1,149 @@
+import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, readdir } from "node:fs/promises";
-import { resolve } from "node:path";
-import { stdout } from "node:process";
-import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
+import { createHash } from "node:crypto";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import process from "node:process";
+import { parseArgs, promisify } from "node:util";
 
-const execFileAsync = promisify(execFile);
-
-const artifacts = resolve(".artifacts");
-const tarball = (await readdir(artifacts)).find((file) => file.endsWith(".tgz"));
-if (!tarball) throw new Error("npm pack did not create a tarball.");
-
-const expectedEntrypoints = [
-  "index.js",
-  "index.d.ts",
-  "runtime.js",
-  "runtime.d.ts",
-];
-for (const entrypoint of expectedEntrypoints) {
-  await access(resolve("packages/adapter/dist", entrypoint));
+const run = promisify(execFile);
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
+  options: {
+    report: { type: "string" },
+    "astro-version": { type: "string", default: "7.1.0" },
+  },
+});
+if (positionals.length !== 1) {
+  throw new Error(
+    "Usage: node scripts/validate-pack.mjs <tarball> [--report <json>] [--astro-version <version>]",
+  );
 }
 
-const tarballPath = resolve(artifacts, tarball);
-const { stdout: listing } = await execFileAsync("tar", ["-tf", tarballPath]);
-for (const entrypoint of expectedEntrypoints) {
-  if (!listing.split("\n").includes(`package/dist/${entrypoint}`)) {
-    throw new Error(`Packed tarball is missing dist/${entrypoint}.`);
+const tarball = resolve(positionals[0]);
+const report = resolve(values.report ?? `${tarball}.validation.json`);
+assert.notEqual(report, tarball, "The report must not overwrite the candidate.");
+await rm(report, { force: true });
+const bytes = await readFile(tarball);
+const sha512 = createHash("sha512").update(bytes).digest("hex");
+const root = await mkdtemp(join(tmpdir(), "astro-yandex-packed-"));
+// Never inherit module-resolution hooks or workspace NODE_PATH from the caller.
+const env = { ...process.env, SHARP_IGNORE_GLOBAL_LIBVIPS: "1" };
+delete env.NODE_PATH;
+delete env.NODE_OPTIONS;
+
+async function command(file, args, commandEnv = env) {
+  try {
+    return await run(file, args, {
+      cwd: root,
+      env: commandEnv,
+      timeout: 300_000,
+      maxBuffer: 10_000_000,
+    });
+  } catch (error) {
+    process.stderr.write(error.stdout ?? "");
+    process.stderr.write(error.stderr ?? "");
+    throw error;
   }
 }
 
-const adapter = await import(
-  pathToFileURL(resolve("packages/adapter/dist/index.js")).href
-);
-const runtime = await import(
-  pathToFileURL(resolve("packages/adapter/dist/runtime.js")).href
-);
-if (
-  typeof adapter.default !== "function" ||
-  typeof runtime.toWebRequest !== "function"
-) {
-  throw new Error("Published JavaScript exports are invalid.");
-}
+try {
+  // Install a private snapshot so replacing the source archive cannot change inputs.
+  const snapshot = join(root, "candidate.tgz");
+  await writeFile(snapshot, bytes);
+  const { stdout: manifestSource } = await command("tar", [
+    "-xOf",
+    snapshot,
+    "package/package.json",
+  ]);
+  const candidate = JSON.parse(manifestSource);
+  assert.equal(candidate.name, "@astro-yandex-cloud/adapter");
+  const { stdout: listing } = await command("tar", ["-tf", snapshot]);
+  const files = new Set(listing.trim().split("\n"));
+  function packedFile(path) {
+    assert(
+      files.has(`package/${path.replace(/^\.\//, "")}`),
+      `Missing packed file: ${path}`,
+    );
+  }
+  function entryFiles(entry) {
+    if (typeof entry === "string") packedFile(entry);
+    else for (const value of Object.values(entry)) entryFiles(value);
+  }
+  for (const entry of Object.values(candidate.exports)) entryFiles(entry);
+  packedFile("dist/server.js");
 
-stdout.write(`Validated ${tarball} and package exports.\n`);
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({
+      private: true,
+      type: "module",
+      dependencies: {
+        [candidate.name]: "file:./candidate.tgz",
+        astro: values["astro-version"],
+        typescript: "5.9.3",
+        "@types/node": "22.19.7",
+        ajv: "8.20.0",
+        nanoid: "3.3.17",
+      },
+      // Astro's transitive unifont update requires a newer Node than our minimum.
+      overrides: { unifont: "0.7.4" },
+    }),
+  );
+  // No hoisting: adapter imports cannot borrow its dependencies' dependencies.
+  await command("npm", [
+    "install",
+    "--install-strategy=nested",
+    "--engine-strict",
+    "--no-audit",
+    "--no-fund",
+  ]);
+  await cp(
+    join(import.meta.dirname, "package-check/verify.mjs"),
+    join(root, "verify.mjs"),
+  );
+  for (const fixture of ["static", "actions"]) {
+    for (const directory of ["src", "public"]) {
+      await cp(
+        join(import.meta.dirname, "../tests/fixtures", fixture, directory),
+        join(root, "fixtures", fixture, directory),
+        { recursive: true },
+      );
+    }
+  }
+  // The build is reproducible and cannot inline the caller's shell variables.
+  const { stdout } = await command(process.execPath, [join(root, "verify.mjs")], {
+    PATH: env.PATH,
+    SHARP_IGNORE_GLOBAL_LIBVIPS: "1",
+  });
+  process.stdout.write(stdout);
+  const result = JSON.parse(await readFile(join(root, "result.json"), "utf8"));
+  assert.equal(
+    createHash("sha512")
+      .update(await readFile(tarball))
+      .digest("hex"),
+    sha512,
+    "The candidate changed during validation.",
+  );
+  await writeFile(
+    report,
+    `${JSON.stringify(
+      {
+        name: candidate.name,
+        version: candidate.version,
+        tarball,
+        sha512,
+        size: bytes.length,
+        ...result,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  process.stdout.write(
+    `Validated ${candidate.name}@${candidate.version}; identity recorded in ${report}\n`,
+  );
+} finally {
+  await rm(root, { recursive: true, force: true });
+}

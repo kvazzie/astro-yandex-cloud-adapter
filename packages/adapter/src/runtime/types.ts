@@ -38,3 +38,11 @@ export interface YandexCloudRuntime {
   event: YandexCloudHttpEvent;
   context: YandexCloudInvocationContext;
 }
+
+export interface YandexCloudHttpResult {
+  statusCode: number;
+  headers: Record<string, string>;
+  multiValueHeaders: Record<string, string[]>;
+  body: string;
+  isBase64Encoded: boolean;
+}

@@ -7,7 +7,7 @@ import {
   toWebRequest,
   type YandexCloudHttpEvent,
   type YandexCloudInvocationContext,
-} from "../../packages/adapter/src/runtime.js";
+} from "../../packages/adapter/src/runtime/bridge.js";
 
 type DocumentedInvocationContext = {
   functionFolderId: string;

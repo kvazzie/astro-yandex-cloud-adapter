@@ -30,3 +30,6 @@ gates, and [`ROADMAP.md`](ROADMAP.md) for planned deployment products and shared
 
 Run `devenv test` for the [local S3 upload and update checks](docs/local-s3-testing.md).
 The CI job retains their logs and JUnit report for release review.
+
+Run `pnpm pack:check` for the [clean application package check](docs/package-check.md).
+CI retains the checked tarball and its SHA-512 validation report.

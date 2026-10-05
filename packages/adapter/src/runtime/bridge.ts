@@ -1,5 +1,6 @@
 import type {
   YandexCloudHttpEvent,
+  YandexCloudHttpResult,
   YandexCloudInvocationContext,
   YandexCloudRuntime,
 } from "./types.js";
@@ -7,17 +8,10 @@ import * as Effect from "effect/Effect";
 
 export type {
   YandexCloudHttpEvent,
+  YandexCloudHttpResult,
   YandexCloudInvocationContext,
   YandexCloudRuntime,
 } from "./types.js";
-
-export interface YandexCloudHttpResult {
-  statusCode: number;
-  headers: Record<string, string>;
-  multiValueHeaders: Record<string, string[]>;
-  body: string;
-  isBase64Encoded: boolean;
-}
 
 function firstHeader(
   event: YandexCloudHttpEvent,
