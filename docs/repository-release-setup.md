@@ -43,7 +43,7 @@ verified on the same date:
 | Workflow protection             | Main's required review and checks apply to workflow changes                                                                            | Ownership declarations are included in this PR                                                     |
 | Automated review                | CodeRabbit's repository settings have Request Changes Workflow enabled and author approval overrides disabled                          | Verify an approving review after the next completed review; this PR also records the configuration |
 | Private vulnerability reporting | `enabled: true`; monitor `@kvazzie` confirmed                                                                                          | Complete                                                                                           |
-| Bootstrap credential            | `npm` has no secrets                                                                                                                   | Create a temporary granular token and store it only as an environment secret                       |
+| Bootstrap credential            | `NPM_BOOTSTRAP_TOKEN` present only in `npm`; expires 2026-10-13                                                                        | Complete                                                                                           |
 | Version preparation             | Default workflow permissions `read`; `can_approve_pull_request_reviews: true`                                                          | Complete                                                                                           |
 
 On 2026-10-05, the maintainer confirmed that `@kvazzie` will monitor private
@@ -183,16 +183,21 @@ package build or from the existence of the `npm` environment.
       overrides are disabled. Evidence: saved repository settings, verified
       2026-10-06, and matching configuration in this PR.
 - [ ] An approving CodeRabbit review is verified after a completed review.
-      Evidence: pending; this setup PR remains a draft during npm setup.
+      Evidence: pending; npm setup is complete and this PR is ready for review.
 - [x] `npm` requires human approval, disables administrator bypass, and allows
       only the `main` branch. Evidence: environment and deployment-branch-policy
       APIs, verified 2026-10-06.
 - [x] Named vulnerability-report monitor has accepted the role and reporting is
       enabled. Evidence: `@kvazzie` confirmed; reporting API `enabled: true`,
       verified 2026-10-06.
-- [ ] Temporary bootstrap token is available only through the protected `npm`
+- [x] Temporary bootstrap token is available only through the protected `npm`
       environment; its scope and expiration are recorded without its value.
-      Evidence: pending.
+      Evidence: maintainer completed the wizard with scope `astro-yandex-cloud`
+      and expiry `2026-10-13`. Secret metadata verified on 2026-10-06 shows
+      `NPM_BOOTSTRAP_TOKEN` in `npm`, updated at `2026-10-05T22:12:32Z`, and no
+      repository-level bootstrap secret. The upload succeeded; a timeout in the
+      wizard's subsequent metadata read did not affect storage. No token value
+      was read or recorded by the agent.
 - [x] Named person has accepted immediate token revocation, environment-secret
       deletion, and trusted-publishing setup after first publication. Evidence:
       `@kvazzie` confirmed this responsibility on 2026-10-05; retain the confirmation
