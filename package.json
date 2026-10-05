@@ -18,6 +18,7 @@
     "test:s3": "node scripts/test-s3.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pack:check": "pnpm build && node scripts/pack-candidate.mjs",
+    "release:version": "pnpm changeset version && pnpm install --lockfile-only && pnpm exec prettier --write .changeset/pre.json packages/adapter/package.json packages/adapter/CHANGELOG.md pnpm-lock.yaml",
     "release:publish": "pnpm build && node scripts/pack-candidate.mjs --publish"
   },
   "devDependencies": {

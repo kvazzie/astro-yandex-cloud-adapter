@@ -35,6 +35,44 @@ jobs:
             .artifacts/package-check.json
           include-hidden-files: true
 
+  beta-release-rehearsal:
+    name: Beta release rehearsal
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Record the starting version
+        run: echo "STARTING_VERSION=$(node -p 'require("./packages/adapter/package.json").version')" >> "$GITHUB_ENV"
+      - run: pnpm release:version
+      - name: Verify the prepared beta
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFile } from 'node:fs/promises';
+          const pkg = JSON.parse(await readFile('packages/adapter/package.json', 'utf8'));
+          assert.match(pkg.version, /^0\.1\.0-beta\.[1-9]\d*$/);
+          if (process.env.STARTING_VERSION === '0.1.0-beta.0') {
+            assert.equal(pkg.version, '0.1.0-beta.1');
+          }
+          NODE
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm format:check
+      - run: pnpm pack:check
+      - name: Retain the rehearsed beta and identity
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rehearsed-beta
+          path: |
+            .artifacts/*.tgz
+            .artifacts/package-check.json
+          include-hidden-files: true
+
   local-s3:
     name: Local S3 uploads and updates
     runs-on: ubuntu-latest
