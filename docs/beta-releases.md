@@ -86,13 +86,17 @@ and permission to create `@astro-yandex-cloud/adapter` before proceeding.
    `npm publish --ignore-scripts --access public --tag beta --provenance`.
    npm handles publication because its CLI supports trusted-publisher OIDC.
    Installation, version preparation, registry queries, and packing use pnpm.
-6. Verify `pnpm view @astro-yandex-cloud/adapter@beta version dist --json`, the
-   npm provenance statement, and a clean application install. Confirm `beta`
-   points to `0.1.0-beta.1` and `latest` does not select this release. Retain the
-   run URL and `publication-candidate` artifact with the release evidence.
-7. Revoke the bootstrap token in npm immediately after successful publication
+6. Revoke the bootstrap token in npm immediately after successful publication
    and delete the GitHub environment secret, including after a partially failed
-   run that already published. Do not keep it as fallback authentication.
+   run that already published. Do this while the separate registry verification
+   runs. Do not keep it as fallback authentication.
+7. Verify `pnpm view @astro-yandex-cloud/adapter@beta version dist --json`, the
+   npm provenance statement, and the clean registry installation. Confirm `beta`
+   points to `0.1.0-beta.1` and `latest` does not select this release. Retain the
+   run URL, `publication-candidate`, and `registry-verification` artifacts in the
+   [first beta evidence record](releases/0.1.0-beta.1-evidence.md). If the earlier
+   workflow published or this job fails, rerun `pnpm release:verify` with the
+   original publication report as documented in that record.
 
 ## Switch to trusted publishing
 

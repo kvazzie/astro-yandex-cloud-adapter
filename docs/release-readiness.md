@@ -6,6 +6,11 @@ The [beta specification][beta-spec] owns the detailed application behavior, impl
 
 ## `0.1.0-beta.1`
 
+Use the [first beta evidence record](releases/0.1.0-beta.1-evidence.md) and
+[candidate release notes](releases/0.1.0-beta.1.md) for #17. Publication remains
+blocked by the unmerged prerequisite stack and the accepted #63 follow-ups
+#67, #68, #69 and #70. A preparation PR is not evidence of publication.
+
 ### Before publication
 
 - [ ] Account for every in-scope requirement in the beta specification with links to its implementation, user documentation, and verification evidence. An implementation ticket being closed is not sufficient evidence.

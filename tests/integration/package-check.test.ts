@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   appendFile,
+  chmod,
   cp,
   mkdtemp,
   readFile,
@@ -57,6 +58,59 @@ it("requires an explicit candidate tarball", async () => {
     stderr: expect.stringContaining("Usage:") as unknown,
   });
 });
+
+it.each([
+  {
+    title: "different installed registry bytes",
+    integrity: "sha512-wrong",
+    message: "The registry installation differs",
+  },
+  {
+    title: "missing verified registry provenance",
+    message: "npm did not verify provenance",
+  },
+])(
+  "rejects $title before trusting a registry installation",
+  async ({ integrity, message }) => {
+    const bin = await mkdtemp(join(root, "registry-command-"));
+    const expectedIntegrity = `sha512-${createHash("sha512")
+      .update(await readFile(candidate))
+      .digest("base64")}`;
+    const fakeNpm = join(bin, "npm");
+    await writeFile(
+      fakeNpm,
+      `#!${process.execPath}
+import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
+const args = process.argv.slice(2);
+if (args[0] === "install") {
+  assert(args.includes("--registry=https://registry.npmjs.org"));
+  await writeFile("package-lock.json", JSON.stringify({ packages: {
+    "node_modules/@astro-yandex-cloud/adapter": {
+      version: "0.0.0-package-check", integrity: ${JSON.stringify(integrity ?? expectedIntegrity)}
+    }
+  } }));
+} else {
+  assert.deepEqual(args, ["audit", "signatures", "--json", "--include-attestations", "--registry=https://registry.npmjs.org"]);
+  console.log(JSON.stringify({ invalid: [], missing: [], verified: [] }));
+}
+`,
+    );
+    await chmod(fakeNpm, 0o755);
+    const report = join(bin, "registry-validation.json");
+    await writeFile(report, '{"stale":true}');
+    await expect(
+      run(
+        process.execPath,
+        [checker, candidate, "--registry", "--report", report],
+        {
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+        },
+      ),
+    ).rejects.toThrow(message);
+    await expect(readFile(report)).rejects.toHaveProperty("code", "ENOENT");
+  },
+);
 
 it.each(["minimum", "workspace"])(
   "checks the candidate against %s Astro in clean applications and records the bytes that passed",

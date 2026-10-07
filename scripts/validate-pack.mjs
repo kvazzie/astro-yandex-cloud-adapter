@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -13,11 +14,12 @@ const { values, positionals } = parseArgs({
   options: {
     report: { type: "string" },
     "astro-version": { type: "string", default: "7.1.0" },
+    registry: { type: "boolean", default: false },
   },
 });
 if (positionals.length !== 1) {
   throw new Error(
-    "Usage: node scripts/validate-pack.mjs <tarball> [--report <json>] [--astro-version <version>]",
+    "Usage: node scripts/validate-pack.mjs <tarball> [--report <json>] [--astro-version <version>] [--registry]",
   );
 }
 
@@ -80,7 +82,9 @@ try {
       private: true,
       type: "module",
       dependencies: {
-        [candidate.name]: "file:./candidate.tgz",
+        [candidate.name]: values.registry
+          ? candidate.version
+          : "file:./candidate.tgz",
         astro: values["astro-version"],
         typescript: "5.9.3",
         "@types/node": "22.19.7",
@@ -98,7 +102,39 @@ try {
     "--engine-strict",
     "--no-audit",
     "--no-fund",
+    ...(values.registry ? ["--registry=https://registry.npmjs.org"] : []),
   ]);
+  let provenance;
+  if (values.registry) {
+    const lock = JSON.parse(
+      await readFile(join(root, "package-lock.json"), "utf8"),
+    );
+    const installed = lock.packages[`node_modules/${candidate.name}`];
+    assert.equal(installed.version, candidate.version);
+    assert.equal(
+      installed.integrity,
+      `sha512-${Buffer.from(sha512, "hex").toString("base64")}`,
+      "The registry installation differs from the checked archive.",
+    );
+    const { stdout } = await command("npm", [
+      "audit",
+      "signatures",
+      "--json",
+      "--include-attestations",
+      "--registry=https://registry.npmjs.org",
+    ]);
+    const audit = JSON.parse(stdout);
+    assert.deepEqual(audit.invalid, []);
+    assert.deepEqual(audit.missing, []);
+    provenance = audit.verified?.find(
+      ({ name, version }) =>
+        name === candidate.name && version === candidate.version,
+    );
+    assert(
+      provenance?.attestations?.provenance,
+      "npm did not verify provenance for the registry package.",
+    );
+  }
   await cp(
     join(import.meta.dirname, "package-check/verify.mjs"),
     join(root, "verify.mjs"),
@@ -135,6 +171,9 @@ try {
         tarball,
         sha512,
         size: bytes.length,
+        ...(values.registry
+          ? { registry: "https://registry.npmjs.org", provenance }
+          : {}),
         ...result,
       },
       null,
