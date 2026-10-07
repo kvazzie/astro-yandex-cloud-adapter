@@ -12,18 +12,18 @@ _Avoid_: Mode, platform, deployment
 An adapter configuration choice that refines how a Target shapes Artifact Generation without performing Deployment or Provisioning.
 
 **API Gateway Modifier**:
-A Target Modifier available to every supported Target that prepares a build for Request Routing through API Gateway. The API Gateway resource and its final configuration remain user-owned.
+A planned Target Modifier for every supported Target that prepares a build for Request Routing through API Gateway. The API Gateway resource and its final configuration remain user-owned.
 
 **Object Storage Target**:
 The Target that produces only a Client Artifact and accepts only Static-only Builds.
 _Avoid_: Static target
 
 **Object Storage + Cloud Functions Target**:
-The Target that prepares a Client Artifact for Object Storage and produces Function Artifacts when the build has On-demand Routes. Without the API Gateway Modifier, Function Artifacts serve stateless user-defined endpoints through direct Function URLs. With the modifier, Request Routing can also serve on-demand pages and Astro's internal endpoints.
+The Target that prepares a Client Artifact for Object Storage and produces Function Artifacts when the build has On-demand Routes. The planned invocation contract restricts direct Function URLs to stateless user-defined endpoints and uses the planned API Gateway Modifier for on-demand pages and Astro's internal endpoints.
 _Avoid_: Hybrid target, server target
 
 **Serverless Container Target**:
-The Target that produces a Container Artifact capable of serving the application over HTTP. It may be invoked directly or through API Gateway.
+A planned Target that produces a Container Artifact capable of serving the application over HTTP. It may be invoked directly or through API Gateway.
 
 **Client Artifact**:
 The deployable files that require no application code to execute, including prerendered pages, public files, and browser assets. For Object Storage Targets, these files are intended for Object Storage.
@@ -47,11 +47,11 @@ _Avoid_: Route infrastructure
 The concrete Yandex Cloud service within the selected Target that serves a Serving Artifact: Object Storage for a Client Artifact, Cloud Functions for a Function Artifact, or Serverless Containers for a Container Artifact. This names a service, not the Target of the whole build.
 
 **Deployment Manifest**:
-A schema-versioned, machine-readable declaration of the Serving Artifacts actually produced, each Serving Artifact's Target, runtime requirements, and request-routing requirements. It records the selected Target and Target Modifiers as build provenance, not as an instruction to provision unused services, and contains no guessed deployer policy, commands, resource handles, or permission to allocate cloud resources.
+A schema-versioned, machine-readable declaration of emitted Serving Artifacts and their runtime and request-routing requirements. It records the selected Target and Target Modifier provenance, without guessed deployer policy, commands, resource handles, or permission to allocate cloud resources.
 _Avoid_: Build metadata, deployment configuration
 
 **API Gateway Specification Template**:
-An OpenAPI description of the build's page and endpoint Request Routing through API Gateway, derived from the same route requirements as the Deployment Manifest when the API Gateway Modifier is selected. Deployment supplies resource identifiers and may customize the specification.
+A planned OpenAPI description of the build's page and endpoint Request Routing through API Gateway, derived from the same route requirements as the Deployment Manifest when the planned API Gateway Modifier is selected. Deployment supplies resource identifiers and may customize the specification.
 
 **Function Runtime Bridge**:
 A reusable translation between Yandex Cloud Functions invocations and Web Standards requests and responses. Its compatibility is established against real Yandex Cloud deployments and then shared by products that emit Function Artifacts.
