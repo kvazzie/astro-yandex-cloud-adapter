@@ -85,7 +85,10 @@ async function requestMetadata<T>(
 ): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(url, { headers: { accept: "application/json" } });
+    response = await fetch(url, {
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(30_000),
+    });
   } catch (error) {
     throw new Error(
       `The "install" dependency strategy cannot resolve the runtime package "${packageName}@${requirement}" from the npm registry. Check network access and try again.`,
