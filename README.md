@@ -27,3 +27,6 @@ and design constraints live in [`docs/adr`](docs/adr).
 
 See [`docs/release-readiness.md`](docs/release-readiness.md) for beta and stable release
 gates, and [`ROADMAP.md`](ROADMAP.md) for planned deployment products and shared packages.
+
+Run `devenv test` for the [local S3 upload and update checks](docs/local-s3-testing.md).
+The CI job retains their logs and JUnit report for release review.

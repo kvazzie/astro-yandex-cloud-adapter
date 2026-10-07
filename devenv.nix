@@ -1,6 +1,23 @@
-{ pkgs, ... }:
+{ config, pkgs, ... }:
 
 {
+  scripts.local-s3 = {
+    package = config.languages.javascript.package;
+    exec = ''import("${config.devenv.root}/scripts/local-s3.mjs");'';
+  };
+
+  scripts.test-local-s3 = {
+    package = config.languages.javascript.package;
+    exec = ''import("${config.devenv.root}/scripts/test-s3.mjs");'';
+  };
+
+  processes.s3 = {
+    exec = "local-s3 ${pkgs.seaweedfs}/bin/weed";
+    shutdown.grace = 45;
+  };
+
+  enterTest = "test-local-s3 ${pkgs.seaweedfs}/bin/weed";
+
   languages.javascript = {
     enable = true;
     package = pkgs.nodejs_22;
