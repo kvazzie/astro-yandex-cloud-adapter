@@ -26,11 +26,14 @@ jobs:
       - run: pnpm test:unit
       - run: pnpm test:integration
       - run: pnpm pack:check
-      - name: Validate packed exports
-        run: node scripts/validate-pack.mjs
-      - name: Verify publish payload
-        working-directory: packages/adapter
-        run: npm publish --dry-run
+      - name: Retain checked candidate and identity
+        uses: actions/upload-artifact@v7
+        with:
+          name: checked-package
+          path: |
+            .artifacts/*.tgz
+            .artifacts/package-check.json
+          include-hidden-files: true
 
   local-s3:
     name: Local S3 uploads and updates

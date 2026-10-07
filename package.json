@@ -17,7 +17,8 @@
     "test:integration": "vitest run tests/integration",
     "test:s3": "node scripts/test-s3.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "pack:check": "pnpm --filter @astro-yandex-cloud/adapter pack --pack-destination .artifacts"
+    "pack:check": "pnpm build && node scripts/pack-candidate.mjs",
+    "release:publish": "pnpm build && node scripts/pack-candidate.mjs --publish"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.1146.0",

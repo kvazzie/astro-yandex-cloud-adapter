@@ -25,6 +25,15 @@ jobs:
       - run: pnpm check
       - uses: changesets/action@v1
         with:
-          publish: pnpm changeset publish
+          publish: pnpm release:publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Retain publication candidate and identity
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: publication-candidate
+          path: |
+            .artifacts/*.tgz
+            .artifacts/package-check.json
+          include-hidden-files: true

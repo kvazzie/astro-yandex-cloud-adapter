@@ -14,6 +14,10 @@ The [beta specification][beta-spec] owns the detailed application behavior, impl
   For local S3 evidence, use the **Local S3 uploads and updates** CI job and its
   `local-s3-results` artifact. See [the local procedure and coverage](local-s3-testing.md).
 
+  For packed-candidate evidence, use CI's `checked-package` artifact and the
+  release job's `publication-candidate` artifact. Both include the exact tarball
+  and its SHA-512 validation report. See [the package check](package-check.md).
+
 - [ ] Review the installation and manual deployment instructions against the specification's user requirements. Put the beta and unverified-cloud warning before installation, and keep Sharp experimental.
 - [ ] Review the [artifact size report and Astro-owned path limitation](artifact-reports.md). Confirm the documented Yandex limits are current and the output scans permit only the identified upstream metadata.
 - [ ] Confirm the public GitHub and npm identities and package links. Record who monitors private vulnerability reports.
