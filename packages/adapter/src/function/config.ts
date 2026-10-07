@@ -10,6 +10,11 @@ export function assertUserExternals(
   strategy: DependencyStrategy,
 ): void {
   if (strategy === "bundle") assertBundleUserExternals(config);
+  if (strategy === "install" && config.vite.ssr?.noExternal === true) {
+    throw new Error(
+      'The "install" dependency strategy does not support vite.ssr.noExternal: true. Remove it or use an explicit package list for dependencies that should be bundled.',
+    );
+  }
 }
 
 export function configureServerBuild(
@@ -72,11 +77,6 @@ function installServerViteConfig(vite: InlineConfig): InlineConfig {
   return {
     ssr: {
       ...vite.ssr,
-      // Keep runtime package imports external while leaving application
-      // bundling in Astro's Vite and Rolldown pipeline. A blanket
-      // noExternal would bundle runtime dependencies; drop it but preserve
-      // an explicit user noExternal bundle list.
-      ...(vite.ssr?.noExternal === true ? { noExternal: undefined } : {}),
     },
     build: chunkedBuild(vite),
   };

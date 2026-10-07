@@ -88,10 +88,16 @@ importers:
       effectify:
         specifier: ^0.3.1
         version: 0.3.1(5e9b8d4674ee703a1075090569e2e79f)
+      semver:
+        specifier: ^7.8.5
+        version: 7.8.5
       tinyglobby:
         specifier: ^0.2.17
         version: 0.2.17
     devDependencies:
+      "@types/semver":
+        specifier: ^7.8.0
+        version: 7.8.0
       astro:
         specifier: ^7.1.0
         version: 7.1.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(jiti@2.7.0)(rollup@4.62.4)
@@ -2274,6 +2280,12 @@ packages:
     resolution:
       {
         integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==,
+      }
+
+  "@types/semver@7.8.0":
+    resolution:
+      {
+        integrity: sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==,
       }
 
   "@types/unist@3.0.3":
@@ -6223,6 +6235,8 @@ snapshots:
   "@types/node@24.13.3":
     dependencies:
       undici-types: 7.18.2
+
+  "@types/semver@7.8.0": {}
 
   "@types/unist@3.0.3": {}
 

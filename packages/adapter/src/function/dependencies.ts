@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { access, readFile } from "node:fs/promises";
 
 import type { PackageJson } from "pkg-types";
+import semver from "semver";
 
 import {
   compareNames,
@@ -12,6 +13,13 @@ import {
 import { asDirectoryPath, type DirectoryPath } from "./imports.js";
 import type { Registry, RegistryVersionMetadata } from "./registry.js";
 
+interface DependencySource {
+  version: string;
+  directory?: string;
+  metadata?: RegistryVersionMetadata;
+}
+
+/** Pins the runtime graph, including optional packages absent on the build host. */
 export async function resolvePinnedRuntimeDependencies(
   appRoot: URL,
   directDependencyNames: Set<string>,
@@ -22,11 +30,10 @@ export async function resolvePinnedRuntimeDependencies(
   const pinned = new Map<string, ResolvedRuntimeDependency>();
   const visited = new Set<string>();
   const discoveredVersions = new Map<string, string>();
-  // Set order follows discovery; sort for a deterministic resolution order.
   const pending: Array<{
     dependencyName: string;
     resolutionBases: Array<URL | string>;
-    installedPackage?: { version: string; directory: string };
+    source?: DependencySource;
   }> = Array.from(directDependencyNames)
     .sort()
     .map((dependencyName) => ({
@@ -36,13 +43,13 @@ export async function resolvePinnedRuntimeDependencies(
   while (pending.length) {
     const current = pending.shift();
     if (!current) continue;
-    const installedPackage =
-      current.installedPackage ??
+    const source: DependencySource | undefined =
+      current.source ??
       (await findInstalledPackage(
         current.resolutionBases,
         current.dependencyName,
       ));
-    if (!installedPackage) {
+    if (!source) {
       throw new Error(
         `The "install" dependency strategy cannot resolve the runtime package "${current.dependencyName}" imported by the Function Artifact. Install it as an application dependency so its exact version can be written to the Function Artifact.`,
       );
@@ -50,77 +57,92 @@ export async function resolvePinnedRuntimeDependencies(
     assertCompatibleVersion(
       discoveredVersions,
       current.dependencyName,
-      installedPackage.version,
+      source.version,
     );
     if (visited.has(current.dependencyName)) continue;
     visited.add(current.dependencyName);
-    const localMetadata = await readLocalLockMetadata(
-      appDirectory,
-      current.dependencyName,
-      installedPackage.version,
-    );
     const metadata =
-      localMetadata ||
-      (await registry.resolve(current.dependencyName, installedPackage.version));
+      source.metadata ??
+      (await readLocalLockMetadata(
+        appDirectory,
+        current.dependencyName,
+        source.version,
+      )) ??
+      (await registry.resolve(current.dependencyName, source.version));
     const dependencies: Record<string, string> = {};
     const optionalDependencies: Record<string, string> = {};
-    const dependentManifestPath = join(installedPackage.directory, "package.json");
-    const transitiveRanges: Array<{
-      name: string;
-      range: string;
-      optional: boolean;
-    }> = [
-      ...Object.entries(metadata.dependencies ?? {})
-        .sort(([a], [b]) => compareNames(a, b))
-        .map(([name, range]) => ({ name, range, optional: false })),
-      ...Object.keys(metadata.optionalDependencies ?? {})
-        .sort(compareNames)
-        .map((name) => ({ name, range: "", optional: true })),
+    const resolutionBases = [
+      ...(source.directory ? [join(source.directory, "package.json")] : []),
+      appManifestPath,
     ];
-    for (const { name: dependencyName, range, optional } of transitiveRanges) {
-      const installedDependency = await findInstalledPackage(
-        [dependentManifestPath, appManifestPath],
-        dependencyName,
+    const transitiveRanges = [
+      ...Object.entries(metadata.dependencies ?? {})
+        .filter(([name]) => metadata.optionalDependencies?.[name] === undefined)
+        .map(([name, range]) => ({ name, range, optional: false })),
+      ...Object.entries(metadata.optionalDependencies ?? {}).map(
+        ([name, range]) => ({ name, range, optional: true }),
+      ),
+    ].sort((a, b) => compareNames(a.name, b.name));
+    for (const { name, range, optional } of transitiveRanges) {
+      let dependency: DependencySource | undefined = await findInstalledPackage(
+        resolutionBases,
+        name,
       );
-      if (!installedDependency) {
-        if (optional) continue;
-        throw new Error(
-          `The "install" dependency strategy cannot resolve the runtime package "${dependencyName}" (required by "${current.dependencyName}" as "${range}"). Install it as an application dependency so its exact version can be written to the Function Artifact.`,
-        );
+      if (!dependency || !semver.satisfies(dependency.version, range)) {
+        if (!optional && source.directory) {
+          throw new Error(
+            `The "install" dependency strategy cannot resolve the runtime package "${name}" (required by "${current.dependencyName}" as "${range}"). Install a matching application dependency.`,
+          );
+        }
+        const remoteMetadata = await registry.resolve(name, range);
+        const version = remoteMetadata.version ?? semver.valid(range);
+        if (!version) {
+          throw new Error(
+            `The "install" dependency strategy cannot pin ${name}@${range} to an exact version.`,
+          );
+        }
+        dependency = { version, metadata: remoteMetadata };
       }
-      assertCompatibleVersion(
-        discoveredVersions,
-        dependencyName,
-        installedDependency.version,
-      );
-      (optional ? optionalDependencies : dependencies)[dependencyName] =
-        installedDependency.version;
-      if (!visited.has(dependencyName))
+      assertCompatibleVersion(discoveredVersions, name, dependency.version);
+      (optional ? optionalDependencies : dependencies)[name] = dependency.version;
+      if (!visited.has(name)) {
         pending.push({
-          dependencyName,
-          resolutionBases: [
-            join(installedDependency.directory, "package.json"),
-            appManifestPath,
-          ],
-          installedPackage: installedDependency,
+          dependencyName: name,
+          resolutionBases,
+          source: dependency,
         });
+      }
     }
     pinned.set(current.dependencyName, {
       name: current.dependencyName,
-      version: installedPackage.version,
+      version: source.version,
       ...(metadata.resolved !== undefined ? { resolved: metadata.resolved } : {}),
       ...(metadata.integrity !== undefined
         ? { integrity: metadata.integrity }
         : {}),
       ...(metadata.license !== undefined ? { license: metadata.license } : {}),
       ...(metadata.engines !== undefined ? { engines: metadata.engines } : {}),
+      ...(metadata.os !== undefined ? { os: metadata.os } : {}),
+      ...(metadata.cpu !== undefined ? { cpu: metadata.cpu } : {}),
+      ...(metadata.libc !== undefined ? { libc: metadata.libc } : {}),
       ...(Object.keys(dependencies).length ? { dependencies } : {}),
       ...(Object.keys(optionalDependencies).length
         ? { optionalDependencies }
         : {}),
     });
   }
-  return [...pinned.values()];
+  // An optional-first discovery must not make a later required edge optional.
+  const required = new Set<string>();
+  const requiredPending = [...directDependencyNames];
+  while (requiredPending.length) {
+    const name = requiredPending.shift()!;
+    if (required.has(name)) continue;
+    required.add(name);
+    requiredPending.push(...Object.keys(pinned.get(name)?.dependencies ?? {}));
+  }
+  return [...pinned.values()].map((dependency) =>
+    required.has(dependency.name) ? dependency : { ...dependency, optional: true },
+  );
 }
 
 function assertCompatibleVersion(
@@ -205,6 +227,9 @@ function parentDirectory(childPath: string): string | undefined {
 }
 
 interface NpmLockEntry {
+  os?: string[];
+  cpu?: string[];
+  libc?: string[];
   version?: string;
   resolved?: string;
   integrity?: string;
@@ -235,6 +260,9 @@ async function readLocalLockMetadata(
     integrity: entry.integrity,
     license: entry.license,
     engines: entry.engines,
+    os: entry.os,
+    cpu: entry.cpu,
+    libc: entry.libc,
     // The packages section pins exact transitive versions; the legacy
     // section only carries ranges, so transitive discovery uses packages.
     dependencies: lockEntry?.dependencies,

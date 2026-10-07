@@ -1,10 +1,16 @@
+import semver from "semver";
+
 export interface RegistryVersionMetadata {
+  version?: string;
   dependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
   resolved?: string;
   integrity?: string;
   license?: string;
   engines?: Record<string, string>;
+  os?: string[];
+  cpu?: string[];
+  libc?: string[];
 }
 
 export interface Registry {
@@ -13,46 +19,85 @@ export interface Registry {
 
 export const npmRegistry: Registry = { resolve: fetchRegistryMetadata };
 
-const NPM_REGISTRY_URL = "https://registry.npmjs.org";
+interface PublishedVersion {
+  version?: string;
+  dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  dist?: { tarball?: string; integrity?: string };
+  license?: unknown;
+  engines?: Record<string, string>;
+  os?: string[];
+  cpu?: string[];
+  libc?: string[];
+}
 
+/** Resolves exact versions and ranges needed by uninstalled optional packages. */
 async function fetchRegistryMetadata(
   packageName: string,
-  version: string,
+  requirement: string,
 ): Promise<RegistryVersionMetadata> {
   const encodedName = packageName
     .split("/")
     .map((segment) => encodeURIComponent(segment))
     .join("/");
-  const url = `${NPM_REGISTRY_URL}/${encodedName}/${encodeURIComponent(version)}`;
-  let response: Response;
-  try {
-    response = await fetch(url, { headers: { accept: "application/json" } });
-  } catch (error) {
-    throw new Error(
-      `The "install" dependency strategy cannot resolve the runtime package "${packageName}@${version}" from the npm registry. Check network access and try again.`,
-      { cause: error },
+  const registryUrl = (
+    process.env.npm_config_registry ?? "https://registry.npmjs.org"
+  ).replace(/\/+$/, "");
+  const packageUrl = `${registryUrl}/${encodedName}`;
+  let version = semver.valid(requirement);
+  let metadata: PublishedVersion;
+  if (version) {
+    metadata = await requestMetadata<PublishedVersion>(
+      `${packageUrl}/${encodeURIComponent(version)}`,
+      packageName,
+      requirement,
     );
+  } else {
+    const packument = await requestMetadata<{
+      versions: Record<string, PublishedVersion>;
+    }>(packageUrl, packageName, requirement);
+    version = semver.maxSatisfying(Object.keys(packument.versions), requirement);
+    if (!version) {
+      throw new Error(
+        `The "install" dependency strategy cannot resolve ${packageName}@${requirement} to an exact registry version.`,
+      );
+    }
+    metadata = packument.versions[version]!;
   }
-  if (!response.ok) {
-    throw new Error(
-      `The "install" dependency strategy cannot resolve the runtime package "${packageName}@${version}" from the npm registry (HTTP ${response.status}).`,
-    );
-  }
-  const metadata = (await response.json()) as {
-    dependencies?: Record<string, string>;
-    optionalDependencies?: Record<string, string>;
-    dist?: { tarball?: string; integrity?: string };
-    license?: unknown;
-    engines?: Record<string, string>;
-  };
   return {
+    version,
     dependencies: metadata.dependencies,
     optionalDependencies: metadata.optionalDependencies,
     resolved: metadata.dist?.tarball,
     integrity: metadata.dist?.integrity,
     license: extractLicenseIdentifier(metadata.license),
     engines: metadata.engines,
+    os: metadata.os,
+    cpu: metadata.cpu,
+    libc: metadata.libc,
   };
+}
+
+async function requestMetadata<T>(
+  url: string,
+  packageName: string,
+  requirement: string,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: { accept: "application/json" } });
+  } catch (error) {
+    throw new Error(
+      `The "install" dependency strategy cannot resolve the runtime package "${packageName}@${requirement}" from the npm registry. Check network access and try again.`,
+      { cause: error },
+    );
+  }
+  if (!response.ok) {
+    throw new Error(
+      `The "install" dependency strategy cannot resolve the runtime package "${packageName}@${requirement}" from the npm registry (HTTP ${response.status}).`,
+    );
+  }
+  return (await response.json()) as T;
 }
 
 function extractLicenseIdentifier(license: unknown): string | undefined {

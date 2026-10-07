@@ -128,6 +128,22 @@ describe("adapter options and routes", () => {
     });
   });
 
+  it("rejects blanket noExternal before an install build merges Vite config", async () => {
+    const hook = yandexCloud({
+      target: "object-storage-functions",
+      dependencyStrategy: "install",
+    }).hooks["astro:config:setup"];
+    await expect(
+      hook?.({
+        config: { vite: { ssr: { noExternal: true } } },
+        updateConfig: () => {},
+      } as never),
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringContaining("vite.ssr.noExternal: true"),
+    );
+  });
+
   it("keeps runtime package imports external for the install strategy", async () => {
     const hook = yandexCloud({
       target: "object-storage-functions",
@@ -142,7 +158,7 @@ describe("adapter options and routes", () => {
     await hook?.({
       target: "server",
       vite: {
-        ssr: { external: ["nanoid"], noExternal: true },
+        ssr: { external: ["nanoid"], noExternal: ["bundled-package"] },
         build: {
           rolldownOptions: { output: [{ entryFileNames: "first.js" }] },
         },
@@ -153,7 +169,7 @@ describe("adapter options and routes", () => {
     } as never);
 
     expect(updatedConfig?.ssr?.external).toEqual(["nanoid"]);
-    expect(updatedConfig?.ssr?.noExternal).not.toBe(true);
+    expect(updatedConfig?.ssr?.noExternal).toEqual(["bundled-package"]);
     expect(updatedConfig?.build?.rolldownOptions?.output).toEqual([
       {
         entryFileNames: "first.js",
