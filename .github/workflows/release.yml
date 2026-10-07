@@ -1,36 +1,60 @@
-name: Release
+name: Publish beta
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
+
+concurrency:
+  group: adapter-release
+  cancel-in-progress: false
 
 jobs:
-  release:
+  publication-policy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require public provenance, human approval, and passing CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .visibility)" = public
+          gh api "repos/$GITHUB_REPOSITORY/environments/npm" > "$RUNNER_TEMP/npm-environment.json"
+          jq -e '.can_admins_bypass == false and any(.protection_rules[]; .type == "required_reviewers" and (.reviewers | length) > 0)' "$RUNNER_TEMP/npm-environment.json"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=1" --jq '.workflow_runs[0].conclusion')" = success
+
+  publish:
+    needs: publication-policy
     runs-on: ubuntu-latest
     environment: npm
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: 22.12.0
-          cache: pnpm
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
-      - run: npm install --global npm@11
-      - run: pnpm check
-      - uses: changesets/action@v1
-        with:
-          publish: pnpm release:publish
+      - run: pnpm add --global npm@11.21.0
+      - name: Check and publish the same beta candidate with provenance
+        run: pnpm release:publish
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Delete this environment secret after the first publication.
+          # With an empty token, npm uses the configured trusted publisher.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
       - name: Retain publication candidate and identity
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: publication-candidate
           path: |

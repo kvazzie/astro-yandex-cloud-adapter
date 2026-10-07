@@ -2,14 +2,14 @@
 
 Run `pnpm pack:check` to build the adapter, pack one candidate, check that archive,
 and dry-run publication of the same archive. The command takes the filename from
-`npm pack --json`; existing archives in `.artifacts` do not select the candidate.
+`pnpm pack --json`; existing archives in `.artifacts` do not select the candidate.
 CI fails when any part of the check fails and retains the tarball and
 `.artifacts/package-check.json` as the `checked-package` artifact.
 
 To check an already packed candidate, pass its exact path:
 
 ```sh
-node scripts/validate-pack.mjs .artifacts/astro-yandex-cloud-adapter-0.1.0.tgz \
+node scripts/validate-pack.mjs .artifacts/astro-yandex-cloud-adapter-0.1.0-beta.1.tgz \
   --report .artifacts/package-check.json --astro-version 7.1.0
 ```
 
@@ -51,17 +51,19 @@ the input archive during validation fails the check.
 
 ## Publication
 
-The release workflow's existing `npm` environment controls publication approval.
-Its Changesets publish command runs `pnpm release:publish`. That command skips an
-already published version, otherwise packs and checks a candidate using the same
-procedure. It verifies the recorded identity immediately before passing that
-tarball to `npm publish` with provenance. It never republishes the workspace
-directory. Prereleases use their version's prerelease name as the dist-tag, such
-as `beta`; stable versions use `latest`.
+The separate **Publish beta** workflow runs `pnpm release:publish` after approval
+through the protected `npm` environment. The command requires a prepared
+`0.1.0-beta.N` version with no pending Changesets. It skips an already published
+version, otherwise packs and checks a candidate using the same procedure. It
+verifies the recorded identity immediately before passing that exact tarball to
+`npm publish` with provenance, script execution disabled, and the explicit `beta`
+dist-tag. It cannot publish a stable release or the initial versioning seed.
 
-Changesets creates tags after successful publication so its action can retain
-the existing GitHub release behavior. The workflow retains the archive and report
-as `publication-candidate` evidence. No package is published by `pnpm pack:check`.
+The workflow retains the archive and report as `publication-candidate` evidence.
+CI also rehearses version preparation and retains the `rehearsed-beta` artifact.
+No package is published by `pnpm pack:check`. See the [maintainer release
+procedure](beta-releases.md) for setup, approval, first-publication credentials,
+trusted publishing, and recovery.
 
 ## Public runtime types
 

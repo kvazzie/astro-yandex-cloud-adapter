@@ -1,16 +1,16 @@
 {
   "name": "@astro-yandex-cloud/adapter",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.0",
   "description": "Astro adapter for Yandex Cloud Object Storage and Cloud Functions",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/astro-yandex-cloud/adapter.git",
+    "url": "git+https://github.com/kvazzie/astro-yandex-cloud-adapter.git",
     "directory": "packages/adapter"
   },
-  "homepage": "https://github.com/astro-yandex-cloud/adapter#readme",
-  "bugs": "https://github.com/astro-yandex-cloud/adapter/issues",
+  "homepage": "https://github.com/kvazzie/astro-yandex-cloud-adapter#readme",
+  "bugs": "https://github.com/kvazzie/astro-yandex-cloud-adapter/issues",
   "keywords": [
     "astro",
     "adapter",

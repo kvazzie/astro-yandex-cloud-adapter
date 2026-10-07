@@ -22,6 +22,11 @@ The [beta specification][beta-spec] owns the detailed application behavior, impl
 - [ ] Review the [artifact size report and Astro-owned path limitation](artifact-reports.md). Confirm the documented Yandex limits are current and the output scans permit only the identified upstream metadata.
 - [ ] Confirm the public GitHub and npm identities and package links. Record who monitors private vulnerability reports.
 - [ ] Record the required branch, workflow, and publication-environment protections. Confirm that version preparation and publication have separate permissions and that publication requires human approval.
+
+  Follow the [maintainer release procedure](beta-releases.md). Publication fails
+  until the repository is public, `npm` has required reviewers with administrator
+  bypass disabled, and the selected commit has successful push CI.
+
 - [ ] Review the Changesets version pull request and its passing CI results. Confirm version `0.1.0-beta.1`, the `beta` dist-tag, and the maintainer procedures for publication and recovery.
 
 ### Publication
