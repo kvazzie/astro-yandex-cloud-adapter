@@ -70,9 +70,12 @@ function lockedSkillsBySource() {
     if (!entry.source) {
       throw new Error(`skills-lock.json has no source for ${name}`);
     }
-    const names = bySource.get(entry.source) ?? [];
+    const installSource = entry.ref
+      ? `${entry.source}#${entry.ref}`
+      : entry.source;
+    const names = bySource.get(installSource) ?? [];
     names.push(name);
-    bySource.set(entry.source, names);
+    bySource.set(installSource, names);
   }
   return bySource;
 }
@@ -89,6 +92,7 @@ function restoreLockedSkills() {
         "add",
         source,
         "--yes",
+        "--json",
         ...sortedNames.flatMap((name) => ["--skill", name]),
       ],
       { cwd: ROOT, stdio: "inherit" },
