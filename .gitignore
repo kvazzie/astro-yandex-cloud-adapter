@@ -5,7 +5,11 @@ dist
 coverage
 *.tgz
 .DS_Store
+.devenv
 
 # Third-party agent skills installed by the Skills CLI.
 .agents/skills/*
 !.agents/skills/.gitignore
+
+# CLI-managed harness symlinks created by scripts/setup-skills.mjs.
+.claude/

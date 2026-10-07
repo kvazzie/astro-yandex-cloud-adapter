@@ -795,6 +795,99 @@ describe.sequential("Astro artifact builds", () => {
     );
   });
 
+  it("keeps runtime package imports for the install dependency strategy", async () => {
+    await build({
+      root: `${join(fixtures, "install-basic")}/`,
+      logLevel: "silent",
+    });
+
+    const functionDirectory = join(fixtures, "install-basic/dist/function");
+    const files = await layout(functionDirectory);
+    expect(files).toContain("index.js");
+    expect(files.some((file) => file.startsWith("chunks/"))).toBe(true);
+
+    const sources = await Promise.all(
+      files
+        .filter((file) => file.endsWith(".js") || file.endsWith(".mjs"))
+        .map((file) => readFile(join(functionDirectory, file), "utf8")),
+    );
+    expect(sources.some((source) => source.includes('from "nanoid"'))).toBe(true);
+  });
+
+  it("emits exact package metadata and a deterministic lockfile for the install strategy", async () => {
+    const fixtureRoot = `${join(fixtures, "install-basic")}/`;
+    const functionDirectory = join(fixtures, "install-basic/dist/function");
+
+    await build({ root: fixtureRoot, logLevel: "silent" });
+    const packageJsonRaw = await readFile(
+      join(functionDirectory, "package.json"),
+      "utf8",
+    );
+    const lockfileRaw = await readFile(
+      join(functionDirectory, "package-lock.json"),
+      "utf8",
+    );
+
+    // Field-level assertions stay flexible for a future where some
+    // dependencies are preinstalled as internal modules while others remain
+    // listed in the Function Artifact package.json.
+    const packageJson = JSON.parse(packageJsonRaw) as {
+      private?: boolean;
+      type?: string;
+      engines?: Record<string, string>;
+      dependencies?: Record<string, string>;
+    };
+    expect(packageJson.private).toBe(true);
+    expect(packageJson.type).toBe("module");
+    expect(packageJson.engines?.["node"]).toBe(">=22.12.0");
+    expect(packageJson.dependencies?.["nanoid"]).toBe("3.3.17");
+    for (const version of Object.values(packageJson.dependencies ?? {})) {
+      expect(version).not.toMatch(/^[\^~><=*\s]/);
+      expect(version).toMatch(/^\d+\.\d+\.\d+(-[\w.]+)?$/);
+    }
+    expect(packageJson.dependencies).not.toHaveProperty("astro");
+    expect(packageJson.dependencies).not.toHaveProperty(
+      "@astro-yandex-cloud/adapter",
+    );
+
+    const lockfile = JSON.parse(lockfileRaw) as {
+      lockfileVersion?: number;
+      packages?: Record<
+        string,
+        {
+          version?: string;
+          dependencies?: Record<string, string>;
+          optionalDependencies?: Record<string, string>;
+        }
+      >;
+    };
+    expect(lockfile.lockfileVersion).toBe(3);
+    expect(lockfile.packages?.[""]?.dependencies?.["nanoid"]).toBe("3.3.17");
+    // Every pinned version is exact; ranges never appear in version positions.
+    // Constraint fields such as engines may still contain ranges.
+    for (const entry of Object.values(lockfile.packages ?? {})) {
+      if (entry.version !== undefined) {
+        expect(entry.version).toMatch(/^\d+\.\d+\.\d+(-[\w.]+)?$/);
+      }
+      for (const version of [
+        ...Object.values(entry.dependencies ?? {}),
+        ...Object.values(entry.optionalDependencies ?? {}),
+      ]) {
+        expect(version).not.toMatch(/^[\^~><=*\s]/);
+        expect(version).toMatch(/^\d+\.\d+\.\d+(-[\w.]+)?$/);
+      }
+    }
+
+    // Two builds from the same resolved inputs emit byte-identical files.
+    await build({ root: fixtureRoot, logLevel: "silent" });
+    await expect(
+      readFile(join(functionDirectory, "package.json"), "utf8"),
+    ).resolves.toBe(packageJsonRaw);
+    await expect(
+      readFile(join(functionDirectory, "package-lock.json"), "utf8"),
+    ).resolves.toBe(lockfileRaw);
+  });
+
   it("rejects active Astro-internal routes for Object Storage", async () => {
     let failure: unknown;
     try {

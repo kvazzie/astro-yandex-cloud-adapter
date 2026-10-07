@@ -39,11 +39,26 @@ yandexCloud({
 
 Bundle builds reject custom package externals, unresolved runtime package imports, and native
 runtime code. Native dependencies such as Sharp require the artifact-wide `install` strategy.
-Until install packaging is implemented, a Runtime Build that selects `install` fails instead of
-emitting an incomplete artifact. `tsdown` builds this adapter package only; it does not rebuild
+
+```js
+yandexCloud({
+  target: "object-storage-functions",
+  dependencyStrategy: "install",
+});
+```
+
+Install builds keep runtime package imports external while application bundling stays in Astro's
+Vite and Rolldown pipeline. Finalization writes exact dependency versions to the Function
+Artifact `package.json` and a deterministic npm `package-lock.json` (lockfileVersion 3) covering
+the unresolved runtime packages found in the build. The same resolved inputs produce
+byte-identical metadata and lockfiles with no version ranges. Install the artifact the way Yandex
+Cloud does with `npm ci --production`; only `dependencies` are installed. Sharp support through
+`install` is experimental. `tsdown` builds this adapter package only; it does not rebuild
 application code or Function Artifacts.
 
 ## Deployment Manifest
+
+The fields below describe the current unpublished build output. The [prepublication contract decision](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/63#issuecomment-5900071837) revises draft schema version 1 before the first npm release; implementation is tracked in #7, #67, #68, #69, and #70.
 
 The schema version 1 Deployment Manifest records the selected Target, the application base,
 artifact paths, every Client Artifact file, canonical Object Storage keys, and the complete

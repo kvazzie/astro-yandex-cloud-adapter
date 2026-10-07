@@ -5,11 +5,16 @@ import type {
 } from "astro";
 
 import { ADAPTER_NAME } from "./constants.js";
-import { createDriver } from "./driver.js";
+import { createDriver } from "./driver/index.js";
+import { injectedRuntimeTypes } from "./injected-types.js";
+import { needsConfiguredRuntime, routePathname, routePattern } from "./routes.js";
 import { runtimeConfigPlugin } from "./runtime-config.js";
 import type { AdapterOptions } from "./types.js";
 
-export { parseDeploymentManifest } from "./deployment-manifest.js";
+export {
+  defineDeploymentManifest,
+  parseDeploymentManifest,
+} from "./deployment-manifest.js";
 export type {
   AdapterOptions,
   ClientArtifactFile,
@@ -26,27 +31,6 @@ export type {
   YandexCloudInvocationContext,
   YandexCloudHttpResult,
 } from "./runtime.js";
-
-function routePattern(route: IntegrationResolvedRoute): string {
-  return route.pattern;
-}
-
-function needsConfiguredRuntime(route: IntegrationResolvedRoute): boolean {
-  return !route.isPrerendered && route.origin !== "internal";
-}
-
-function routePathname(pathname: string): string {
-  return pathname ? `/${pathname.replace(/^\/+/, "")}` : "/";
-}
-
-function injectedRuntimeTypes(): string {
-  return `declare namespace App {
-  interface Locals {
-    runtime: import('${ADAPTER_NAME}').YandexCloudRuntime;
-  }
-}
-`;
-}
 
 /** Creates the Bare Adapter integration for the selected Yandex Cloud Target. */
 export default function yandexCloud(options?: AdapterOptions): AstroIntegration {
