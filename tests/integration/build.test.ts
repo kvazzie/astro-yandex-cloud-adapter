@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp, mkdtemp, readFile, readdir, rm, symlink } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -14,9 +14,64 @@ import type {
   YandexCloudInvocationContext,
   YandexCloudManifestV1,
 } from "../../packages/adapter/src/types.js";
+import { readDirectorySnapshot } from "./lib/files.js";
 
 const fixtures = resolve(import.meta.dirname, "../fixtures");
 const runCommand = promisify(execFile);
+
+// Astro owns these diagnostic filenames and its serialized runtime manifest.
+// Keep the exceptions narrow so another absolute path still fails the scan.
+// See docs/artifact-reports.md for the upstream fields and release limitation.
+function withoutAstroBuildMetadata(source: string): string {
+  return source
+    .replace(/\bdeserializeManifest\((\{[^\n]+\})\);/g, (_match, json: string) => {
+      const metadata = JSON.parse(json) as Record<string, unknown>;
+      for (const field of [
+        "rootDir",
+        "srcDir",
+        "publicDir",
+        "outDir",
+        "cacheDir",
+        "buildClientDir",
+        "buildServerDir",
+      ]) {
+        expect(metadata[field]).toMatch(/^file:\/\/\//);
+        delete metadata[field];
+      }
+      const entryModules = metadata.entryModules as Record<string, string>;
+      metadata.entryModules = Object.entries(entryModules).map(([key, value]) => [
+        key.startsWith("/") ? "<Astro module ID>" : key,
+        value,
+      ]);
+      return `deserializeManifest(${JSON.stringify(metadata)});`;
+    })
+    .replace(
+      /\}, "[^"\n]+\.astro", (?:void 0|undefined)\)/g,
+      '}, "<Astro component>", undefined)',
+    )
+    .replace(
+      /\bvar \$\$file = "[^"\n]+\.astro";/g,
+      'var $$file = "<Astro component>";',
+    );
+}
+
+async function expectPortableOutput(directory: string, buildRoots: string[]) {
+  for (const { path, bytes } of await readDirectorySnapshot(directory)) {
+    const source = /\.m?js$/.test(path)
+      ? withoutAstroBuildMetadata(bytes.toString())
+      : bytes.toString();
+    for (const root of [
+      resolve(import.meta.dirname, "../.."),
+      homedir(),
+      ...buildRoots,
+    ]) {
+      expect(source, path).not.toContain(root);
+    }
+    expect(source, path).not.toMatch(
+      /file:\/\/\/|\/(?:home|Users|tmp|private\/(?:tmp|var\/folders))\/|\b[A-Za-z]:[\\/]/,
+    );
+  }
+}
 
 interface GeneratedHandler {
   handler(
@@ -1083,4 +1138,40 @@ describe.sequential("Astro artifact builds", () => {
       'Use target "object-storage-functions" or prerender these routes.',
     );
   });
+
+  it.each(["static", "mixed", "install-basic"])(
+    "keeps adapter-owned %s output portable when the application moves",
+    async (fixture) => {
+      const original = join(fixtures, fixture);
+      const roots = await Promise.all([
+        mkdtemp(join(fixtures, ".relocated with spaces-a-")),
+        mkdtemp(join(fixtures, ".relocated with spaces-b-")),
+      ]);
+      try {
+        for (const root of roots) {
+          await cp(original, root, {
+            recursive: true,
+            filter: (path) =>
+              !["dist", "node_modules", ".astro"].some(
+                (name) => path === join(original, name),
+              ),
+          });
+          await symlink(
+            join(original, "node_modules"),
+            join(root, "node_modules"),
+            "dir",
+          );
+          await build({ root: `${root}/`, logLevel: "silent" });
+          await expectPortableOutput(join(root, "dist"), [original, ...roots]);
+        }
+        await expect(
+          readFile(join(roots[1], "dist/yandex-cloud.json"), "utf8"),
+        ).resolves.toBe(
+          await readFile(join(roots[0], "dist/yandex-cloud.json"), "utf8"),
+        );
+      } finally {
+        for (const root of roots) await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 });

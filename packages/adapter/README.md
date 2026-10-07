@@ -23,6 +23,14 @@ server islands and the image endpoint count as on-demand routes. This means an A
 `output: "static"` project can still require a Function Artifact. `dist/yandex-cloud.json`
 describes all deployable artifacts.
 
+Each build reports the local bytes in every generated Client and Function Artifact.
+Size warnings do not fail the build. Deployment Products must check the final
+archive and ingress limits. The Deployment Manifest, size report, and generated
+Function package metadata use portable paths. Astro's own runtime manifest and
+compiled component diagnostics still contain absolute build paths. See
+[artifact reports and path limitations](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/docs/artifact-reports.md)
+for the current Yandex limits and the exact upstream records.
+
 ## Local preview
 
 Run `astro build`, then `astro preview` to serve the generated application locally.

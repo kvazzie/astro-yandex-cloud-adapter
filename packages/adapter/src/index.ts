@@ -5,6 +5,7 @@ import {
 } from "effectify/astro/integration";
 
 import { ADAPTER_NAME } from "./constants.js";
+import { reportArtifactSizes } from "./build/report.js";
 import { injectedRuntimeTypes } from "./injected-types.js";
 import { decodeOptions } from "./integration/options.js";
 import { createIntegrationSession } from "./integration/session.js";
@@ -85,7 +86,7 @@ export default defineIntegration<AdapterOptions | undefined, AdapterOptions>({
           if (buildTarget === "server")
             updateConfig(target.serverViteConfig(vite));
         }),
-      "astro:build:done": ({ pages, assets }) =>
+      "astro:build:done": ({ pages, assets, logger }) =>
         Effect.try({
           try: () => session.completedBuild(pages, assets),
           catch: (cause): BuildError => ({
@@ -94,7 +95,25 @@ export default defineIntegration<AdapterOptions | undefined, AdapterOptions>({
             cause,
           }),
         }).pipe(
-          Effect.flatMap((build) => target.generateArtifacts(build)),
+          Effect.flatMap((build) =>
+            target
+              .generateArtifacts(build)
+              .pipe(
+                Effect.tap((manifest) =>
+                  Effect.tryPromise(() =>
+                    reportArtifactSizes(build.config.outDir, manifest, logger),
+                  ).pipe(
+                    Effect.catchAll(() =>
+                      Effect.sync(() =>
+                        logger.warn(
+                          "Could not read generated artifacts for the size report. The build continues.",
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ),
           Effect.mapError(hookError("astro:build:done")),
           Effect.asVoid,
         ),
