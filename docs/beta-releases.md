@@ -8,12 +8,21 @@ feature PR nor merging the Changesets version PR publishes a package.
 Complete these settings before publication. They are maintained outside Git;
 the workflow does not create or weaken them.
 
+Use the [repository setup and evidence record](repository-release-setup.md) for
+the canonical identity, named maintainers, workflow ownership, and verification
+of the live settings. Its pending entries must be completed before closing #16.
+
 - Make `kvazzie/astro-yandex-cloud-adapter` public. npm provenance requires a
   public source repository and public package. The adapter's `repository.url`
   must match this repository.
 - Protect `main` with review and the blocking CI jobs: `quality`,
   `Beta release rehearsal`, `Local S3 uploads and updates`, and the three
   non-experimental Astro compatibility jobs. Keep Astro next non-blocking.
+  Require one approving review, dismiss stale approvals, and require approval
+  of the latest push. CodeRabbit can supply the approval through its Request
+  Changes Workflow. Keep code-owner approval optional for solo maintenance;
+  `CODEOWNERS` identifies the maintainer of workflow and publication files.
+  Disable force pushes, deletion, and administrator bypass.
 - In **Settings > Actions > General**, allow GitHub Actions to create pull
   requests. Version preparation uses the default `GITHUB_TOKEN`, without a
   separate long-lived credential. GitHub requires approval to run CI on PRs that
