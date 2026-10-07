@@ -9,6 +9,7 @@
 // Usage:
 // node scripts/setup-skills.mjs [--links-only]
 import { execFileSync } from "node:child_process";
+import console from "node:console";
 import {
   lstatSync,
   mkdirSync,
@@ -17,6 +18,7 @@ import {
   symlinkSync,
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
