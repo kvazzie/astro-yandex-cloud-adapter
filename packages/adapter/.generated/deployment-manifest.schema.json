@@ -1,0 +1,292 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "adapter",
+    "target",
+    "modifiers",
+    "base",
+    "artifacts",
+    "routes"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "enum": [1]
+    },
+    "adapter": {
+      "type": "object",
+      "required": ["version"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "a string at least 1 character(s) long",
+          "title": "minLength(1)",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": {
+        "title": "unknown"
+      }
+    },
+    "target": {
+      "type": "string",
+      "enum": ["object-storage", "object-storage-functions"]
+    },
+    "modifiers": {
+      "type": "object",
+      "required": ["apiGateway"],
+      "properties": {
+        "apiGateway": {
+          "type": "boolean"
+        },
+        "dependencyStrategy": {
+          "type": "string",
+          "enum": ["bundle", "install"]
+        }
+      },
+      "additionalProperties": {
+        "title": "unknown"
+      }
+    },
+    "base": {
+      "type": "string",
+      "description": "a string matching the pattern ^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*)$",
+      "pattern": "^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*)$"
+    },
+    "assetsPrefix": {
+      "type": "string",
+      "description": "a string at least 1 character(s) long",
+      "title": "minLength(1)",
+      "minLength": 1
+    },
+    "artifacts": {
+      "type": "object",
+      "required": ["client", "functions"],
+      "properties": {
+        "client": {
+          "type": "object",
+          "required": ["id", "path"],
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "a string at least 1 character(s) long",
+              "title": "minLength(1)",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "description": "a string matching the pattern ^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$",
+              "title": "minLength(1)",
+              "minLength": 1,
+              "pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$"
+            }
+          },
+          "additionalProperties": {
+            "title": "unknown"
+          }
+        },
+        "functions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "path", "runtime", "entrypoint", "support"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "a string at least 1 character(s) long",
+                "title": "minLength(1)",
+                "minLength": 1
+              },
+              "path": {
+                "type": "string",
+                "description": "a string matching the pattern ^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$",
+                "title": "minLength(1)",
+                "minLength": 1,
+                "pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$"
+              },
+              "runtime": {
+                "type": "string",
+                "enum": ["nodejs22"]
+              },
+              "entrypoint": {
+                "type": "string",
+                "enum": ["index.handler"]
+              },
+              "support": {
+                "type": "object",
+                "required": ["sharp", "runtimeImageTransformation"],
+                "properties": {
+                  "sharp": {
+                    "type": "string",
+                    "enum": ["unsupported", "experimental"]
+                  },
+                  "runtimeImageTransformation": {
+                    "type": "string",
+                    "enum": ["unsupported", "experimental"]
+                  }
+                },
+                "additionalProperties": {
+                  "title": "unknown"
+                }
+              }
+            },
+            "additionalProperties": {
+              "title": "unknown"
+            }
+          }
+        }
+      },
+      "additionalProperties": {
+        "title": "unknown"
+      }
+    },
+    "routes": {
+      "type": "object",
+      "required": ["prerendered", "onDemand", "notFound"],
+      "properties": {
+        "prerendered": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "url", "objectKey", "artifactId"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["page", "endpoint"]
+              },
+              "url": {
+                "type": "string",
+                "description": "a string matching the pattern ^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$",
+                "pattern": "^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$"
+              },
+              "objectKey": {
+                "type": "string",
+                "description": "a string matching the pattern ^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$",
+                "title": "minLength(1)",
+                "minLength": 1,
+                "pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$"
+              },
+              "artifactId": {
+                "type": "string",
+                "description": "a string at least 1 character(s) long",
+                "title": "minLength(1)",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": {
+              "title": "unknown"
+            }
+          }
+        },
+        "onDemand": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "pattern", "artifactId"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["page", "endpoint"]
+              },
+              "pattern": {
+                "type": "string",
+                "description": "a string matching the pattern ^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$",
+                "pattern": "^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$"
+              },
+              "artifactId": {
+                "type": "string",
+                "description": "a string at least 1 character(s) long",
+                "title": "minLength(1)",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": {
+              "title": "unknown"
+            }
+          }
+        },
+        "notFound": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["scope", "url", "objectKey", "artifactId"],
+            "properties": {
+              "scope": {
+                "type": "string",
+                "description": "a string matching the pattern ^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$",
+                "pattern": "^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$"
+              },
+              "url": {
+                "type": "string",
+                "description": "a string matching the pattern ^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$",
+                "pattern": "^\\/(?:|(?!\\.{1,2}(?:\\/|$))[^/?#]+(?:\\/(?!\\.{1,2}(?:\\/|$))[^/?#]+)*\\/?)$"
+              },
+              "objectKey": {
+                "type": "string",
+                "description": "a string matching the pattern ^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$",
+                "title": "minLength(1)",
+                "minLength": 1,
+                "pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$"
+              },
+              "artifactId": {
+                "type": "string",
+                "description": "a string at least 1 character(s) long",
+                "title": "minLength(1)",
+                "minLength": 1
+              },
+              "functionArtifactId": {
+                "type": "string",
+                "description": "a string at least 1 character(s) long",
+                "title": "minLength(1)",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": {
+              "title": "unknown"
+            }
+          }
+        }
+      },
+      "additionalProperties": {
+        "title": "unknown"
+      }
+    },
+    "directInvocation": {
+      "type": "object",
+      "required": ["requestTargetParameter"],
+      "properties": {
+        "requestTargetParameter": {
+          "type": "string",
+          "description": "a string at least 1 character(s) long",
+          "title": "minLength(1)",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": {
+        "title": "unknown"
+      }
+    },
+    "gatewayTemplate": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "a string matching the pattern ^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$",
+          "title": "minLength(1)",
+          "minLength": 1,
+          "pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$)).+$"
+        }
+      },
+      "additionalProperties": {
+        "title": "unknown"
+      }
+    }
+  },
+  "additionalProperties": {
+    "title": "unknown"
+  },
+  "$id": "urn:astro-yandex-cloud:deployment-manifest:v1"
+}

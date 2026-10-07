@@ -5,6 +5,10 @@ import type { PackageJson } from "pkg-types";
 export interface ResolvedRuntimeDependency {
   name: string;
   version: string;
+  optional?: boolean;
+  os?: string[];
+  cpu?: string[];
+  libc?: string[];
   resolved?: string;
   integrity?: string;
   license?: string;
@@ -56,12 +60,25 @@ export function formatFunctionPackageJson(
     private: true,
     type: "module",
     engines: { node: FUNCTION_NODE_RANGE },
-    dependencies: exactDependencies(dependencies),
+    dependencies: exactDependencies(
+      dependencies.filter((entry) => !entry.optional),
+    ),
+    ...(dependencies.some((entry) => entry.optional)
+      ? {
+          optionalDependencies: exactDependencies(
+            dependencies.filter((entry) => entry.optional),
+          ),
+        }
+      : {}),
   };
   return `${JSON.stringify(packageJson, null, 2)}\n`;
 }
 
 interface NpmLockPackageEntry {
+  optional?: boolean;
+  os?: string[];
+  cpu?: string[];
+  libc?: string[];
   version?: string;
   resolved?: string;
   integrity?: string;
@@ -75,6 +92,10 @@ function lockPackageEntry(
   dependency: ResolvedRuntimeDependency,
 ): NpmLockPackageEntry {
   const entry: NpmLockPackageEntry = { version: dependency.version };
+  if (dependency.optional) entry.optional = true;
+  if (dependency.os !== undefined) entry.os = dependency.os;
+  if (dependency.cpu !== undefined) entry.cpu = dependency.cpu;
+  if (dependency.libc !== undefined) entry.libc = dependency.libc;
   if (dependency.resolved !== undefined) entry.resolved = dependency.resolved;
   if (dependency.integrity !== undefined) entry.integrity = dependency.integrity;
   if (dependency.license !== undefined) entry.license = dependency.license;
@@ -93,9 +114,14 @@ export function formatNpmLockfile(
   dependencies: ResolvedRuntimeDependency[],
 ): string {
   const sorted = sortedDependencies(dependencies);
-  const direct = exactDependencies(sorted);
+  const direct = exactDependencies(sorted.filter((entry) => !entry.optional));
+  const optional = exactDependencies(sorted.filter((entry) => entry.optional));
   const lockPackages: Record<string, NpmLockPackageEntry> = {
-    "": { version: "1.0.0", dependencies: direct },
+    "": {
+      version: "1.0.0",
+      dependencies: direct,
+      ...(Object.keys(optional).length ? { optionalDependencies: optional } : {}),
+    },
   };
   const legacy: Record<string, NpmLockPackageEntry> = {};
   for (const dependency of sorted) {

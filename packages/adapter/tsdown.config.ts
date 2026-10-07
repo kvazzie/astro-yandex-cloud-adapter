@@ -8,7 +8,7 @@ export default defineConfig({
     runtime: "src/runtime.ts",
     server: "src/server.ts",
   },
-  copy: "src/deployment-manifest.schema.json",
+  copy: ".generated/deployment-manifest.schema.json",
   clean: true,
   dts: true,
   format: "esm",

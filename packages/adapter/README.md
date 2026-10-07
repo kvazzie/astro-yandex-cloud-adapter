@@ -52,18 +52,16 @@ Vite and Rolldown pipeline. Finalization writes exact dependency versions to the
 Artifact `package.json` and a deterministic npm `package-lock.json` (lockfileVersion 3) covering
 the unresolved runtime packages found in the build. The same resolved inputs produce
 byte-identical metadata and lockfiles with no version ranges. Install the artifact the way Yandex
-Cloud does with `npm ci --production`; only `dependencies` are installed. Sharp support through
-`install` is experimental. `tsdown` builds this adapter package only; it does not rebuild
+Cloud does with `npm ci --production`; only `dependencies` are installed. Sharp and runtime image
+transformation through `install` are experimental. The Deployment Manifest records both support
+levels for each Function Artifact. `tsdown` builds this adapter package only; it does not rebuild
 application code or Function Artifacts.
 
 ## Deployment Manifest
 
-The fields below describe the current unpublished build output. The [prepublication contract decision](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/63#issuecomment-5900071837) revises draft schema version 1 before the first npm release; implementation is tracked in #7, #67, #68, #69, and #70.
+The [prepublication contract decision](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/63#issuecomment-5900071837) revised draft schema version 1 before the first npm release. Gateway templates, direct invocation metadata, recursive 404 scopes, and Function partitioning remain tracked in #67, #69, #68, and #70.
 
-The schema version 1 Deployment Manifest records the selected Target, the application base,
-artifact paths, every Client Artifact file, canonical Object Storage keys, and the complete
-Prerendered and On-demand Route requirements. Client file entries include their public URL so a
-deployment product does not need to reproduce Astro's base or trailing-slash behavior.
+The Deployment Manifest records the selected Target as build provenance. It lists the Client Artifact and any emitted Function Artifacts by stable ID, plus Prerendered and On-demand Route requirements that reference those IDs. Prerendered routes map concrete URLs to Object Storage keys. A deployment product enumerates the Client Artifact directory to upload files; the Manifest does not duplicate that inventory. A static build under either Object Storage Target has no Function Artifact.
 
 Deployment products can validate untrusted manifest data through the package interface:
 

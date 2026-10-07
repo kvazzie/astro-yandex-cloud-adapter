@@ -1,7 +1,9 @@
-import { cp, mkdtemp, readFile, readdir } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { cp, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
 import { build } from "astro";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -14,6 +16,7 @@ import type {
 } from "../../packages/adapter/src/types.js";
 
 const fixtures = resolve(import.meta.dirname, "../fixtures");
+const runCommand = promisify(execFile);
 
 interface GeneratedHandler {
   handler(
@@ -146,9 +149,15 @@ describe.sequential("Astro artifact builds", () => {
         : "client/_astro/logo.source.svg";
     });
     expect(files).toEqual([
+      "client/404.html",
       "client/_astro/logo.source.svg",
       "client/_astro/logo.optimized.svg",
       "client/about/index.html",
+      "client/api/items/a.json",
+      "client/api/items/b.json",
+      "client/blog/a/index.html",
+      "client/blog/b/index.html",
+      "client/feed.xml",
       "client/index.html",
       "client/robots.txt",
       "yandex-cloud.json",
@@ -157,32 +166,75 @@ describe.sequential("Astro artifact builds", () => {
     expect(deployment).toMatchObject({
       schemaVersion: 1,
       target: "object-storage",
-      buildOutput: "static",
       base: "/docs",
-      artifacts: { client: { path: "client" } },
+      artifacts: {
+        client: { id: "client:primary", path: "client" },
+        functions: [],
+      },
       routes: {
         prerendered: [
-          { url: "/docs/", objectKey: "docs/index.html" },
-          { url: "/docs/about/", objectKey: "docs/about/index.html" },
+          {
+            kind: "page",
+            url: "/docs/",
+            objectKey: "docs/index.html",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "page",
+            url: "/docs/404/",
+            objectKey: "docs/404.html",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "page",
+            url: "/docs/about/",
+            objectKey: "docs/about/index.html",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "endpoint",
+            url: "/docs/api/items/a.json",
+            objectKey: "docs/api/items/a.json",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "endpoint",
+            url: "/docs/api/items/b.json",
+            objectKey: "docs/api/items/b.json",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "page",
+            url: "/docs/blog/a/",
+            objectKey: "docs/blog/a/index.html",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "page",
+            url: "/docs/blog/b/",
+            objectKey: "docs/blog/b/index.html",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "endpoint",
+            url: "/docs/feed.xml",
+            objectKey: "docs/feed.xml",
+            artifactId: "client:primary",
+          },
         ],
         onDemand: [],
+        notFound: [
+          {
+            scope: "/docs",
+            url: "/docs/404/",
+            objectKey: "docs/404.html",
+            artifactId: "client:primary",
+          },
+        ],
       },
     });
-    expect(
-      deployment.artifacts.client.files.find((file) => file.path === "robots.txt"),
-    ).toEqual({
-      path: "robots.txt",
-      url: "/docs/robots.txt",
-      objectKey: "docs/robots.txt",
-    });
-    const browserAssets = deployment.artifacts.client.files.filter((file) =>
-      file.path.startsWith("_astro/"),
-    );
-    expect(browserAssets.length).toBeGreaterThan(0);
-    for (const asset of browserAssets) {
-      expect(asset.url).toMatch(/^\/docs\/_astro\//);
-      expect(asset.objectKey).toMatch(/^docs\/_astro\//);
-    }
+    expect(deployment.artifacts.client).not.toHaveProperty("files");
+    expect(files).toContain("client/robots.txt");
   });
 
   it("emits a mixed client/function layout and deployment metadata", async () => {
@@ -196,38 +248,39 @@ describe.sequential("Astro artifact builds", () => {
     expect(deployment).toMatchObject({
       schemaVersion: 1,
       target: "object-storage-functions",
-      buildOutput: "server",
       base: "/",
       artifacts: {
         client: { path: "client" },
-        function: {
-          path: "function",
-          runtime: "nodejs22",
-          format: "esm",
-          entrypoint: "index.handler",
-          support: { sharp: "unsupported" },
-        },
+        functions: [
+          {
+            id: "function:shared",
+            path: "function",
+            runtime: "nodejs22",
+            entrypoint: "index.handler",
+            support: {
+              sharp: "unsupported",
+              runtimeImageTransformation: "unsupported",
+            },
+          },
+        ],
       },
     });
     expect(deployment.routes.prerendered).toEqual([
-      { url: "/", objectKey: "index.html" },
+      {
+        kind: "page",
+        url: "/",
+        objectKey: "index.html",
+        artifactId: "client:primary",
+      },
     ]);
     expect(deployment.routes.onDemand.map((route) => route.pattern)).toEqual(
       expect.arrayContaining(["/runtime"]),
     );
-    expect(
-      deployment.artifacts.client.files.find((file) => file.path === "public.txt"),
-    ).toEqual({
-      path: "public.txt",
-      url: "/public.txt",
-      objectKey: "public.txt",
-    });
-    const browserAsset = deployment.artifacts.client.files.find((file) =>
-      file.path.startsWith("_astro/"),
+    expect(deployment.routes.onDemand.map((route) => route.pattern)).not.toEqual(
+      expect.arrayContaining(["/_image", "/_server-islands/[name]", "/404"]),
     );
-    expect(browserAsset).toBeDefined();
-    expect(browserAsset?.url).toMatch(/^\/_astro\//);
-    expect(browserAsset?.objectKey).toMatch(/^_astro\//);
+    expect(deployment.artifacts.client).not.toHaveProperty("files");
+    expect(files).toContain("client/public.txt");
   });
 
   it("omits a Function Artifact for a Static-only Build on the Object Storage + Cloud Functions Target", async () => {
@@ -250,13 +303,22 @@ describe.sequential("Astro artifact builds", () => {
     ]);
     expect(await manifest("static-functions")).toMatchObject({
       target: "object-storage-functions",
-      buildOutput: "static",
       base: "/",
-      artifacts: { client: { path: "client" } },
+      artifacts: { client: { path: "client" }, functions: [] },
       routes: {
         prerendered: [
-          { url: "/", objectKey: "index.html" },
-          { url: "/about/", objectKey: "about/index.html" },
+          {
+            kind: "page",
+            url: "/",
+            objectKey: "index.html",
+            artifactId: "client:primary",
+          },
+          {
+            kind: "page",
+            url: "/about/",
+            objectKey: "about/index.html",
+            artifactId: "client:primary",
+          },
         ],
         onDemand: [],
       },
@@ -379,26 +441,19 @@ describe.sequential("Astro artifact builds", () => {
     expect(deployment.base).toBe("/docs");
     expect(deployment.routes.prerendered).toEqual([
       {
+        kind: "page",
         url: "/docs/prerendered/",
         objectKey: "docs/prerendered/index.html",
+        artifactId: "client:primary",
       },
     ]);
     expect(deployment.routes.onDemand.map((route) => route.pattern)).toEqual(
       expect.arrayContaining(["/docs/_actions/[...path]"]),
     );
-    expect(
-      deployment.artifacts.client.files.find((file) => file.path === "public.txt"),
-    ).toEqual({
-      path: "public.txt",
-      url: "/docs/public.txt",
-      objectKey: "docs/public.txt",
-    });
-    const browserAsset = deployment.artifacts.client.files.find((file) =>
-      file.path.startsWith("_astro/"),
+    expect(deployment.artifacts.client).not.toHaveProperty("files");
+    expect(await layout(join(fixtures, "actions/dist/client"))).toContain(
+      "public.txt",
     );
-    expect(browserAsset).toBeDefined();
-    expect(browserAsset?.url).toMatch(/^\/docs\/_astro\//);
-    expect(browserAsset?.objectKey).toMatch(/^docs\/_astro\//);
     expect(JSON.stringify(deployment)).not.toContain("/docs/docs/");
   });
 
@@ -470,7 +525,13 @@ describe.sequential("Astro artifact builds", () => {
   it("discovers and executes an integration-injected route", async () => {
     const deployment = await manifest("mixed");
     expect(deployment.routes.onDemand).toEqual(
-      expect.arrayContaining([{ pattern: "/injected/[name]" }]),
+      expect.arrayContaining([
+        {
+          kind: "endpoint",
+          pattern: "/injected/[name]",
+          artifactId: "function:shared",
+        },
+      ]),
     );
 
     const response = await generatedHandler.handler(
@@ -487,15 +548,29 @@ describe.sequential("Astro artifact builds", () => {
   it("emits and executes a Function Artifact for a server island", async () => {
     const deployment = await manifest("server-island");
     expect(deployment).toMatchObject({
-      buildOutput: "server",
       artifacts: {
         client: { path: "client" },
-        function: { path: "function" },
+        functions: [{ path: "function" }],
       },
-      routes: { prerendered: [{ url: "/", objectKey: "index.html" }] },
+      routes: {
+        prerendered: [
+          {
+            kind: "page",
+            url: "/",
+            objectKey: "index.html",
+            artifactId: "client:primary",
+          },
+        ],
+      },
     });
     expect(deployment.routes.onDemand).toEqual(
-      expect.arrayContaining([{ pattern: "/_server-islands/[name]" }]),
+      expect.arrayContaining([
+        {
+          kind: "page",
+          pattern: "/_server-islands/[name]",
+          artifactId: "function:shared",
+        },
+      ]),
     );
 
     const page = await readFile(
@@ -708,10 +783,12 @@ describe.sequential("Astro artifact builds", () => {
     const deployment = await manifest("server");
     expect(deployment).toMatchObject({
       target: "object-storage-functions",
-      buildOutput: "server",
+      artifacts: { functions: [{ id: "function:shared" }] },
     });
     expect(deployment.routes.onDemand).toEqual(
-      expect.arrayContaining([{ pattern: "/" }]),
+      expect.arrayContaining([
+        { kind: "page", pattern: "/", artifactId: "function:shared" },
+      ]),
     );
 
     const entrypoint = await generatedFixtureHandler("server", "server=1");
@@ -729,8 +806,11 @@ describe.sequential("Astro artifact builds", () => {
         root: `${join(fixtures, "rejected-external")}/`,
         logLevel: "silent",
       }),
-    ).rejects.toThrow(
-      /bundle.*cannot externalize runtime packages: nanoid.*dependencyStrategy: "install"/,
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(
+        /bundle.*cannot externalize runtime packages: nanoid.*dependencyStrategy: "install"/,
+      ),
     );
   });
 
@@ -740,8 +820,11 @@ describe.sequential("Astro artifact builds", () => {
         root: `${join(fixtures, "rejected-unresolved")}/`,
         logLevel: "silent",
       }),
-    ).rejects.toThrow(
-      /bundle.*unresolved runtime package imports in the Function Artifact: missing-runtime-package\. Bundle.*dependencyStrategy: "install"/,
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(
+        /bundle.*unresolved runtime package imports in the Function Artifact: missing-runtime-package\. Bundle.*dependencyStrategy: "install"/,
+      ),
     );
   });
 
@@ -751,8 +834,11 @@ describe.sequential("Astro artifact builds", () => {
         root: `${join(fixtures, "rejected-dynamic")}/`,
         logLevel: "silent",
       }),
-    ).rejects.toThrow(
-      /unresolved dynamic or native runtime dependency resolution.*Bundle a fixed package import.*dependencyStrategy: "install"/,
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(
+        /unresolved dynamic or native runtime dependency resolution.*Bundle a fixed package import.*dependencyStrategy: "install"/,
+      ),
     );
   });
 
@@ -762,8 +848,11 @@ describe.sequential("Astro artifact builds", () => {
         root: `${join(fixtures, "rejected-dynamic-import")}/`,
         logLevel: "silent",
       }),
-    ).rejects.toThrow(
-      /unresolved dynamic or native runtime dependency resolution.*Bundle a fixed package import.*dependencyStrategy: "install"/,
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(
+        /unresolved dynamic or native runtime dependency resolution.*Bundle a fixed package import.*dependencyStrategy: "install"/,
+      ),
     );
   });
 
@@ -773,14 +862,22 @@ describe.sequential("Astro artifact builds", () => {
         root: `${join(fixtures, "rejected-native")}/`,
         logLevel: "silent",
       }),
-    ).rejects.toThrow(/native runtime dependency.*dependencyStrategy: "install"/);
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(
+        /native runtime dependency.*dependencyStrategy: "install"/,
+      ),
+    );
   });
 
   it("rejects an Object Storage build containing an on-demand route", async () => {
     await expect(
       build({ root: `${join(fixtures, "rejected")}/`, logLevel: "silent" }),
-    ).rejects.toThrow(
-      /object-storage target cannot serve on-demand routes: \/.*Use target "object-storage-functions" or prerender these routes/,
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(
+        /object-storage target cannot serve on-demand routes: \/.*Use target "object-storage-functions" or prerender these routes/,
+      ),
     );
   });
 
@@ -790,12 +887,15 @@ describe.sequential("Astro artifact builds", () => {
         root: `${join(fixtures, "rejected-injected")}/`,
         logLevel: "silent",
       }),
-    ).rejects.toThrow(
-      /object-storage target cannot serve on-demand routes: \/injected\/\[name\].*Use target "object-storage-functions" or prerender these routes/,
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(
+        /object-storage target cannot serve on-demand routes: \/injected\/\[name\].*Use target "object-storage-functions" or prerender these routes/,
+      ),
     );
   });
 
-  it("keeps runtime package imports for the install dependency strategy", async () => {
+  it("installs and runs an external dependency from a clean Function Artifact", async () => {
     await build({
       root: `${join(fixtures, "install-basic")}/`,
       logLevel: "silent",
@@ -812,13 +912,86 @@ describe.sequential("Astro artifact builds", () => {
         .map((file) => readFile(join(functionDirectory, file), "utf8")),
     );
     expect(sources.some((source) => source.includes('from "nanoid"'))).toBe(true);
-  });
+
+    const isolated = await mkdtemp(join(tmpdir(), "astro-yandex-install-"));
+    try {
+      await cp(functionDirectory, isolated, { recursive: true });
+      await runCommand("npm", ["ci", "--production", "--no-audit", "--no-fund"], {
+        cwd: isolated,
+        timeout: 120_000,
+      });
+      const installed = (await import(
+        `${pathToFileURL(join(isolated, "index.js")).href}?installed=1`
+      )) as GeneratedHandler;
+      const response = await installed.handler(
+        directHttpEvent({ path: "/api/id", headers: { host: "install.example" } }),
+        invocationContext(),
+      );
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body)).toMatchObject({ alphabetLength: 64 });
+    } finally {
+      await rm(isolated, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("packages and executes Sharp with the install strategy", async () => {
+    await build({
+      root: `${join(fixtures, "install-sharp")}/`,
+      logLevel: "silent",
+    });
+
+    const functionDirectory = join(fixtures, "install-sharp/dist/function");
+    const packageJson = JSON.parse(
+      await readFile(join(functionDirectory, "package.json"), "utf8"),
+    ) as { dependencies: Record<string, string> };
+    const lockfile = JSON.parse(
+      await readFile(join(functionDirectory, "package-lock.json"), "utf8"),
+    ) as { packages: Record<string, { version?: string }> };
+    expect(packageJson.dependencies.sharp).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(lockfile.packages["node_modules/sharp"]?.version).toBe(
+      packageJson.dependencies.sharp,
+    );
+    expect(
+      (await manifest("install-sharp")).artifacts.functions[0]?.support,
+    ).toEqual({
+      sharp: "experimental",
+      runtimeImageTransformation: "experimental",
+    });
+
+    const isolated = await mkdtemp(join(tmpdir(), "astro-yandex-sharp-"));
+    try {
+      await cp(functionDirectory, isolated, { recursive: true });
+      await runCommand("npm", ["ci", "--production", "--no-audit", "--no-fund"], {
+        cwd: isolated,
+        timeout: 120_000,
+      });
+      const installed = (await import(
+        `${pathToFileURL(join(isolated, "index.js")).href}?installed=sharp`
+      )) as GeneratedHandler;
+      const response = await installed.handler(
+        directHttpEvent({
+          path: "/api/resize",
+          headers: { host: "install-sharp.example" },
+        }),
+        invocationContext(),
+      );
+      expect(response.statusCode).toBe(200);
+      const resized = JSON.parse(response.body) as { bytes: number };
+      expect(resized.bytes).toBeGreaterThan(0);
+    } finally {
+      await rm(isolated, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   it("emits exact package metadata and a deterministic lockfile for the install strategy", async () => {
     const fixtureRoot = `${join(fixtures, "install-basic")}/`;
     const functionDirectory = join(fixtures, "install-basic/dist/function");
 
     await build({ root: fixtureRoot, logLevel: "silent" });
+    expect((await manifest("install-basic")).modifiers).toEqual({
+      apiGateway: false,
+      dependencyStrategy: "install",
+    });
     const packageJsonRaw = await readFile(
       join(functionDirectory, "package.json"),
       "utf8",
@@ -900,12 +1073,12 @@ describe.sequential("Astro artifact builds", () => {
     }
 
     expect(failure).toBeInstanceOf(Error);
-    const message = (failure as Error).message;
+    const message = (failure as Error & { cause: Error }).cause.message;
     expect(message).toContain(
       "object-storage target cannot serve on-demand routes",
     );
     expect(message).toContain("/_server-islands/[name]");
-    expect(message).toContain("/_image");
+    expect(message).not.toContain("/_image");
     expect(message).toContain(
       'Use target "object-storage-functions" or prerender these routes.',
     );

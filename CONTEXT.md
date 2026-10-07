@@ -47,7 +47,7 @@ _Avoid_: Route infrastructure
 The concrete Yandex Cloud service within the selected Target that serves a Serving Artifact: Object Storage for a Client Artifact, Cloud Functions for a Function Artifact, or Serverless Containers for a Container Artifact. This names a service, not the Target of the whole build.
 
 **Deployment Manifest**:
-A schema-versioned, machine-readable declaration of emitted Serving Artifacts and their runtime and request-routing requirements. The selected Target describes the build; the planned revised contract also records Target Modifier provenance, without guessed deployer policy, commands, resource handles, or permission to allocate cloud resources.
+A schema-versioned, machine-readable declaration of emitted Serving Artifacts and their runtime and request-routing requirements. It records the selected Target and Target Modifier provenance, without guessed deployer policy, commands, resource handles, or permission to allocate cloud resources.
 _Avoid_: Build metadata, deployment configuration
 
 **API Gateway Specification Template**:
