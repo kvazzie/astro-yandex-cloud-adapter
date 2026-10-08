@@ -14,12 +14,13 @@ const registry = "https://registry.npmjs.org";
 const { values } = parseArgs({
   options: {
     "candidate-report": { type: "string" },
+    "source-commit": { type: "string" },
     report: { type: "string", default: ".artifacts/registry-check.json" },
   },
 });
 assert(
   values["candidate-report"],
-  "Usage: node scripts/verify-registry.mjs --candidate-report <publication package-check.json> [--report <json>]",
+  "Usage: node scripts/verify-registry.mjs --candidate-report <publication package-check.json> --source-commit <approved SHA> [--report <json>]",
 );
 const candidatePath = resolve(values["candidate-report"]);
 const report = resolve(values.report);
@@ -29,6 +30,12 @@ assert.notEqual(
   "The registry report must not overwrite publication evidence.",
 );
 await rm(report, { force: true });
+const sourceCommit = values["source-commit"] ?? "";
+assert.match(
+  sourceCommit,
+  /^[a-f0-9]{40}$/,
+  "Registry verification requires the full approved --source-commit SHA.",
+);
 const candidate = JSON.parse(await readFile(candidatePath, "utf8"));
 assert.equal(candidate.name, name);
 assert.match(candidate.version, /^0\.1\.0-beta\.[1-9]\d*$/);
@@ -43,6 +50,7 @@ delete env.NPM_TOKEN;
 delete env.NODE_PATH;
 delete env.NODE_OPTIONS;
 
+/** Run a public registry operation without publication credentials and report failures. */
 async function command(file, args) {
   try {
     return await run(file, args, {
@@ -122,12 +130,15 @@ try {
     "--report",
     validationPath,
     "--registry",
+    "--source-commit",
+    sourceCommit,
   ]);
   process.stdout.write(stdout);
   const validation = JSON.parse(await readFile(validationPath, "utf8"));
   assert.equal(validation.name, name);
   assert.equal(validation.version, candidate.version);
   assert.equal(validation.sha512, candidate.sha512);
+  assert.equal(validation.sourceCommit, sourceCommit);
   // The archive is temporary. Retain its identity and the clean-install results.
   delete validation.tarball;
   await mkdir(dirname(report), { recursive: true });

@@ -22,8 +22,59 @@ const checker = resolve("scripts/validate-pack.mjs");
 let root: string;
 let candidate: string;
 let astroVersion: string;
+let npmExecutable: string;
+const sourceCommit = "a".repeat(40);
+
+/** Model npm's already-verified SLSA v1 output for a publication source. */
+function verifiedProvenance({
+  repository = "https://github.com/kvazzie/astro-yandex-cloud-adapter",
+  path = ".github/workflows/release.yml",
+  commit = sourceCommit,
+  dependencyRepository = repository,
+  ref = "refs/heads/main",
+}: {
+  repository?: string;
+  path?: string;
+  commit?: string;
+  dependencyRepository?: string;
+  ref?: string;
+} = {}) {
+  const predicateType = "https://slsa.dev/provenance/v1";
+  const statement = {
+    predicateType,
+    predicate: {
+      buildDefinition: {
+        buildType:
+          "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+        externalParameters: { workflow: { repository, path, ref } },
+        resolvedDependencies: [
+          {
+            uri: `git+${dependencyRepository}@${ref}`,
+            digest: { gitCommit: commit },
+          },
+        ],
+      },
+    },
+  };
+  return {
+    name: "@astro-yandex-cloud/adapter",
+    version: "0.0.0-package-check",
+    attestations: { provenance: { predicateType } },
+    attestationBundles: [
+      {
+        predicateType,
+        bundle: {
+          dsseEnvelope: {
+            payload: Buffer.from(JSON.stringify(statement)).toString("base64"),
+          },
+        },
+      },
+    ],
+  };
+}
 
 beforeAll(async () => {
+  npmExecutable = (await run("which", ["npm"])).stdout.trim();
   const require = createRequire(import.meta.url);
   astroVersion = (
     JSON.parse(await readFile(require.resolve("astro/package.json"), "utf8")) as {
@@ -69,9 +120,57 @@ it.each([
     title: "missing verified registry provenance",
     message: "npm did not verify provenance",
   },
+  {
+    title: "provenance from another repository",
+    provenance: verifiedProvenance({
+      repository: "https://github.com/unapproved/repository",
+    }),
+    message: "Verified provenance does not match",
+  },
+  {
+    title: "provenance from another workflow",
+    provenance: verifiedProvenance({ path: ".github/workflows/unapproved.yml" }),
+    message: "Verified provenance does not match",
+  },
+  {
+    title: "provenance from another commit",
+    provenance: verifiedProvenance({ commit: "b".repeat(40) }),
+    message: "Verified provenance does not match",
+  },
+  {
+    title: "a commit from a different dependency repository",
+    provenance: verifiedProvenance({
+      dependencyRepository: "https://github.com/unapproved/repository",
+    }),
+    message: "Verified provenance does not match",
+  },
+  {
+    title: "provenance from another ref",
+    provenance: verifiedProvenance({ ref: "refs/heads/unapproved" }),
+    message: "Verified provenance does not match",
+  },
+  {
+    title: "missing verified provenance bundles",
+    provenance: { ...verifiedProvenance(), attestationBundles: [] },
+    message: "Verified provenance does not match",
+  },
+  {
+    title: "unsupported provenance format",
+    provenance: {
+      ...verifiedProvenance(),
+      attestationBundles: [{ predicateType: "https://slsa.dev/provenance/v0.2" }],
+    },
+    message: "Verified provenance does not match",
+  },
+  {
+    title: "an approved publication source",
+    provenance: verifiedProvenance(),
+    succeeds: true,
+    message: "",
+  },
 ])(
-  "rejects $title before trusting a registry installation",
-  async ({ integrity, message }) => {
+  "checks $title before trusting a registry installation",
+  async ({ integrity, provenance, succeeds, message }) => {
     const bin = await mkdtemp(join(root, "registry-command-"));
     const expectedIntegrity = `sha512-${createHash("sha512")
       .update(await readFile(candidate))
@@ -81,34 +180,70 @@ it.each([
       fakeNpm,
       `#!${process.execPath}
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
 const args = process.argv.slice(2);
+function forward() {
+  const result = spawnSync(${JSON.stringify(npmExecutable)}, args, { stdio: "inherit" });
+  assert.equal(result.status, 0);
+}
 if (args[0] === "install") {
   assert(args.includes("--registry=https://registry.npmjs.org"));
-  await writeFile("package-lock.json", JSON.stringify({ packages: {
+  let lock;
+  if (${String(succeeds ?? false)}) {
+    const pkg = JSON.parse(await readFile("package.json", "utf8"));
+    pkg.dependencies["@astro-yandex-cloud/adapter"] = "file:./candidate.tgz";
+    await writeFile("package.json", JSON.stringify(pkg));
+    forward();
+    lock = JSON.parse(await readFile("package-lock.json", "utf8"));
+    lock.packages["node_modules/@astro-yandex-cloud/adapter"].integrity = ${JSON.stringify(expectedIntegrity)};
+  } else lock = { packages: {
     "node_modules/@astro-yandex-cloud/adapter": {
       version: "0.0.0-package-check", integrity: ${JSON.stringify(integrity ?? expectedIntegrity)}
     }
-  } }));
-} else {
+  } };
+  await writeFile("package-lock.json", JSON.stringify(lock));
+} else if (args[0] === "audit") {
   assert.deepEqual(args, ["audit", "signatures", "--json", "--include-attestations", "--registry=https://registry.npmjs.org"]);
-  console.log(JSON.stringify({ invalid: [], missing: [], verified: [] }));
-}
+  console.log(JSON.stringify({ invalid: [], missing: [], verified: ${JSON.stringify(provenance ? [provenance] : [])} }));
+} else forward();
 `,
     );
     await chmod(fakeNpm, 0o755);
     const report = join(bin, "registry-validation.json");
     await writeFile(report, '{"stale":true}');
-    await expect(
-      run(
-        process.execPath,
-        [checker, candidate, "--registry", "--report", report],
-        {
-          env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
-        },
-      ),
-    ).rejects.toThrow(message);
-    await expect(readFile(report)).rejects.toHaveProperty("code", "ENOENT");
+    const check = run(
+      process.execPath,
+      [
+        checker,
+        candidate,
+        "--registry",
+        "--source-commit",
+        sourceCommit,
+        "--report",
+        report,
+      ],
+      {
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+      },
+    );
+    if (succeeds) {
+      await check;
+      expect(JSON.parse(await readFile(report, "utf8"))).toMatchObject({
+        sourceCommit,
+        checks: [
+          "exports",
+          "object-storage:/",
+          "object-storage:/docs",
+          "object-storage-functions:static:/docs",
+          "object-storage-functions:bundle:/docs",
+          "object-storage-functions:install:/docs",
+        ],
+      });
+    } else {
+      await expect(check).rejects.toThrow(message);
+      await expect(readFile(report)).rejects.toHaveProperty("code", "ENOENT");
+    }
   },
 );
 

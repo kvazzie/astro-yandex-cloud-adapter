@@ -67,13 +67,18 @@ trusted publishing, and recovery.
 
 ## Registry verification
 
-After publication, run `pnpm release:verify --candidate-report <package-check.json>`
-with the report retained by the approved publish job. This fetches the exact
+After publication, run `pnpm release:verify --candidate-report <package-check.json> --source-commit <approved-publication-SHA>`
+with the report retained by the approved publish job and that run's full 40-character
+source SHA, not the current checkout HEAD. This fetches the exact
 version from the public npm registry and checks its `beta` tag, absence from
 `latest`, advertised provenance and SHA-512 identity against the publication
 candidate. It then installs the registry version in a clean application, checks
 the installed archive integrity, verifies npm signatures and provenance, and
-runs the same build, handler, Manifest and preview scenarios.
+requires its verified SLSA v1 provenance to identify
+`kvazzie/astro-yandex-cloud-adapter`, `.github/workflows/release.yml` on `main`,
+and that approved commit. npm verifies the signed subject digest; this source
+check does not establish a reproducible build. It then runs the same build,
+handler, Manifest and preview scenarios.
 
 The read-only `registry-verification` job runs this after publication and retains
 `registry-check.json`. It has no protected environment, publication secret or

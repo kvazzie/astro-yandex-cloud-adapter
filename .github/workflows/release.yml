@@ -93,7 +93,7 @@ jobs:
           name: publication-candidate
           path: .artifacts
       - name: Verify the registry package in a clean application
-        run: pnpm release:verify --candidate-report .artifacts/package-check.json
+        run: pnpm release:verify --candidate-report .artifacts/package-check.json --source-commit "$GITHUB_SHA"
       - name: Retain registry verification evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

@@ -10,6 +10,7 @@ import { expect, it } from "vitest";
 const run = promisify(execFile);
 const name = "@astro-yandex-cloud/adapter";
 const version = "0.1.0-beta.1";
+const sourceCommit = "a".repeat(40);
 const bytes = Buffer.from("the approved publication candidate");
 const sha512 = createHash("sha512").update(bytes).digest("hex");
 const metadata = {
@@ -71,9 +72,10 @@ if (basename(process.argv[1]) === "pnpm") {
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 assert(process.argv.includes("--registry"));
+assert.equal(process.argv[process.argv.indexOf("--source-commit") + 1], ${JSON.stringify(sourceCommit)});
 if (${String(change.validationFails ?? false)}) throw new Error("Consumer preview failed");
 await writeFile(process.argv[process.argv.indexOf("--report") + 1], JSON.stringify({
-  name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)}, sha512: ${JSON.stringify(sha512)},
+  name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)}, sha512: ${JSON.stringify(sha512)}, sourceCommit: ${JSON.stringify(sourceCommit)},
   tarball: process.argv[2], checks: ["exports", "object-storage:/", "object-storage-functions:bundle:/docs"],
   provenance: { name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)} }
 }));
@@ -82,7 +84,7 @@ await writeFile(process.argv[process.argv.indexOf("--report") + 1], JSON.stringi
   return {
     report,
     candidate,
-    check: () =>
+    check: (commit: string | null = sourceCommit) =>
       run(
         process.execPath,
         [
@@ -91,6 +93,7 @@ await writeFile(process.argv[process.argv.indexOf("--report") + 1], JSON.stringi
           candidate,
           "--report",
           report,
+          ...(commit ? ["--source-commit", commit] : []),
         ],
         {
           env: {
@@ -118,6 +121,7 @@ it("records registry identity, tags, provenance and clean-application results fo
       name,
       version,
       sha512,
+      sourceCommit,
       registry: "https://registry.npmjs.org",
       distTags: { beta: version },
       checks: [
@@ -138,6 +142,24 @@ it("records registry identity, tags, provenance and clean-application results fo
     await fixture.cleanup();
   }
 });
+
+it.each([null, "abc123"])(
+  "requires a full approved source commit (%s)",
+  async (commit) => {
+    const fixture = await scenario();
+    try {
+      await expect(fixture.check(commit)).rejects.toThrow(
+        "requires the full approved --source-commit SHA",
+      );
+      await expect(readFile(fixture.report)).rejects.toHaveProperty(
+        "code",
+        "ENOENT",
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
 
 it.each([
   {
