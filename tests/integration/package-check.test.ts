@@ -289,6 +289,7 @@ it.each(["minimum", "workspace"])(
   300_000,
 );
 
+/** Repack a private copy after applying the corruption required by a rejection case. */
 async function brokenCandidate(change: (directory: string) => Promise<void>) {
   const staging = await mkdtemp(join(root, "broken-"));
   await cp(join(root, "package"), join(staging, "package"), { recursive: true });

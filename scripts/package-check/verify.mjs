@@ -41,7 +41,11 @@ const declaredDependencies = new Set([
   name,
 ]);
 
-// Audit even imports masked by an app dependency or a package's transitive deps.
+/**
+ * Reject package imports absent from the candidate's declared dependencies,
+ * including imports that the clean application's dependencies would mask.
+ * @param {string} specifier Import or export source found in a packed file.
+ */
 function checkSpecifier(specifier) {
   if (
     specifier.startsWith(".") ||
@@ -65,6 +69,11 @@ for (const file of await readdir(join(packageRoot, "dist"), { recursive: true })
     ts.ScriptTarget.Latest,
     true,
   );
+  /**
+   * Walk a packed file's syntax tree and audit static imports, exports,
+   * import types, and literal dynamic imports or require calls.
+   * @param {import("typescript").Node} node Syntax node in the current file.
+   */
   function visit(node) {
     let specifier;
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
@@ -201,6 +210,11 @@ assert(
 );
 const checks = ["exports", "manifest-contract"];
 
+/**
+ * Reject build and home paths in emitted files after excluding the documented
+ * Astro-owned metadata records from the diagnostic scan.
+ * @param {string} directory Completed build output to scan recursively.
+ */
 async function portableOutput(directory) {
   for (const file of await readdir(directory, { recursive: true })) {
     const path = join(directory, file);
@@ -259,6 +273,11 @@ const context = {
   getPayload: () => undefined,
   getRemainingTimeInMillis: () => 30_000,
 };
+/**
+ * Build a JSON Action submission with the origin and session cookie exercised
+ * by the generated handler and preview checks.
+ * @param {string} origin Application origin used for Astro's origin check.
+ */
 function actionRequest(origin) {
   return {
     method: "POST",
@@ -277,6 +296,12 @@ const actionResult = [
   "active",
 ];
 
+/**
+ * Build a clean application with the installed candidate, validate its Manifest
+ * and portable output, and exercise its generated handler and preview server.
+ * @param {{ id: string, target: string, base: string, strategy?: string }} scenario
+ * Static or runtime scenario recorded in the candidate's validation report.
+ */
 async function checkApplication({ id, target, base, strategy }) {
   const runtime = Boolean(strategy);
   const application = join(root, `application with spaces-${checks.length}`);

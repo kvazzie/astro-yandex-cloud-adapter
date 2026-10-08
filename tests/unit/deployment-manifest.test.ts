@@ -6,6 +6,7 @@ import schema from "../../packages/adapter/.generated/deployment-manifest.schema
 
 const validateSchema = new Ajv2020().compile(schema);
 
+/** Create fresh static deployment facts that individual rejection cases can mutate. */
 function staticManifest() {
   return {
     schemaVersion: 1,
@@ -32,6 +33,7 @@ function staticManifest() {
   };
 }
 
+/** Add one endpoint and its Function Artifact without optional support claims. */
 function functionManifest() {
   const value = staticManifest();
   value.target = "object-storage-functions";
