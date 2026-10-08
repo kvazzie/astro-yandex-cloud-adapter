@@ -32,6 +32,23 @@ function staticManifest() {
   };
 }
 
+function functionManifest() {
+  const value = staticManifest();
+  value.target = "object-storage-functions";
+  value.artifacts.functions.push({
+    id: "function:shared",
+    path: "function",
+    runtime: "nodejs22",
+    entrypoint: "index.handler",
+  });
+  value.routes.onDemand.push({
+    kind: "endpoint",
+    pattern: "/docs/api/ping",
+    artifactId: "function:shared",
+  });
+  return value;
+}
+
 describe("Deployment Manifest consumers", () => {
   it("accepts v1 with additive fields at every depth", () => {
     const value = {
@@ -45,24 +62,53 @@ describe("Deployment Manifest consumers", () => {
     expect(validateSchema(value)).toBe(true);
   });
 
-  it("accepts a Function Artifact referenced by an endpoint", () => {
-    const value = staticManifest();
-    value.target = "object-storage-functions";
-    value.artifacts.functions.push({
-      id: "function:shared",
-      path: "function",
-      runtime: "nodejs22",
-      entrypoint: "index.handler",
-      support: { sharp: "unsupported", runtimeImageTransformation: "unsupported" },
-    });
-    value.routes.onDemand.push({
-      kind: "endpoint",
-      pattern: "/docs/api/ping",
-      artifactId: "function:shared",
+  it("accepts a Function Artifact without support claims referenced by an endpoint", () => {
+    const value = functionManifest();
+
+    expect(parseDeploymentManifest(value)).toEqual(value);
+    expect(validateSchema(value)).toBe(true);
+  });
+
+  it("accepts additive Function Artifact fields without interpreting support claims", () => {
+    const value = functionManifest();
+    Object.assign(value.artifacts.functions[0]!, {
+      futureRuntimeFact: true,
+      support: { sharp: "legacy" },
     });
 
     expect(parseDeploymentManifest(value)).toEqual(value);
     expect(validateSchema(value)).toBe(true);
+  });
+
+  it.each(["runtime", "entrypoint"])(
+    "requires a Function Artifact %s in parser and JSON Schema",
+    (field) => {
+      const value = functionManifest();
+      delete value.artifacts.functions[0]![field];
+
+      expect(() => parseDeploymentManifest(value)).toThrow(TypeError);
+      expect(validateSchema(value)).toBe(false);
+    },
+  );
+
+  it.each([
+    ["runtime", "nodejs20"],
+    ["entrypoint", "missing.handler"],
+  ])("rejects an invalid Function Artifact %s", (field, invalid) => {
+    const value = functionManifest();
+    value.artifacts.functions[0]![field] = invalid;
+
+    expect(() => parseDeploymentManifest(value)).toThrow(TypeError);
+    expect(validateSchema(value)).toBe(false);
+  });
+
+  it("rejects an endpoint without a matching Function Artifact", () => {
+    const value = functionManifest();
+    value.routes.onDemand[0]!.artifactId = "function:missing";
+
+    expect(() => parseDeploymentManifest(value)).toThrow(
+      /no matching Function Artifact/,
+    );
   });
 
   it.each([
@@ -121,7 +167,6 @@ describe("Deployment Manifest consumers", () => {
       path: "function",
       runtime: "nodejs22",
       entrypoint: "index.handler",
-      support: { sharp: "unsupported", runtimeImageTransformation: "unsupported" },
     });
 
     expect(() => parseDeploymentManifest(value)).toThrow(/duplicate artifact ID/);
@@ -134,7 +179,6 @@ describe("Deployment Manifest consumers", () => {
       path: "function",
       runtime: "nodejs22",
       entrypoint: "index.handler",
-      support: { sharp: "unsupported", runtimeImageTransformation: "unsupported" },
     });
 
     expect(() => parseDeploymentManifest(value)).toThrow(/Object Storage Target/);

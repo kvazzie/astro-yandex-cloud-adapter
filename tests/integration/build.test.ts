@@ -312,14 +312,11 @@ describe.sequential("Astro artifact builds", () => {
             path: "function",
             runtime: "nodejs22",
             entrypoint: "index.handler",
-            support: {
-              sharp: "unsupported",
-              runtimeImageTransformation: "unsupported",
-            },
           },
         ],
       },
     });
+    expect(deployment.artifacts.functions[0]).not.toHaveProperty("support");
     expect(deployment.routes.prerendered).toEqual([
       {
         kind: "page",
@@ -1007,11 +1004,8 @@ describe.sequential("Astro artifact builds", () => {
       packageJson.dependencies.sharp,
     );
     expect(
-      (await manifest("install-sharp")).artifacts.functions[0]?.support,
-    ).toEqual({
-      sharp: "experimental",
-      runtimeImageTransformation: "experimental",
-    });
+      (await manifest("install-sharp")).artifacts.functions[0],
+    ).not.toHaveProperty("support");
 
     const isolated = await mkdtemp(join(tmpdir(), "astro-yandex-sharp-"));
     try {

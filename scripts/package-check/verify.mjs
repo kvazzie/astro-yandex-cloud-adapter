@@ -84,6 +84,36 @@ for (const file of await readdir(join(packageRoot, "dist"), { recursive: true })
   visit(source);
 }
 
+const minimalFunctionManifest = {
+  schemaVersion: 1,
+  adapter: { version: candidate.version },
+  target: "object-storage-functions",
+  modifiers: { apiGateway: false },
+  base: "/docs",
+  artifacts: {
+    client: { id: "client:primary", path: "client" },
+    functions: [
+      {
+        id: "function:shared",
+        path: "function",
+        runtime: "nodejs22",
+        entrypoint: "index.handler",
+      },
+    ],
+  },
+  routes: {
+    prerendered: [],
+    onDemand: [
+      {
+        kind: "endpoint",
+        pattern: "/docs/api/ping",
+        artifactId: "function:shared",
+      },
+    ],
+    notFound: [],
+  },
+};
+
 let typeProbe = "";
 for (const [subpath, entry] of Object.entries(candidate.exports)) {
   const specifier = subpath === "." ? name : `${name}${subpath.slice(1)}`;
@@ -123,8 +153,8 @@ adapter(options);
 export function useTypes(runtime: Runtime, result: Result): [YandexCloudRuntime, YandexCloudHttpResult, YandexCloudHttpEvent, YandexCloudInvocationContext] {
   return [runtime, result, runtime.event, runtime.context];
 }
-const manifest: DeploymentManifestV1 = parseDeploymentManifest({});
-defineDeploymentManifest(manifest);
+const manifest: DeploymentManifestV1 = defineDeploymentManifest(${JSON.stringify(minimalFunctionManifest)});
+parseDeploymentManifest(manifest);
 `;
 await writeFile(join(root, "entrypoints.ts"), typeProbe);
 const program = ts.createProgram([join(root, "entrypoints.ts")], {
@@ -161,7 +191,15 @@ const schema = JSON.parse(
   ),
 );
 const validateManifest = new Ajv({ strict: false }).compile(schema);
-const checks = ["exports"];
+assert.deepEqual(
+  parseDeploymentManifest(minimalFunctionManifest),
+  minimalFunctionManifest,
+);
+assert(
+  validateManifest(minimalFunctionManifest),
+  JSON.stringify(validateManifest.errors),
+);
+const checks = ["exports", "manifest-contract"];
 
 async function portableOutput(directory) {
   for (const file of await readdir(directory, { recursive: true })) {
@@ -272,6 +310,12 @@ base: ${JSON.stringify(base)}, output: "${runtime ? "server" : "static"}", image
   assert.equal(manifest.target, target);
   assert.equal(manifest.base, base);
   assert.equal(manifest.artifacts.functions.length, runtime ? 1 : 0);
+  for (const artifact of manifest.artifacts.functions) {
+    assert(
+      !Object.hasOwn(artifact, "support"),
+      "Function Artifact emits support claims.",
+    );
+  }
   await access(join(output, manifest.artifacts.client.path));
   const prefix = base === "/" ? "" : base;
   for (const route of manifest.routes.prerendered) {
