@@ -183,6 +183,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 const args = process.argv.slice(2);
+/** Forward the fake npm process to the real CLI for commands outside this fixture. */
 function forward() {
   const result = spawnSync(${JSON.stringify(npmExecutable)}, args, { stdio: "inherit" });
   assert.equal(result.status, 0);
