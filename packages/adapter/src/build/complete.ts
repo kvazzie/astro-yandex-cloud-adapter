@@ -23,6 +23,7 @@ import type { BuildError } from "../target/module.js";
 import type { PartitionedFunctions } from "../function/partition.js";
 import { generateGatewayTemplate } from "./gateway.js";
 import { manifestRoutes, reconcileRoutes, type RoutePlan } from "./routes.js";
+import { hasRuntimeImageCalls } from "./runtime-image.js";
 
 function failure(_tag: BuildError["_tag"], error: unknown): BuildError {
   return {
@@ -128,6 +129,9 @@ async function inspectRoutes(
     trailingSlash: config.trailingSlash,
     hasServerIslands:
       hasFunction && (await hasServerIslandEntries(config.build.server)),
+    hasRuntimeImages:
+      hasFunction &&
+      (await hasRuntimeImageCalls(config.build.server, build.resolvedRoutes)),
   });
 }
 

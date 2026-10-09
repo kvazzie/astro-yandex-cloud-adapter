@@ -24,7 +24,9 @@ describe("adapter options and routes", () => {
   });
 
   it("rejects recursive 404 without Gateway", () => {
-    expect(() => yandexCloud({ recursive404: true })).toThrow(/recursive.*Gateway/i);
+    expect(() => yandexCloud({ recursive404: true })).toThrow(
+      /recursive.*Gateway/i,
+    );
   });
 
   it("rejects unknown targets", () => {

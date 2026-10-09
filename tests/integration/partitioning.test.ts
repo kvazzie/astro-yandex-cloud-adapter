@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
-import yandexCloud from "../../packages/adapter/dist/index.js";
+import yandexCloud from "./helpers/built-adapter.js";
 import { build, preview } from "astro";
 import { afterAll, describe, expect, it } from "vitest";
 
@@ -101,7 +101,8 @@ async function partitionBuild(
   ).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "EEXIST") throw error;
   });
-  const output = await mkdtemp(join(tmpdir(), "yandex-partition-build-"));
+  // Astro's build-time image service resolves native dependencies from the app.
+  const output = await mkdtemp(join(root, ".partition-output-"));
   temporaryDirectories.add(output);
   const { base, ...adapterOptions } = options;
   await build({

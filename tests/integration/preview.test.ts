@@ -189,6 +189,35 @@ describe.sequential("preview from an installed adapter tarball", () => {
     },
   );
 
+  it.each(["/", "/docs"])(
+    "previews the normal root custom 404 under %s without recursive mode",
+    async (base) => {
+      const { server, origin } = await startPreview(
+        "static",
+        "object-storage",
+        base,
+      );
+      const prefix = base === "/" ? "" : base;
+      try {
+        for (const path of ["/missing", "/404", "/404/"]) {
+          const response = await fetch(`${origin}${prefix}${path}`);
+          expect(response.status).toBe(404);
+          expect(await response.text()).toContain("Missing page");
+        }
+        const head = await fetch(`${origin}${prefix}/missing`, { method: "HEAD" });
+        expect(head.status).toBe(404);
+        expect(await head.text()).toBe("");
+        if (prefix)
+          expect(await (await fetch(`${origin}/outside`)).text()).toBe(
+            "Not Found",
+          );
+      } finally {
+        await server.stop();
+        await server.closed();
+      }
+    },
+  );
+
   it("previews nearest recursive 404 pages and explicit 404 URLs without a Function Artifact", async () => {
     const { server, origin } = await startPreview(
       "static",

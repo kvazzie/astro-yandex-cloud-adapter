@@ -58,5 +58,4 @@ export interface FunctionArtifactPolicy {
   allowedRoutes?: readonly string[];
   notFound?: Array<{ scope: string; url: string; file: string }>;
   artifactDirectory?: URL;
-  recursive404?: boolean;
 }

@@ -100,16 +100,19 @@ export function partitionFunctions(
           await mkdir(directory, { recursive: true });
           const keepServerIslands =
             originalPattern.startsWith("/_server-islands/");
-          const selected = prunePageModules(index, new Set([resolved.entrypoint]));
+          const components = new Set([resolved.entrypoint]);
+          const selected = prunePageModules(index, components);
           const source = keepServerIslands
-            ? selected
-            : pruneServerIslandLoaders(selected);
+            ? (selected ?? index)
+            : pruneServerIslandLoaders(selected ?? index);
           await writeFile(new URL("index.js", directory), source);
           await copyEmittedGraph(
             config.build.server,
             directory,
             source,
             keepServerIslands,
+            components,
+            selected !== undefined,
           );
         },
         catch: invalidArtifact,
@@ -262,7 +265,10 @@ function withoutBase(pattern: string, base: string): string {
 }
 
 /** Removes other page loaders while retaining all route metadata for precedence. */
-function prunePageModules(source: string, components: Set<string>): string {
+function prunePageModules(
+  source: string,
+  components: Set<string>,
+): string | undefined {
   const declarations = new Map<string, SyntaxNode>();
   const edits: Array<{ start: number; end: number; value: string }> = [];
   visitSyntax(parseModule(source), (node) => {
@@ -277,6 +283,7 @@ function prunePageModules(source: string, components: Set<string>): string {
   const pageMap = [...declarations.entries()].find(([name]) =>
     /^pageMap(?:\$\d+)?$/.test(name),
   )?.[1];
+  if (!pageMap) return undefined;
   const init = pageMap?.init;
   if (!isSyntaxNode(init) || !Array.isArray(init.arguments))
     throw new Error(
@@ -355,6 +362,8 @@ async function copyEmittedGraph(
   target: URL,
   index: string,
   keepServerIslands: boolean,
+  components: Set<string>,
+  foundPageMap: boolean,
 ): Promise<void> {
   const pending = localModuleReferences(index);
   const copied = new Set<string>(["index.js"]);
@@ -374,9 +383,11 @@ async function copyEmittedGraph(
     await mkdir(dirname(fileURLToPath(destination)), { recursive: true });
     if (/\.m?js$/.test(local)) {
       const originalSource = await readFile(original, "utf8");
+      const selected = prunePageModules(originalSource, components);
+      foundPageMap ||= selected !== undefined;
       const moduleSource = keepServerIslands
-        ? originalSource
-        : pruneServerIslandLoaders(originalSource);
+        ? (selected ?? originalSource)
+        : pruneServerIslandLoaders(selected ?? originalSource);
       await writeFile(destination, moduleSource);
       for (const reference of localModuleReferences(moduleSource)) {
         pending.push(
@@ -392,6 +403,10 @@ async function copyEmittedGraph(
       await copyFile(original, destination);
     }
   }
+  if (!foundPageMap)
+    throw new Error(
+      "Astro did not emit the expected route module map for separate Functions.",
+    );
 }
 
 /** Keeps artifact failures distinct from runtime dependency resolution failures. */

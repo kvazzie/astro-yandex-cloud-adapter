@@ -245,8 +245,7 @@ export function generateGatewayTemplate(
       responses: {
         "200": {
           description: "Prerendered response.",
-          ...(recursive404 &&
-          manifest.routes.notFound.some(({ url }) => url === route.url)
+          ...(manifest.routes.notFound.some(({ url }) => url === route.url)
             ? { "x-yc-status-mapping": 404 }
             : {}),
         },

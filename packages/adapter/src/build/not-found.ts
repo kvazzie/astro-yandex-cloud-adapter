@@ -32,7 +32,6 @@ export async function prepareNotFoundArtifacts(
     };
     if (pageFunctions.has(artifact.id) && scopes.length) {
       policy.notFound = [];
-      policy.recursive404 = recursive404;
       await mkdir(new URL(".yandex/404/", artifact.directory), {
         recursive: true,
       });

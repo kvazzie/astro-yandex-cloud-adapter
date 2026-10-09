@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { build } from "astro";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import yandexCloud from "../../packages/adapter/dist/index.js";
+import yandexCloud from "./helpers/built-adapter.js";
 
 import type { YandexCloudHttpResult } from "../../packages/adapter/src/runtime.js";
 import type {

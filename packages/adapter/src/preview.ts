@@ -13,6 +13,7 @@ import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 
 import { parseDeploymentManifest } from "./deployment-manifest.js";
+import { nearestNotFoundScope } from "./runtime/not-found-scope.js";
 import type { DeploymentManifestV1 } from "./types.js";
 import type {
   YandexCloudHttpEvent,
@@ -133,11 +134,7 @@ const preview: PreviewModule["default"] = async (
       ),
     ),
   );
-  const notFound = deployment.modifiers.recursive404
-    ? [...deployment.routes.notFound].sort(
-        (first, second) => second.scope.length - first.scope.length,
-      )
-    : [];
+  const notFound = deployment.routes.notFound;
   let handler: Handler | undefined;
   try {
     await access(options.serverEntrypoint);
@@ -168,12 +165,7 @@ const preview: PreviewModule["default"] = async (
       )
         return;
       if (!handler) {
-        const scope = notFound.find(
-          ({ scope }) =>
-            scope === "/" ||
-            requestUrl.pathname === scope ||
-            requestUrl.pathname.startsWith(`${scope}/`),
-        );
+        const scope = nearestNotFoundScope(requestUrl.pathname, notFound);
         if (scope) {
           const keyPrefix =
             deployment.base === "/" ? "" : `${deployment.base.slice(1)}/`;

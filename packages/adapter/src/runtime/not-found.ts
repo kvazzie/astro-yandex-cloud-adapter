@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { FunctionArtifactPolicy } from "./types.js";
+import { nearestNotFoundScope } from "./not-found-scope.js";
 
 /** Supplies the nearest concrete custom page without replacing endpoint responses. */
 export async function staticNotFoundResponse(
@@ -8,12 +9,7 @@ export async function staticNotFoundResponse(
 ): Promise<Response | undefined> {
   if (!policy.artifactDirectory || !policy.notFound?.length) return undefined;
   const pathname = new URL(request.url).pathname;
-  const selected = policy.notFound
-    .filter(
-      ({ scope }) =>
-        scope === "/" || pathname === scope || pathname.startsWith(`${scope}/`),
-    )
-    .sort((a, b) => b.scope.length - a.scope.length)[0];
+  const selected = nearestNotFoundScope(pathname, policy.notFound);
   if (!selected) return undefined;
   const content =
     request.method === "HEAD"

@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 
 import { build, type AstroConfig } from "astro";
 import { describe, expect, it } from "vitest";
+import yandexCloud from "./helpers/built-adapter.js";
 
 import type { DeploymentManifestV1 } from "../../packages/adapter/src/types.js";
 
@@ -278,5 +279,25 @@ describe.sequential("API Gateway artifacts", () => {
       { recursive: true },
     );
     expect(clientFiles).not.toContain("404.html");
+  });
+
+  it("keeps the root custom 404 status without enabling nested scopes", async () => {
+    const root = await fixtureRoot("gateway-404-static");
+    await build({
+      root: `${root}/`,
+      logLevel: "silent",
+      adapter: yandexCloud({ apiGateway: true }),
+    });
+    const manifest = JSON.parse(
+      await readFile(join(root, "dist/yandex-cloud.json"), "utf8"),
+    ) as DeploymentManifestV1;
+    expect(manifest.routes.notFound.map(({ scope }) => scope)).toEqual(["/docs"]);
+    const template = JSON.parse(
+      await readFile(join(root, "dist/yandex-api-gateway.json"), "utf8"),
+    ) as GatewayTemplate;
+    expect(template.paths["/docs/404"]).toMatchObject({
+      get: { responses: { "200": { "x-yc-status-mapping": 404 } } },
+    });
+    expect(template.paths).not.toHaveProperty("/docs/help/{_+}");
   });
 });

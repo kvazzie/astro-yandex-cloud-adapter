@@ -48,7 +48,10 @@ function functionManifest() {
     pattern: "/docs/api/ping",
     artifactId: "function:shared",
   });
-  return { ...value, directInvocation: { requestTargetParameter: "__astro_path" } };
+  return {
+    ...value,
+    directInvocation: { requestTargetParameter: "__astro_path" },
+  };
 }
 
 describe("Deployment Manifest consumers", () => {
