@@ -132,6 +132,7 @@ async function inspectRoutes(
     hasRuntimeImages:
       hasFunction &&
       (await hasRuntimeImageCalls(config.build.server, build.resolvedRoutes)),
+    imageEndpoint: config.image.endpoint.route,
   });
 }
 

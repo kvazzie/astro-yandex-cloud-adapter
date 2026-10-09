@@ -55,6 +55,24 @@ function functionManifest() {
 }
 
 describe("Deployment Manifest consumers", () => {
+  it("rejects separate Function partitioning on Object Storage", () => {
+    const value = staticManifest();
+    Object.assign(value.modifiers, { functions: "separate" });
+    expect(() => parseDeploymentManifest(value)).toThrow(/partition.*Functions/i);
+  });
+
+  it.each([
+    "/docs/_image",
+    "/docs/_actions/[...path]",
+    "/docs/_server-islands/[name]",
+  ])("rejects a direct internal route %s", (pattern) => {
+    const value = functionManifest();
+    value.routes.onDemand[0]!.pattern = pattern;
+    expect(() => parseDeploymentManifest(value)).toThrow(
+      /user-defined endpoints/i,
+    );
+  });
+
   it("rejects recursive 404 without Gateway", () => {
     const value = staticManifest();
     Object.assign(value.modifiers, { recursive404: true });

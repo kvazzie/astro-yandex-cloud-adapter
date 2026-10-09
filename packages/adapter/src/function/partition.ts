@@ -4,6 +4,7 @@ import { dirname, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import * as Effect from "effect/Effect";
+import { glob } from "tinyglobby";
 
 import type { PlannedRoute, RoutePlan } from "../build/routes.js";
 import type { CompletedBuild } from "../integration/session.js";
@@ -76,6 +77,10 @@ export function partitionFunctions(
       try: () => readFile(new URL("index.js", config.build.server), "utf8"),
       catch: invalidArtifact,
     });
+    const emittedComponents = yield* Effect.tryPromise({
+      try: () => emittedRouteComponents(config.build.server),
+      catch: invalidArtifact,
+    });
     for (const route of routes) {
       const identity = `${route.routeKind}:${route.pattern}`;
       const suffix = createHash("sha256")
@@ -99,8 +104,14 @@ export function partitionFunctions(
           await rm(directory, { recursive: true, force: true });
           await mkdir(directory, { recursive: true });
           const keepServerIslands =
+            route.origin === "internal" &&
             originalPattern.startsWith("/_server-islands/");
-          const components = new Set([resolved.entrypoint]);
+          // Astro dispatches islands through serverIslandMap, without a page loader.
+          const components = new Set(
+            keepServerIslands
+              ? []
+              : [emittedComponents.get(originalPattern) ?? resolved.entrypoint],
+          );
           const selected = prunePageModules(index, components);
           const source = keepServerIslands
             ? (selected ?? index)
@@ -264,6 +275,68 @@ function withoutBase(pattern: string, base: string): string {
   return normalized === "/" ? pattern : pattern.slice(normalized.length) || "/";
 }
 
+/** Reads final component IDs after Astro resolves registered package entrypoints. */
+export async function emittedRouteComponents(
+  directory: URL,
+): Promise<Map<string, string>> {
+  const components = new Map<string, string>();
+  for (const file of await glob(["**/*.js", "**/*.mjs"], {
+    cwd: fileURLToPath(directory),
+    onlyFiles: true,
+  })) {
+    const source = await readFile(new URL(file, directory), "utf8");
+    visitSyntax(parseModule(source), (node) => {
+      if (
+        node.type !== "CallExpression" ||
+        !isSyntaxNode(node.callee) ||
+        typeof node.callee.name !== "string" ||
+        !/^deserializeManifest(?:\$\d+)?$/.test(node.callee.name) ||
+        !Array.isArray(node.arguments)
+      )
+        return;
+      const serialized: unknown = node.arguments[0];
+      if (!isSyntaxNode(serialized)) return;
+      const routes = objectProperty(serialized, "routes");
+      if (!routes || !Array.isArray(routes.elements)) return;
+      for (const route of routes.elements as unknown[]) {
+        if (!isSyntaxNode(route)) continue;
+        const data = objectProperty(route, "routeData");
+        if (!data) continue;
+        const pattern = objectProperty(data, "route");
+        const component = objectProperty(data, "component");
+        if (
+          typeof pattern?.value !== "string" ||
+          typeof component?.value !== "string"
+        )
+          continue;
+        const existing = components.get(pattern.value);
+        if (existing && existing !== component.value)
+          throw new Error(
+            `Astro emitted conflicting route module identities for ${pattern.value}.`,
+          );
+        components.set(pattern.value, component.value);
+      }
+    });
+  }
+  return components;
+}
+
+/** Reads fixed properties without evaluating Astro's serialized manifest. */
+function objectProperty(node: SyntaxNode, name: string): SyntaxNode | undefined {
+  if (node.type !== "ObjectExpression" || !Array.isArray(node.properties)) return;
+  for (const property of node.properties as unknown[]) {
+    if (
+      isSyntaxNode(property) &&
+      property.type === "Property" &&
+      !property.computed &&
+      isSyntaxNode(property.key) &&
+      (property.key.name === name || property.key.value === name) &&
+      isSyntaxNode(property.value)
+    )
+      return property.value;
+  }
+}
+
 /** Removes other page loaders while retaining all route metadata for precedence. */
 function prunePageModules(
   source: string,
@@ -301,21 +374,30 @@ function prunePageModules(
     const [component, loader] = entry.elements as unknown[];
     if (!isSyntaxNode(component) || typeof component.value !== "string")
       throw new Error("Astro's emitted route component is not a fixed module ID.");
+    if (!isSyntaxNode(loader) || typeof loader.name !== "string")
+      throw new Error("Astro's emitted page loader has an unsupported shape.");
+    const declaration = declarations.get(loader.name);
+    if (
+      !declaration ||
+      !isSyntaxNode(declaration.init) ||
+      (declaration.init.type !== "ArrowFunctionExpression" &&
+        declaration.init.type !== "FunctionExpression")
+    )
+      throw new Error("Astro's emitted page loader declaration is missing.");
     if (components.has(component.value)) {
       retained.push(source.slice(entry.start, entry.end));
       continue;
     }
-    if (!isSyntaxNode(loader) || typeof loader.name !== "string")
-      throw new Error("Astro's emitted page loader has an unsupported shape.");
-    const declaration = declarations.get(loader.name);
-    if (!declaration || !isSyntaxNode(declaration.init))
-      throw new Error("Astro's emitted page loader declaration is missing.");
     edits.push({
       start: declaration.init.start,
       end: declaration.init.end,
       value: "undefined",
     });
   }
+  if (retained.length !== components.size)
+    throw new Error(
+      `Astro's emitted route module map is missing the selected loader: ${[...components].join(", ")}.`,
+    );
   edits.push({
     start: entries.start,
     end: entries.end,

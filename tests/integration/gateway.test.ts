@@ -300,4 +300,23 @@ describe.sequential("API Gateway artifacts", () => {
     });
     expect(template.paths).not.toHaveProperty("/docs/help/{_+}");
   });
+
+  it("rejects an on-demand custom 404 with prerender guidance", async () => {
+    const root = await fixtureRoot("gateway-404-static");
+    await expect(
+      build({
+        root: `${root}/`,
+        output: "server",
+        logLevel: "silent",
+        adapter: yandexCloud({
+          target: "object-storage-functions",
+          apiGateway: true,
+          recursive404: true,
+        }),
+      }),
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(/404.*must be prerendered.*prerender = true/),
+    );
+  });
 });

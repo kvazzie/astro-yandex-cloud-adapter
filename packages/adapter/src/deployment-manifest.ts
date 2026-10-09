@@ -32,6 +32,13 @@ function checkReferences(manifest: DeploymentManifestV1): void {
   if (manifest.modifiers.recursive404 && !manifest.modifiers.apiGateway)
     invalidManifest("recursive 404 requires the API Gateway modifier.");
   if (
+    manifest.modifiers.functions === "separate" &&
+    manifest.target !== "object-storage-functions"
+  )
+    invalidManifest(
+      "separate partitioning requires the Object Storage + Cloud Functions Target.",
+    );
+  if (
     manifest.modifiers.dependencyStrategy === "install" &&
     manifest.target !== "object-storage-functions"
   )
@@ -104,7 +111,7 @@ function checkReferences(manifest: DeploymentManifestV1): void {
     if (
       !manifest.modifiers.apiGateway &&
       (route.kind !== "endpoint" ||
-        /^\/(?:_actions|_server-islands)(?:\/|$)/.test(
+        /^\/(?:_image|_actions|_server-islands)(?:\/|$)/.test(
           route.pattern.slice(manifest.base === "/" ? 0 : manifest.base.length),
         ))
     )

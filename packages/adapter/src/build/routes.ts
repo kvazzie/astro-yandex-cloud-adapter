@@ -55,6 +55,7 @@ interface RouteEvidence {
   trailingSlash: "always" | "never" | "ignore";
   hasServerIslands: boolean;
   hasRuntimeImages: boolean;
+  imageEndpoint: string;
 }
 
 /** Preliminary route compatibility before Astro emits build artifacts. */
@@ -100,13 +101,14 @@ function isActiveInternalRoute(
   clientHtml: string,
   hasServerIslands: boolean,
   hasRuntimeImages: boolean,
+  imageEndpoint: string,
 ): boolean {
   if (route.origin !== "internal") return true;
   if (route.pattern.startsWith("/_actions/")) return true;
   if (route.pattern.startsWith("/_server-islands/"))
     return hasServerIslands || clientHtml.includes("/_server-islands/");
-  if (route.pattern === "/_image")
-    return hasRuntimeImages || clientHtml.includes("/_image?");
+  if (route.pattern === imageEndpoint)
+    return hasRuntimeImages || clientHtml.includes(`${imageEndpoint}?`);
   return false;
 }
 
@@ -203,6 +205,7 @@ export function reconcileRoutes(evidence: RouteEvidence): RoutePlan {
               evidence.clientHtml,
               evidence.hasServerIslands,
               evidence.hasRuntimeImages,
+              evidence.imageEndpoint,
             ),
         )
         .map((route) => ({

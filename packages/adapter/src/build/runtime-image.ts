@@ -11,12 +11,14 @@ import {
   visitSyntax,
   type SyntaxNode,
 } from "../function/emitted-modules.js";
+import { emittedRouteComponents } from "../function/partition.js";
 
 /** Finds image calls reachable from runtime routes, excluding registered-only endpoints. */
 export async function hasRuntimeImageCalls(
   directory: URL,
   routes: readonly IntegrationResolvedRoute[],
 ): Promise<boolean> {
+  const emittedComponents = await emittedRouteComponents(directory);
   const components = new Set(
     routes
       .filter(
@@ -24,7 +26,7 @@ export async function hasRuntimeImageCalls(
           !route.isPrerendered &&
           (route.origin !== "internal" || route.pattern.startsWith("/_actions/")),
       )
-      .map((route) => route.entrypoint),
+      .map((route) => emittedComponents.get(route.pattern) ?? route.entrypoint),
   );
   const modules = new Map<
     string,
