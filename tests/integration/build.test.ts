@@ -8,6 +8,8 @@ import { promisify } from "node:util";
 import { build } from "astro";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import yandexCloud from "../../packages/adapter/dist/index.js";
+
 import type { YandexCloudHttpResult } from "../../packages/adapter/src/runtime.js";
 import type {
   YandexCloudHttpEvent,
@@ -540,39 +542,46 @@ describe.sequential("Astro artifact builds", () => {
     });
   });
 
-  it.each([
-    ["API Gateway 0.1", apiGatewayV01Event],
-    ["direct HTTPS", directHttpEvent],
-  ])(
-    "runs a stateless form Action through %s",
-    async (_invocation, eventFactory) => {
-      const response = await actionsGeneratedHandler.handler(
-        eventFactory({
-          httpMethod: "POST",
-          url: eventFactory === apiGatewayV01Event ? "/docs/" : undefined,
-          path: "/docs/",
-          queryStringParameters: { _action: "submit" },
-          headers: {
-            host: "actions.example",
-            "content-type": "application/x-www-form-urlencoded",
-            origin: "https://actions.example",
-          },
-          body: "message=Saved",
-        }),
-        invocationContext(),
-      );
-
-      expect(response).toMatchObject({
-        statusCode: 303,
+  it("runs a stateless form Action through API Gateway 0.1", async () => {
+    const response = await actionsGeneratedHandler.handler(
+      apiGatewayV01Event({
+        httpMethod: "POST",
+        url: "/docs/",
+        path: "/docs/",
+        queryStringParameters: { _action: "submit" },
         headers: {
-          location: "/complete?message=Saved&middleware=active",
-          "x-actions-middleware": "active",
+          host: "actions.example",
+          "content-type": "application/x-www-form-urlencoded",
+          origin: "https://actions.example",
         },
-        body: "",
-        isBase64Encoded: false,
-      });
-    },
-  );
+        body: "message=Saved",
+      }),
+      invocationContext(),
+    );
+
+    expect(response).toMatchObject({
+      statusCode: 303,
+      headers: {
+        location: "/complete?message=Saved&middleware=active",
+        "x-actions-middleware": "active",
+      },
+      body: "",
+      isBase64Encoded: false,
+    });
+  });
+
+  it("rejects an Actions build configured for direct Function invocation", async () => {
+    await expect(
+      build({
+        root: `${join(fixtures, "actions")}/`,
+        adapter: yandexCloud({ target: "object-storage-functions" }),
+        logLevel: "silent",
+      }),
+    ).rejects.toHaveProperty(
+      "cause.message",
+      expect.stringMatching(/API Gateway|apiGateway/),
+    );
+  });
 
   it("discovers and executes an integration-injected route", async () => {
     const deployment = await manifest("mixed");
@@ -1038,7 +1047,9 @@ describe.sequential("Astro artifact builds", () => {
 
     await build({ root: fixtureRoot, logLevel: "silent" });
     expect((await manifest("install-basic")).modifiers).toEqual({
-      apiGateway: false,
+      apiGateway: true,
+      recursive404: false,
+      functions: "shared",
       dependencyStrategy: "install",
     });
     const packageJsonRaw = await readFile(

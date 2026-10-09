@@ -21,6 +21,7 @@ export {
 export type {
   AdapterOptions,
   DependencyStrategy,
+  FunctionPartition,
   DeploymentManifestV1,
   OnDemandRouteRequirement,
   PrerenderedRouteRequirement,
@@ -61,7 +62,7 @@ export default defineIntegration<AdapterOptions | undefined, AdapterOptions>({
           yield* Effect.sync(() =>
             updateConfig({
               ...patch,
-              vite: { plugins: [runtimeConfigPlugin(config.site)] },
+              vite: { plugins: [runtimeConfigPlugin(config.site, plan)] },
             }),
           );
         }).pipe(Effect.mapError(hookError("astro:config:setup"))),

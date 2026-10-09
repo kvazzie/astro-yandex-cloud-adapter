@@ -8,14 +8,20 @@ The [beta specification][beta-spec] owns the detailed application behavior, impl
 
 Use the [first beta evidence record](releases/0.1.0-beta.1-evidence.md) and
 [candidate release notes](releases/0.1.0-beta.1.md) for #17. Publication remains
-blocked by the unmerged prerequisite stack, the accepted draft Manifest contract
-in #7, and the accepted #63 follow-ups. Issues #67, #68, #69 and #70 remain open.
-A preparation PR is not evidence of publication.
+blocked by landing and reviewing the final candidate, repository protections,
+version preparation, human publication approval, registry verification and
+credential replacement. The integration candidate tracked in
+[#81](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/81) implements
+the remaining #7 contract and the #63 follow-ups in #67–#70. Record the final
+passing run and source SHA before treating this implementation as a release
+gate satisfied. A preparation PR is not evidence of publication.
 
 Before publication, the final candidate's packed parser, JSON Schema and
 TypeScript declarations must accept Function Artifacts without Sharp or runtime
-image transformation support claims. PR #80 fixes this regression; its fix must
-land and the final candidate must pass the exact-tarball contract checks.
+image transformation support claims. PR #80 fixes this regression, and the
+integration candidate extends exact-tarball checks across Gateway, recursive
+404s, direct endpoint forms and separate Functions. Land the complete stack and
+verify those checks on the actual publication candidate.
 
 ### Before publication
 
@@ -27,9 +33,9 @@ land and the final candidate must pass the exact-tarball contract checks.
 
   For packed-candidate evidence, use CI's `checked-package` artifact and the
   release job's `publication-candidate` artifact. Both include the exact tarball
-  and its SHA-512 validation report. See [the package check](package-check.md).
+  and its SHA-512/SHA-256 validation report. See [the package check](package-check.md).
 
-- [ ] Review the [installation and manual deployment instructions](../packages/adapter/README.md) against the specification's user requirements. Put the beta and unverified-cloud warning before installation, and keep Sharp experimental. Recheck the guide's pending-feature table against #67–#70 and update examples when those implementations and the first beta publication are available.
+- [ ] Review the [installation and manual deployment instructions](../packages/adapter/README.md) and [routing examples](beta-routing.md) against the final candidate and specification. Keep the beta and unverified-cloud warning before installation, and keep Sharp experimental. Verify Gateway variables, direct form origins, Function partitioning and recursive 404 examples. Update publication status only after the registry checks pass.
 - [ ] Review the [artifact size report and Astro-owned path limitation](artifact-reports.md). Confirm the documented Yandex limits are current and the output scans permit only the identified upstream metadata.
 - [ ] Confirm the public GitHub and npm identities and package links. Record who monitors private vulnerability reports.
 

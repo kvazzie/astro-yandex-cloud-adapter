@@ -53,6 +53,8 @@ export function objectStorageModule(
     generateArtifacts(build: CompletedBuild) {
       return completeBuild(build, {
         target: plan.target,
+        apiGateway: plan.apiGateway,
+        recursive404: plan.recursive404,
         prepareArtifacts: (_build, routePlan, hasFunction) => {
           const onDemand = manifestRoutes(routePlan).onDemand.map(
             (route) => route.pattern,
@@ -64,7 +66,7 @@ export function objectStorageModule(
                 ? `The object-storage target cannot serve on-demand routes: ${onDemand.join(", ")}. Use target "object-storage-functions" or prerender these routes.`
                 : 'The object-storage target cannot produce a Function Artifact. Use target "object-storage-functions".',
             });
-          return Effect.void;
+          return Effect.succeed({ routePlan, functions: [] });
         },
       });
     },

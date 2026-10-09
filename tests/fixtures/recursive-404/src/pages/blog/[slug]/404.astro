@@ -1,0 +1,4 @@
+---
+export function getStaticPaths() { return [{ params: { slug: "a" } }, { params: { slug: "b" } }]; }
+---
+<h1>Missing blog {Astro.params.slug}</h1>

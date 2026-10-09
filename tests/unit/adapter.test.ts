@@ -23,6 +23,10 @@ describe("adapter options and routes", () => {
     expect(yandexCloud().name).toBe("@astro-yandex-cloud/adapter");
   });
 
+  it("rejects recursive 404 without Gateway", () => {
+    expect(() => yandexCloud({ recursive404: true })).toThrow(/recursive.*Gateway/i);
+  });
+
   it("rejects unknown targets", () => {
     expect(() => yandexCloud({ target: "vm" as never })).toThrow(
       /Unknown.*target/,

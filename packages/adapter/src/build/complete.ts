@@ -6,15 +6,22 @@ import type { AstroConfig } from "astro";
 import * as Effect from "effect/Effect";
 import { glob } from "tinyglobby";
 
-import { ADAPTER_VERSION } from "../constants.js";
+import { ADAPTER_VERSION, DIRECT_REQUEST_TARGET_PARAMETER } from "../constants.js";
 import {
   defineDeploymentManifest,
   parseDeploymentManifest,
 } from "../deployment-manifest.js";
 import type { Target, YandexCloudManifestV1 } from "../types.js";
 import { validateFunctionEntrypoint } from "../function/package.js";
+import {
+  isSyntaxNode,
+  parseModule,
+  visitSyntax,
+} from "../function/emitted-modules.js";
 import type { CompletedBuild } from "../integration/session.js";
 import type { BuildError } from "../target/module.js";
+import type { PartitionedFunctions } from "../function/partition.js";
+import { generateGatewayTemplate } from "./gateway.js";
 import { manifestRoutes, reconcileRoutes, type RoutePlan } from "./routes.js";
 
 function failure(_tag: BuildError["_tag"], error: unknown): BuildError {
@@ -29,11 +36,14 @@ function failure(_tag: BuildError["_tag"], error: unknown): BuildError {
 export interface BuildCompletionPolicy {
   target: Target;
   dependencyStrategy?: "bundle" | "install";
+  apiGateway: boolean;
+  recursive404: boolean;
+  functionPartition?: "shared" | "separate";
   prepareArtifacts(
     build: CompletedBuild,
     routePlan: RoutePlan,
     hasFunction: boolean,
-  ): Effect.Effect<void, BuildError>;
+  ): Effect.Effect<PartitionedFunctions, BuildError>;
 }
 
 export function completeBuild(
@@ -51,7 +61,7 @@ export function completeBuild(
       try: () => inspectRoutes(build, hasFunction),
       catch: (error) => failure("InvalidArtifact", error),
     });
-    yield* policy.prepareArtifacts(build, routePlan, hasFunction);
+    const prepared = yield* policy.prepareArtifacts(build, routePlan, hasFunction);
     return yield* Effect.tryPromise({
       try: () =>
         writeDeploymentManifest(config.outDir, config, {
@@ -59,8 +69,13 @@ export function completeBuild(
           ...(policy.dependencyStrategy
             ? { dependencyStrategy: policy.dependencyStrategy }
             : {}),
-          routePlan,
-          hasFunction,
+          routePlan: prepared.routePlan,
+          functions: prepared.functions,
+          apiGateway: policy.apiGateway,
+          recursive404: policy.recursive404,
+          ...(policy.functionPartition
+            ? { functionPartition: policy.functionPartition }
+            : {}),
         }),
       catch: (error) => failure("InvalidManifest", error),
     });
@@ -77,7 +92,10 @@ interface WriteDeploymentManifestInput {
   deploymentTarget: Target;
   dependencyStrategy?: "bundle" | "install";
   routePlan: RoutePlan;
-  hasFunction: boolean;
+  functions: PartitionedFunctions["functions"];
+  apiGateway: boolean;
+  recursive404: boolean;
+  functionPartition?: "shared" | "separate";
 }
 
 async function inspectRoutes(
@@ -107,7 +125,50 @@ async function inspectRoutes(
     resolvedRoutes: build.resolvedRoutes,
     emittedAssets: build.emittedAssets,
     hasFunction,
+    trailingSlash: config.trailingSlash,
+    hasServerIslands:
+      hasFunction && (await hasServerIslandEntries(config.build.server)),
   });
+}
+
+/** Reads emitted island loader entries without executing application code at build time. */
+async function hasServerIslandEntries(directory: URL): Promise<boolean> {
+  const files = await glob(["index.js", "**/*server-island-manifest*.js"], {
+    cwd: fileURLToPath(directory),
+    onlyFiles: true,
+  });
+  for (const file of files) {
+    let found = false;
+    visitSyntax(
+      parseModule(await readFile(new URL(file, directory), "utf8")),
+      (node) => {
+        if (
+          node.type !== "VariableDeclarator" ||
+          !isSyntaxNode(node.id) ||
+          typeof node.id.name !== "string" ||
+          !/^serverIslandMap(?:\$\d+)?$/.test(node.id.name)
+        )
+          return;
+        const init = node.init;
+        if (
+          !isSyntaxNode(init) ||
+          init.type !== "NewExpression" ||
+          !Array.isArray(init.arguments)
+        )
+          return;
+        const entries: unknown = init.arguments[0];
+        if (
+          isSyntaxNode(entries) &&
+          entries.type === "ArrayExpression" &&
+          Array.isArray(entries.elements) &&
+          entries.elements.length
+        )
+          found = true;
+      },
+    );
+    if (found) return true;
+  }
+  return false;
 }
 
 export async function writeDeploymentManifest(
@@ -116,20 +177,31 @@ export async function writeDeploymentManifest(
   input: WriteDeploymentManifestInput,
 ): Promise<YandexCloudManifestV1> {
   const client = config.build.client;
-  const functionDirectory = config.build.server;
   const base = normalizedBase(config.base);
+  const routes = manifestRoutes(input.routePlan, input.recursive404);
+  const pageFunctionIds = [
+    ...new Set(
+      input.routePlan.routes
+        .filter(
+          (route) => route.kind === "on-demand" && route.routeKind === "page",
+        )
+        .map((route) => (route.kind === "on-demand" ? route.artifactId : "")),
+    ),
+  ];
   const manifest = defineDeploymentManifest({
     schemaVersion: 1,
     adapter: { version: ADAPTER_VERSION },
     target: input.deploymentTarget,
     modifiers: {
-      apiGateway: false,
+      apiGateway: input.apiGateway,
+      recursive404: input.recursive404,
+      ...(input.functionPartition ? { functions: input.functionPartition } : {}),
       ...(input.dependencyStrategy
         ? { dependencyStrategy: input.dependencyStrategy }
         : {}),
     },
     base,
-    ...(typeof config.build.assetsPrefix === "string"
+    ...(config.build.assetsPrefix !== undefined
       ? { assetsPrefix: config.build.assetsPrefix }
       : {}),
     artifacts: {
@@ -137,23 +209,41 @@ export async function writeDeploymentManifest(
         id: "client:primary",
         path: relativeArtifactPath(outDir, client),
       },
-      functions: input.hasFunction
-        ? [
-            {
-              id: "function:shared",
-              path: relativeArtifactPath(outDir, functionDirectory),
-              runtime: "nodejs22",
-              entrypoint: "index.handler",
-            },
-          ]
-        : [],
+      functions: input.functions.map(({ id, path, runtime, entrypoint }) => ({
+        id,
+        path,
+        runtime,
+        entrypoint,
+      })),
     },
     routes: {
-      ...manifestRoutes(input.routePlan),
+      ...routes,
+      notFound: routes.notFound.map((scope) => ({
+        ...scope,
+        ...(pageFunctionIds.length
+          ? { functionArtifactIds: pageFunctionIds }
+          : {}),
+      })),
     },
+    ...(input.functions.length && !input.apiGateway
+      ? {
+          directInvocation: {
+            requestTargetParameter: DIRECT_REQUEST_TARGET_PARAMETER,
+          },
+        }
+      : {}),
+    ...(input.apiGateway
+      ? { gatewayTemplate: { path: "yandex-api-gateway.json" } }
+      : {}),
   });
   parseDeploymentManifest(manifest);
   await mkdir(fileURLToPath(outDir), { recursive: true });
+  if (input.apiGateway) {
+    await writeFile(
+      new URL("yandex-api-gateway.json", outDir),
+      `${JSON.stringify(generateGatewayTemplate(manifest, input.routePlan), null, 2)}\n`,
+    );
+  }
   await writeFile(
     new URL("yandex-cloud.json", outDir),
     `${JSON.stringify(manifest, null, 2)}\n`,

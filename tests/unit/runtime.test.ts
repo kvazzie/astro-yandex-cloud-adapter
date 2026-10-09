@@ -27,6 +27,158 @@ type DocumentedInvocationContext = {
 expectTypeOf<YandexCloudInvocationContext>().toEqualTypeOf<DocumentedInvocationContext>();
 
 describe("toWebRequest", () => {
+  it("restores the original endpoint path and query for direct invocation", () => {
+    const request = toWebRequest(
+      {
+        path: "/function-id",
+        headers: { host: "functions.yandexcloud.net" },
+        queryStringParameters: {
+          __astro_path:
+            "/docs/api/items/Ada?tag=first&tag=second&__astro_path=user-value",
+        },
+      },
+      undefined,
+      { apiGateway: false },
+    );
+
+    expect(request.url).toBe(
+      "https://functions.yandexcloud.net/docs/api/items/Ada?tag=first&tag=second&__astro_path=user-value",
+    );
+  });
+
+  it.each([
+    {},
+    { __astro_path: "" },
+    { __astro_path: "https://untrusted.example/api" },
+    { __astro_path: "//untrusted.example/api" },
+    { __astro_path: "/api#fragment" },
+    { __astro_path: "/api\\escape" },
+    { __astro_path: "/api/%ZZ" },
+    { __astro_path: "/api/%C0%AF" },
+    { __astro_path: "/api/%00" },
+    { __astro_path: "/api/../admin" },
+    { __astro_path: "/api/%2e%2e/admin" },
+  ])("rejects a missing or malformed direct request target %j", (parameters) => {
+    expect(() =>
+      toWebRequest(
+        {
+          path: "/function-id",
+          headers: { host: "functions.yandexcloud.net" },
+          queryStringParameters: parameters,
+        },
+        undefined,
+        { apiGateway: false },
+      ),
+    ).toThrow(/request target/);
+  });
+
+  it("rejects duplicate direct request targets", () => {
+    expect(() =>
+      toWebRequest(
+        {
+          path: "/function-id",
+          headers: { host: "functions.yandexcloud.net" },
+          rawQueryString: "__astro_path=%2Fapi%2Fone&__astro_path=%2Fapi%2Ftwo",
+        },
+        undefined,
+        { apiGateway: false },
+      ),
+    ).toThrow(/request target/);
+  });
+
+  it("rejects malformed outer target encoding", () => {
+    expect(() =>
+      toWebRequest(
+        {
+          path: "/function-id",
+          headers: { host: "functions.yandexcloud.net" },
+          rawQueryString: "__astro_path=%2Fapi%ZZ",
+        },
+        undefined,
+        { apiGateway: false },
+      ),
+    ).toThrow(/request target/);
+  });
+
+  it("validates a static form origin before restoring its public Request URL", async () => {
+    const request = toWebRequest(
+      {
+        httpMethod: "POST",
+        headers: {
+          host: "functions.yandexcloud.net",
+          origin: "https://site.example",
+          "content-type": "application/x-www-form-urlencoded",
+          "x-forwarded-host": "untrusted.example",
+        },
+        queryStringParameters: { __astro_path: "/api/submit?source=static" },
+        body: "name=Ada",
+      },
+      "https://site.example",
+      { apiGateway: false, directOrigin: "https://site.example" },
+    );
+    expect(request.url).toBe("https://site.example/api/submit?source=static");
+    expect(request.headers.get("origin")).toBe("https://site.example");
+    expect(await request.text()).toBe("name=Ada");
+  });
+
+  it("rejects conflicting repeated Origin headers before constructing a direct Request", () => {
+    expect(() =>
+      toWebRequest(
+        {
+          httpMethod: "POST",
+          headers: { host: "functions.yandexcloud.net" },
+          multiValueHeaders: {
+            origin: ["https://site.example", "https://untrusted.example"],
+            "content-type": ["application/x-www-form-urlencoded"],
+          },
+          queryStringParameters: { __astro_path: "/api/submit" },
+          body: "name=Ada",
+        },
+        undefined,
+        { apiGateway: false, directOrigin: "https://site.example" },
+      ),
+    ).toThrow(/Origin/);
+  });
+
+  it("does not infer permission for direct forms from Astro site", () => {
+    expect(() =>
+      toWebRequest(
+        {
+          httpMethod: "POST",
+          headers: {
+            host: "functions.yandexcloud.net",
+            origin: "https://site.example",
+            "content-type": "application/x-www-form-urlencoded",
+          },
+          queryStringParameters: { __astro_path: "/api/submit" },
+          body: "name=Ada",
+        },
+        "https://site.example",
+        { apiGateway: false },
+      ),
+    ).toThrow(/configured directOrigin/);
+  });
+
+  it("preserves Gateway paths and application query parameters", () => {
+    const request = toWebRequest(
+      {
+        url: "/docs/api/items/Ada",
+        path: "/docs/api/items/{slug}",
+        headers: {
+          host: "gateway.example",
+          origin: "https://application.example",
+        },
+        queryStringParameters: { __astro_path: "application-value" },
+      },
+      undefined,
+      { apiGateway: true },
+    );
+    expect(request.url).toBe(
+      "https://gateway.example/docs/api/items/Ada?__astro_path=application-value",
+    );
+    expect(request.headers.get("origin")).toBe("https://application.example");
+  });
+
   it("preserves repeated query values and request headers", async () => {
     const request = toWebRequest({
       httpMethod: "POST",

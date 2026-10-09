@@ -46,3 +46,17 @@ export interface YandexCloudHttpResult {
   body: string;
   isBase64Encoded: boolean;
 }
+
+/** Build-selected routing behavior for the Function Runtime Bridge. */
+export interface FunctionInvocationOptions {
+  apiGateway: boolean;
+  directOrigin?: string;
+}
+
+/** Completed-build routing and static error assets owned by one Function. */
+export interface FunctionArtifactPolicy {
+  allowedRoutes?: readonly string[];
+  notFound?: Array<{ scope: string; url: string; file: string }>;
+  artifactDirectory?: URL;
+  recursive404?: boolean;
+}

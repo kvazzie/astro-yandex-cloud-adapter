@@ -48,10 +48,15 @@ function functionManifest() {
     pattern: "/docs/api/ping",
     artifactId: "function:shared",
   });
-  return value;
+  return { ...value, directInvocation: { requestTargetParameter: "__astro_path" } };
 }
 
 describe("Deployment Manifest consumers", () => {
+  it("rejects recursive 404 without Gateway", () => {
+    const value = staticManifest();
+    Object.assign(value.modifiers, { recursive404: true });
+    expect(() => parseDeploymentManifest(value)).toThrow(/recursive.*Gateway/i);
+  });
   it("accepts v1 with additive fields at every depth", () => {
     const value = {
       ...staticManifest(),

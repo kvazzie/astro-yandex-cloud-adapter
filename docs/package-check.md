@@ -35,20 +35,36 @@ The applications cover:
 - A Static-only Build under the Object Storage + Cloud Functions Target at
   `/docs`, with no Function Artifact expected.
 - Actions, prerendered pages, and an endpoint using `nanoid` under the Object
-  Storage + Cloud Functions Target at `/docs`, with `bundle` and `install`.
+  Storage + Cloud Functions Target at `/docs`, with Gateway, a shared Function,
+  and both `bundle` and `install`.
+- A Static-only Object Storage Build at `/docs` with Gateway and recursive
+  custom 404 routing.
+- Direct stateless endpoint forms at `/docs` with an explicit `directOrigin`,
+  restored original paths and repeated query values, and untrusted-origin 403s.
+- Separate Gateway Functions at `/docs` with concrete recursive 404 scopes,
+  endpoint-owned 404 responses and cross-artifact request rejection.
+
+These are eight build scenarios. The routing cases inspect the generated Gateway
+template, named artifact references, and the packaged parser, schema and
+TypeScript contract for modifiers, `directInvocation` and fallback
+`functionArtifactIds`. They do not create a Gateway or prove its cloud behavior.
 
 Each build validates its Manifest through the packaged parser and schema, checks
 that Function Artifacts omit support claims, checks its version against the
 candidate, verifies artifact and object placement, and
 scans output for absolute paths. The scan permits only the documented
 [Astro-owned metadata](artifact-reports.md#astro-owned-path-limitation).
-Generated handlers run in a separate temporary directory. Bundled handlers run
+Generated handlers run in separate temporary directories outside the consumer
+application. Bundled handlers run
 without application dependencies; install handlers first run `npm ci` from their
 generated lockfile. Preview checks serve Client Artifacts and run Actions and
-endpoints through the Function Artifact, then stop the listener.
+endpoints through the Function Artifact, then stop the listener. Preview checks
+also cover direct endpoint forms and separate Functions. The separate build's
+preview dispatcher is not a deployable Function Artifact.
 
-The report records the package name, version, original tarball path, byte size,
-SHA-512 digest, tested Astro and Node versions, and completed scenarios. It is
+The report records the package name, version, candidate filename, original
+tarball path, byte size, SHA-512 and SHA-256 digests, tested Astro and Node
+versions, and completed scenarios. It is
 written only after success. A failed recheck removes any old report, and changing
 the input archive during validation fails the check.
 
@@ -93,7 +109,8 @@ for recovery after a partially completed publication.
 
 ## Public runtime types
 
-The root entrypoint keeps `AdapterOptions`, `Target`, `DependencyStrategy`, and
-runtime/context types. `@astro-yandex-cloud/adapter/runtime` is a type-only
+The root entrypoint keeps `AdapterOptions`, `Target`, `DependencyStrategy`,
+`FunctionPartition`, and runtime/context types.
+`@astro-yandex-cloud/adapter/runtime` is a type-only
 entrypoint. Translation helpers are internal to the generated server and have no
 public package exports.

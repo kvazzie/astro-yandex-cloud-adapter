@@ -1,4 +1,6 @@
 export type {
+  FunctionInvocationOptions,
+  FunctionArtifactPolicy,
   YandexCloudHttpEvent,
   YandexCloudHttpResult,
   YandexCloudInvocationContext,
