@@ -22,7 +22,9 @@ fixture dependency. Fixture source is copied from the repository; adapter code,
 declarations, schema, and internal server entrypoint come from the archive.
 
 The check resolves every declared JavaScript and type entrypoint and loads the
-published Deployment Manifest JSON Schema. It audits imports in packed JavaScript
+published Deployment Manifest JSON Schema. Its `manifest-contract` check passes a
+minimal Function Artifact without support claims through the packaged parser,
+JSON Schema, and TypeScript declarations. It audits imports in packed JavaScript
 and declarations for undeclared dependencies. TypeScript checks the consumer and
 the candidate's declarations; diagnostics in upstream declarations are excluded
 because Astro references optional integrations and environment globals.
@@ -36,7 +38,8 @@ The applications cover:
   Storage + Cloud Functions Target at `/docs`, with `bundle` and `install`.
 
 Each build validates its Manifest through the packaged parser and schema, checks
-its version against the candidate, verifies artifact and object placement, and
+that Function Artifacts omit support claims, checks its version against the
+candidate, verifies artifact and object placement, and
 scans output for absolute paths. The scan permits only the documented
 [Astro-owned metadata](artifact-reports.md#astro-owned-path-limitation).
 Generated handlers run in a separate temporary directory. Bundled handlers run

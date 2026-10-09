@@ -229,11 +229,19 @@ JS
 
 The package exports its JSON Schema as
 `@astro-yandex-cloud/adapter/deployment-manifest.schema.json`. The
-[schema source shipped in the package](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/packages/adapter/.generated/deployment-manifest.schema.json)
+[generated schema shipped in the package](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/packages/adapter/.generated/deployment-manifest.schema.json)
 and the packaged parser define version 1. Reject unknown schema versions. Within
 version 1, tolerate unknown additive fields while validating known fields and
 artifact references. Breaking changes after first publication require a new
 schema version.
+
+The build generates the JSON Schema from the Effect Schema that also defines the
+TypeScript contract. Function Artifacts declare deployment facts such as runtime
+and entrypoint. They omit support claims, as agreed in
+[#63](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/63). Sharp and
+runtime image transformation remain experimental with `install`; their status
+belongs in the adapter's Astro feature declarations, documentation, and
+verification. Local clean-install tests do not establish Yandex compatibility.
 
 - `target` and `modifiers` record build provenance. They do not identify existing
   cloud resources. An `object-storage-functions` Static-only Build has an empty

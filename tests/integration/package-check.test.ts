@@ -234,6 +234,7 @@ if (args[0] === "install") {
         sourceCommit,
         checks: [
           "exports",
+          "manifest-contract",
           "object-storage:/",
           "object-storage:/docs",
           "object-storage-functions:static:/docs",
@@ -277,6 +278,7 @@ it.each(["minimum", "workspace"])(
         .digest("hex"),
       checks: [
         "exports",
+        "manifest-contract",
         "object-storage:/",
         "object-storage:/docs",
         "object-storage-functions:static:/docs",
@@ -297,6 +299,29 @@ async function brokenCandidate(change: (directory: string) => Promise<void>) {
   await run("tar", ["-czf", tarball, "-C", staging, "package"]);
   return tarball;
 }
+
+it("rejects a candidate requiring support claims in its Manifest schema", async () => {
+  const tarball = await brokenCandidate(async (directory) => {
+    const path = join(directory, "dist/deployment-manifest.schema.json");
+    const schema = JSON.parse(await readFile(path, "utf8")) as {
+      properties: {
+        artifacts: {
+          properties: { functions: { items: { required: string[] } } };
+        };
+      };
+    };
+    schema.properties.artifacts.properties.functions.items.required.push(
+      "support",
+    );
+    await writeFile(path, JSON.stringify(schema));
+  });
+  await expect(
+    run(process.execPath, [checker, tarball], {
+      timeout: 300_000,
+      maxBuffer: 10_000_000,
+    }),
+  ).rejects.toThrow("must have required property 'support'");
+}, 300_000);
 
 it.each(["preview.js", "index.d.ts", "deployment-manifest.schema.json"])(
   "rejects a candidate missing %s and removes stale success evidence",

@@ -41,7 +41,11 @@ const declaredDependencies = new Set([
   name,
 ]);
 
-// Audit even imports masked by an app dependency or a package's transitive deps.
+/**
+ * Reject package imports absent from the candidate's declared dependencies,
+ * including imports that the clean application's dependencies would mask.
+ * @param {string} specifier Import or export source found in a packed file.
+ */
 function checkSpecifier(specifier) {
   if (
     specifier.startsWith(".") ||
@@ -65,6 +69,11 @@ for (const file of await readdir(join(packageRoot, "dist"), { recursive: true })
     ts.ScriptTarget.Latest,
     true,
   );
+  /**
+   * Walk a packed file's syntax tree and audit static imports, exports,
+   * import types, and literal dynamic imports or require calls.
+   * @param {import("typescript").Node} node Syntax node in the current file.
+   */
   function visit(node) {
     let specifier;
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
@@ -83,6 +92,36 @@ for (const file of await readdir(join(packageRoot, "dist"), { recursive: true })
   }
   visit(source);
 }
+
+const minimalFunctionManifest = {
+  schemaVersion: 1,
+  adapter: { version: candidate.version },
+  target: "object-storage-functions",
+  modifiers: { apiGateway: false },
+  base: "/docs",
+  artifacts: {
+    client: { id: "client:primary", path: "client" },
+    functions: [
+      {
+        id: "function:shared",
+        path: "function",
+        runtime: "nodejs22",
+        entrypoint: "index.handler",
+      },
+    ],
+  },
+  routes: {
+    prerendered: [],
+    onDemand: [
+      {
+        kind: "endpoint",
+        pattern: "/docs/api/ping",
+        artifactId: "function:shared",
+      },
+    ],
+    notFound: [],
+  },
+};
 
 let typeProbe = "";
 for (const [subpath, entry] of Object.entries(candidate.exports)) {
@@ -123,8 +162,8 @@ adapter(options);
 export function useTypes(runtime: Runtime, result: Result): [YandexCloudRuntime, YandexCloudHttpResult, YandexCloudHttpEvent, YandexCloudInvocationContext] {
   return [runtime, result, runtime.event, runtime.context];
 }
-const manifest: DeploymentManifestV1 = parseDeploymentManifest({});
-defineDeploymentManifest(manifest);
+const manifest: DeploymentManifestV1 = defineDeploymentManifest(${JSON.stringify(minimalFunctionManifest)});
+parseDeploymentManifest(manifest);
 `;
 await writeFile(join(root, "entrypoints.ts"), typeProbe);
 const program = ts.createProgram([join(root, "entrypoints.ts")], {
@@ -161,8 +200,21 @@ const schema = JSON.parse(
   ),
 );
 const validateManifest = new Ajv({ strict: false }).compile(schema);
-const checks = ["exports"];
+assert.deepEqual(
+  parseDeploymentManifest(minimalFunctionManifest),
+  minimalFunctionManifest,
+);
+assert(
+  validateManifest(minimalFunctionManifest),
+  JSON.stringify(validateManifest.errors),
+);
+const checks = ["exports", "manifest-contract"];
 
+/**
+ * Reject build and home paths in emitted files after excluding the documented
+ * Astro-owned metadata records from the diagnostic scan.
+ * @param {string} directory Completed build output to scan recursively.
+ */
 async function portableOutput(directory) {
   for (const file of await readdir(directory, { recursive: true })) {
     const path = join(directory, file);
@@ -221,6 +273,11 @@ const context = {
   getPayload: () => undefined,
   getRemainingTimeInMillis: () => 30_000,
 };
+/**
+ * Build a JSON Action submission with the origin and session cookie exercised
+ * by the generated handler and preview checks.
+ * @param {string} origin Application origin used for Astro's origin check.
+ */
 function actionRequest(origin) {
   return {
     method: "POST",
@@ -239,6 +296,12 @@ const actionResult = [
   "active",
 ];
 
+/**
+ * Build a clean application with the installed candidate, validate its Manifest
+ * and portable output, and exercise its generated handler and preview server.
+ * @param {{ id: string, target: string, base: string, strategy?: string }} scenario
+ * Static or runtime scenario recorded in the candidate's validation report.
+ */
 async function checkApplication({ id, target, base, strategy }) {
   const runtime = Boolean(strategy);
   const application = join(root, `application with spaces-${checks.length}`);
@@ -272,6 +335,12 @@ base: ${JSON.stringify(base)}, output: "${runtime ? "server" : "static"}", image
   assert.equal(manifest.target, target);
   assert.equal(manifest.base, base);
   assert.equal(manifest.artifacts.functions.length, runtime ? 1 : 0);
+  for (const artifact of manifest.artifacts.functions) {
+    assert(
+      !Object.hasOwn(artifact, "support"),
+      "Function Artifact emits support claims.",
+    );
+  }
   await access(join(output, manifest.artifacts.client.path));
   const prefix = base === "/" ? "" : base;
   for (const route of manifest.routes.prerendered) {
