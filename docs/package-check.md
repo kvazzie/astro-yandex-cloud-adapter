@@ -65,6 +65,29 @@ No package is published by `pnpm pack:check`. See the [maintainer release
 procedure](beta-releases.md) for setup, approval, first-publication credentials,
 trusted publishing, and recovery.
 
+## Registry verification
+
+After publication, run `pnpm release:verify --candidate-report <package-check.json> --source-commit <approved-publication-SHA>`
+with the report retained by the approved publish job and that run's full 40-character
+source SHA, not the current checkout HEAD. This fetches the exact
+version from the public npm registry and checks its `beta` tag, absence from
+`latest`, advertised provenance and SHA-512 identity against the publication
+candidate. It then installs the registry version in a clean application, checks
+the installed archive integrity, verifies npm signatures and provenance, and
+requires its verified SLSA v1 provenance to identify
+`kvazzie/astro-yandex-cloud-adapter`, `.github/workflows/release.yml` on `main`,
+and that approved commit. npm verifies the signed subject digest; this source
+check does not establish a reproducible build. It then runs the same build,
+handler, Manifest and preview scenarios.
+
+The read-only `registry-verification` job runs this after publication and retains
+`registry-check.json`. It has no protected environment, publication secret or
+OIDC permission, so token revocation can happen immediately while it runs.
+The report includes tested Node/Astro versions, completed scenarios, registry
+metadata and the adapter's verified attestation bundles. A failed check removes
+an old success report. See the [first beta evidence record](releases/0.1.0-beta.1-evidence.md)
+for recovery after a partially completed publication.
+
 ## Public runtime types
 
 The root entrypoint keeps `AdapterOptions`, `Target`, `DependencyStrategy`, and

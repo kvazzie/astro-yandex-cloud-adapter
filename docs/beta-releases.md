@@ -86,13 +86,18 @@ and permission to create `@astro-yandex-cloud/adapter` before proceeding.
    `npm publish --ignore-scripts --access public --tag beta --provenance`.
    npm handles publication because its CLI supports trusted-publisher OIDC.
    Installation, version preparation, registry queries, and packing use pnpm.
-6. Verify `pnpm view @astro-yandex-cloud/adapter@beta version dist --json`, the
-   npm provenance statement, and a clean application install. Confirm `beta`
-   points to `0.1.0-beta.1` and `latest` does not select this release. Retain the
-   run URL and `publication-candidate` artifact with the release evidence.
-7. Revoke the bootstrap token in npm immediately after successful publication
+6. Revoke the bootstrap token in npm immediately after successful publication
    and delete the GitHub environment secret, including after a partially failed
-   run that already published. Do not keep it as fallback authentication.
+   run that already published. Do this while the separate registry verification
+   runs. Do not keep it as fallback authentication.
+7. Verify `pnpm view @astro-yandex-cloud/adapter@beta version dist --json`, the
+   npm provenance statement, and the clean registry installation. Confirm `beta`
+   points to `0.1.0-beta.1` and `latest` does not select this release. Retain the
+   run URL, `publication-candidate`, and `registry-verification` artifacts in the
+   [first beta evidence record](releases/0.1.0-beta.1-evidence.md). If the earlier
+   workflow published or this job fails, rerun `pnpm release:verify` with the
+   original publication report and the full source SHA of that approved run,
+   as documented in that record.
 
 ## Switch to trusted publishing
 
@@ -117,6 +122,13 @@ In npm's **Publishing access**, require 2FA and disallow traditional tokens afte
 configuring the trusted publisher. Later releases use the same version PR,
 manual dispatch, policy check, and human approval. Keep a fresh Changeset for
 each correction. Do not edit a published version or reset the beta counter.
+
+A new trusted publisher must complete its first successful publication within
+two days or the configuration expires. Record its creation and expiry in the
+handoff. If the next reviewed beta is not ready in that window, recreate the
+configuration immediately before its protected publication. Do not publish an
+unneeded version to validate it or restore the bootstrap token. Configuration
+alone does not prove successful OIDC publication. See [npm's expiry rule](https://docs.npmjs.com/trusted-publishers/#trusted-publisher-configuration-expiry).
 
 Record the successful source commit and registry version. To add a GitHub
 release after confirming publication, a maintainer can create a prerelease at

@@ -36,7 +36,7 @@ covers Node 22.12, Node 22.15, and Node 24 with Astro 7. The `astro@next` check 
 experimental. The Function runtime identifier `nodejs22` does not promise the
 Node patch version used to build your application.
 
-As of 2026-10-05, this package is not published to npm. The intended first release
+As of 2026-10-07, this package is not published to npm. The intended first release
 is `0.1.0-beta.1` under `beta`. After publication, run these commands in an
 existing Astro application:
 
@@ -56,10 +56,12 @@ with the report, then install that exact file in your application:
 
 ```sh
 # Replace this path with the checked candidate you downloaded or packed.
-npm install /absolute/path/to/astro-yandex-cloud-adapter-0.1.0.tgz
+npm install /absolute/path/to/checked-adapter-candidate.tgz
 ```
 
-The repository's current candidate version `0.1.0` is not a stable support claim.
+The repository's `0.1.0-beta.0` is an unpublished versioning seed. Version
+preparation produces the intended `0.1.0-beta.1`; neither is a stable support claim.
+Use the exact filename and version from the downloaded validation report.
 See [candidate validation](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/docs/package-check.md)
 for what the archive check proves. Installing a [local tarball](https://docs.npmjs.com/cli/commands/npm-install)
 does not publish a package or deploy an application.
