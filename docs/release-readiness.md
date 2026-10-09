@@ -8,8 +8,14 @@ The [beta specification][beta-spec] owns the detailed application behavior, impl
 
 Use the [first beta evidence record](releases/0.1.0-beta.1-evidence.md) and
 [candidate release notes](releases/0.1.0-beta.1.md) for #17. Publication remains
-blocked by the unmerged prerequisite stack and the accepted #63 follow-ups
-#67, #68, #69 and #70. A preparation PR is not evidence of publication.
+blocked by the unmerged prerequisite stack, the accepted draft Manifest contract
+in #7, and the accepted #63 follow-ups. Issues #67, #68, #69 and #70 remain open.
+A preparation PR is not evidence of publication.
+
+Before publication, the final candidate's packed parser, JSON Schema and
+TypeScript declarations must accept Function Artifacts without Sharp or runtime
+image transformation support claims. PR #80 fixes this regression; its fix must
+land and the final candidate must pass the exact-tarball contract checks.
 
 ### Before publication
 

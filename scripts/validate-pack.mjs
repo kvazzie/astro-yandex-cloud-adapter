@@ -72,12 +72,14 @@ try {
   assert.equal(candidate.name, "@astro-yandex-cloud/adapter");
   const { stdout: listing } = await command("tar", ["-tf", snapshot]);
   const files = new Set(listing.trim().split("\n"));
+  /** Require a declared package file to exist in the exact candidate archive. */
   function packedFile(path) {
     assert(
       files.has(`package/${path.replace(/^\.\//, "")}`),
       `Missing packed file: ${path}`,
     );
   }
+  /** Validate every file referenced by string or nested conditional exports. */
   function entryFiles(entry) {
     if (typeof entry === "string") packedFile(entry);
     else for (const value of Object.values(entry)) entryFiles(value);
