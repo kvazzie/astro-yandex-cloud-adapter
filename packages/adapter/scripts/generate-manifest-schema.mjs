@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { URL } from "node:url";
 
 import * as JSONSchema from "effect/JSONSchema";
@@ -20,6 +20,7 @@ function removeUnknownIds(value) {
 }
 removeUnknownIds(schema);
 schema.$id = "urn:astro-yandex-cloud:deployment-manifest:v1";
+await mkdir(new URL("../.generated/", import.meta.url), { recursive: true });
 await writeFile(
   new URL("../.generated/deployment-manifest.schema.json", import.meta.url),
   `${JSON.stringify(schema, null, 2)}\n`,

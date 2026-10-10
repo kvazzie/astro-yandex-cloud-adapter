@@ -4,6 +4,7 @@ import { defineConfig, passthroughImageService } from "astro/config";
 export default defineConfig({
   adapter: yandexCloud({
     target: "object-storage-functions",
+    apiGateway: true,
     dependencyStrategy: "install",
   }),
   image: { service: passthroughImageService() },

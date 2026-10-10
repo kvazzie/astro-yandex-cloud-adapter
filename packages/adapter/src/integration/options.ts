@@ -1,60 +1,111 @@
 import * as Schema from "effect/Schema";
 
-import type { DependencyStrategy, Target } from "../types.js";
-
-export type BuildPlan =
-  | { target: "object-storage" }
-  | {
-      target: "object-storage-functions";
-      dependencyStrategy: DependencyStrategy;
-    };
-
-const optionsSchema = Schema.Struct({
-  target: Schema.optional(
-    Schema.Literal("object-storage", "object-storage-functions"),
+const HttpOriginSchema = Schema.URL.pipe(
+  Schema.filter(
+    (origin) =>
+      ((origin.protocol === "https:" || origin.protocol === "http:") &&
+        !origin.username &&
+        !origin.password &&
+        origin.pathname === "/" &&
+        !origin.search &&
+        !origin.hash) ||
+      "directOrigin must be an explicit HTTP or HTTPS origin without a path, credentials, query, or fragment.",
   ),
-  dependencyStrategy: Schema.optional(Schema.Literal("bundle", "install")),
-});
+  Schema.brand("HttpOrigin"),
+);
 
-/** Validates user choices once for the integration instance. */
-export function decodeOptions(value: unknown): BuildPlan {
-  let options: Schema.Schema.Type<typeof optionsSchema>;
-  try {
-    options = Schema.decodeUnknownSync(optionsSchema)(value ?? {});
-  } catch {
-    if (
-      typeof value === "object" &&
-      value !== null &&
-      "target" in value &&
-      !(["object-storage", "object-storage-functions"] as unknown[]).includes(
-        value.target,
-      )
-    ) {
-      throw new TypeError(
-        `Unknown Yandex Cloud adapter target: ${String(value.target)}.`,
-      );
-    }
-    if (
-      typeof value === "object" &&
-      value !== null &&
-      "dependencyStrategy" in value
-    ) {
-      throw new TypeError(
-        `Unknown Yandex Cloud adapter dependency strategy: ${String(value.dependencyStrategy)}.`,
-      );
-    }
-    throw new TypeError("Invalid Yandex Cloud adapter options.");
-  }
-  const target: Target = options.target ?? "object-storage";
-  if (target === "object-storage") {
-    if (options.dependencyStrategy && options.dependencyStrategy !== "bundle")
-      throw new TypeError(
-        `The ${options.dependencyStrategy} dependency strategy requires the Object Storage + Cloud Functions Target.`,
-      );
-    return { target };
-  }
-  return {
-    target,
-    dependencyStrategy: options.dependencyStrategy ?? "bundle",
+const RoutingOptionsSchema = Schema.Union(
+  Schema.Struct({
+    apiGateway: Schema.Literal(true),
+    recursive404: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+  }),
+  Schema.Struct({
+    apiGateway: Schema.optionalWith(Schema.Literal(false), {
+      default: () => false,
+    }),
+    recursive404: Schema.optionalWith(Schema.Literal(false), {
+      default: () => false,
+    }),
+  }),
+);
+
+const TargetOptionsSchema = Schema.Union(
+  Schema.Struct({
+    target: Schema.optionalWith(Schema.Literal("object-storage"), {
+      default: () => "object-storage",
+    }),
+    dependencyStrategy: Schema.optionalWith(Schema.Literal("bundle"), {
+      default: () => "bundle",
+    }),
+    functions: Schema.optionalWith(Schema.Literal("shared"), {
+      default: () => "shared",
+    }),
+    directOrigin: Schema.optional(Schema.Never),
+  }),
+  Schema.Struct({
+    target: Schema.Literal("object-storage-functions"),
+    dependencyStrategy: Schema.optionalWith(Schema.Literal("bundle", "install"), {
+      default: () => "bundle",
+    }),
+    functions: Schema.optionalWith(Schema.Literal("shared", "separate"), {
+      default: () => "shared",
+    }),
+    directOrigin: Schema.optional(HttpOriginSchema),
+  }),
+);
+
+export const OptionsSchema = TargetOptionsSchema.pipe(
+  Schema.extend(RoutingOptionsSchema),
+  Schema.filter((options) =>
+    options.apiGateway && options.directOrigin !== undefined
+      ? {
+          path: ["directOrigin"],
+          message:
+            "directOrigin is only available without the API Gateway Modifier.",
+        }
+      : true,
+  ),
+  Schema.brand("Options"),
+);
+
+export type Options = Schema.Schema.Type<typeof OptionsSchema>;
+
+const routingFields = {
+  apiGateway: Schema.Boolean,
+  recursive404: Schema.Boolean,
+};
+
+export const BuildPlanSchema = Schema.Union(
+  Schema.Struct({
+    target: Schema.Literal("object-storage"),
+    ...routingFields,
+  }),
+  Schema.Struct({
+    target: Schema.Literal("object-storage-functions"),
+    dependencyStrategy: Schema.Literal("bundle", "install"),
+    functions: Schema.Literal("shared", "separate"),
+    directOrigin: Schema.optional(Schema.String),
+    ...routingFields,
+  }),
+);
+
+export type BuildPlan = Schema.Schema.Type<typeof BuildPlanSchema>;
+
+/** Maps validated, defaulted options into a compatible Target-specific build plan. */
+export function decodeOptionsToBuildPlan(options: Options): BuildPlan {
+  const routing = {
+    apiGateway: options.apiGateway,
+    recursive404: options.recursive404,
   };
+  return options.target === "object-storage"
+    ? { target: options.target, ...routing }
+    : {
+        target: options.target,
+        dependencyStrategy: options.dependencyStrategy,
+        functions: options.functions,
+        ...routing,
+        ...(options.directOrigin
+          ? { directOrigin: options.directOrigin.origin }
+          : {}),
+      };
 }

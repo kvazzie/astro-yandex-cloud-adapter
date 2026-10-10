@@ -12,6 +12,9 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 
+import { parseDeploymentManifest } from "./deployment-manifest.js";
+import { nearestNotFoundScope } from "./runtime/not-found-scope.js";
+import type { DeploymentManifestV1 } from "./types.js";
 import type {
   YandexCloudHttpEvent,
   YandexCloudHttpResult,
@@ -66,6 +69,7 @@ async function serveClient(
   incoming: IncomingMessage,
   outgoing: ServerResponse,
   pathname: string,
+  notFound: DeploymentManifestV1["routes"]["notFound"],
 ): Promise<boolean> {
   if (incoming.method !== "GET" && incoming.method !== "HEAD") return false;
   const base = options.base.replace(/\/$/, "") || "/";
@@ -102,7 +106,11 @@ async function serveClient(
     try {
       if (!(await stat(file)).isFile()) continue;
       const bytes = await readFile(file);
-      outgoing.writeHead(200, {
+      const keyPrefix = base === "/" ? "" : `${base.slice(1)}/`;
+      const custom404 = notFound.some(
+        ({ objectKey }) => objectKey.slice(keyPrefix.length) === candidate,
+      );
+      outgoing.writeHead(custom404 ? 404 : 200, {
         ...options.headers,
         "content-type": contentType(file),
       });
@@ -118,6 +126,15 @@ async function serveClient(
 const preview: PreviewModule["default"] = async (
   options,
 ): Promise<PreviewServer> => {
+  const deployment = parseDeploymentManifest(
+    JSON.parse(
+      await readFile(
+        new URL("../yandex-cloud.json", options.serverEntrypoint),
+        "utf8",
+      ),
+    ),
+  );
+  const notFound = deployment.routes.notFound;
   let handler: Handler | undefined;
   try {
     await access(options.serverEntrypoint);
@@ -137,10 +154,34 @@ const preview: PreviewModule["default"] = async (
         incoming.url ?? "/",
         `http://${incoming.headers.host ?? `localhost:${incoming.socket.localPort}`}`,
       );
-      if (await serveClient(options, incoming, outgoing, requestUrl.pathname))
+      if (
+        await serveClient(
+          options,
+          incoming,
+          outgoing,
+          requestUrl.pathname,
+          notFound,
+        )
+      )
         return;
       if (!handler) {
-        outgoing.writeHead(404, options.headers).end("Not Found");
+        const scope = nearestNotFoundScope(requestUrl.pathname, notFound);
+        if (scope) {
+          const keyPrefix =
+            deployment.base === "/" ? "" : `${deployment.base.slice(1)}/`;
+          const file = resolve(
+            fileURLToPath(options.client),
+            scope.objectKey.slice(keyPrefix.length),
+          );
+          const bytes =
+            incoming.method === "HEAD" ? undefined : await readFile(file);
+          outgoing
+            .writeHead(404, {
+              ...options.headers,
+              "content-type": "text/html; charset=utf-8",
+            })
+            .end(bytes);
+        } else outgoing.writeHead(404, options.headers).end("Not Found");
         return;
       }
       const body = await requestBody(incoming);

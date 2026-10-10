@@ -14,7 +14,7 @@ The cloud procedures below were checked against primary documentation on
 2026-10-05 but have not been executed against Yandex Cloud. Local build, handler,
 preview, package, and S3 tests do not establish provider compatibility. Stable
 release and supported Sharp claims require the later real-cloud tests in the
-[release checklist](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/docs/release-readiness.md).
+[stable promotion checklist in issue #83](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/83).
 
 Start with installation and local preview, then deploy only the artifacts your
 Manifest lists:
@@ -26,6 +26,7 @@ Manifest lists:
 - [Deploy to Cloud Functions](#deploy-a-function-artifact-to-cloud-functions)
 - [Route through API Gateway](#route-pages-and-endpoints-through-api-gateway)
 - [Constrained direct invocation](#constrained-direct-function-invocation)
+- [Routing configuration examples](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/docs/beta-routing.md)
 - [Limitations and support](#limitations-and-support)
 
 ## Install the beta
@@ -36,8 +37,8 @@ covers Node 22.12, Node 22.15, and Node 24 with Astro 7. The `astro@next` check 
 experimental. The Function runtime identifier `nodejs22` does not promise the
 Node patch version used to build your application.
 
-As of 2026-10-07, this package is not published to npm. The intended first release
-is `0.1.0-beta.1` under `beta`. After publication, run these commands in an
+Publication is pending. The intended first release is `0.1.0-beta.1` under
+`beta`. After publication, run these commands in an
 existing Astro application:
 
 ```sh
@@ -102,6 +103,7 @@ export default defineConfig({
   output: "static",
   adapter: yandexCloud({
     target: "object-storage-functions",
+    apiGateway: true,
     dependencyStrategy: "bundle",
   }),
   image: { service: passthroughImageService() },
@@ -115,34 +117,35 @@ active internal routes, including Actions, server islands, and runtime images,
 also affect the emitted artifacts. Read [Astro's rendering guide](https://docs.astro.build/en/guides/on-demand-rendering/)
 and [image service configuration](https://docs.astro.build/en/guides/images/).
 
-### Modifiers and implementation status
+### Routing options
 
 The [Manifest and routing decision](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/63#issuecomment-5900071837)
 defines the API Gateway Modifier for both Targets. It prepares page and endpoint
 routing without managing the Gateway. Direct invocation is restricted to
 stateless user-defined endpoints. Actions, server islands, and on-demand pages
-require Gateway. The current handler can process Gateway payload `0.1`, but the
-current adapter options are only `target` and `dependencyStrategy`.
+require Gateway. Builds enforce that restriction and include active Astro-internal
+and integration-injected routes in the route map.
 
-The following decision requirements are still pending in this checkout:
+| Option         | Default    | Behavior                                                                                                                  |
+| -------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `apiGateway`   | `false`    | Both Targets accept `true` to generate `yandex-api-gateway.json` for page and endpoint routing with payload format `0.1`. |
+| `recursive404` | `false`    | Requires `apiGateway: true`. Routes missing pages to the nearest explicit static 404 scope.                               |
+| `functions`    | `"shared"` | The Functions Target accepts `"separate"` to emit one Function Artifact per On-demand Route.                              |
+| `directOrigin` | unset      | The Functions Target accepts an explicit HTTP or HTTPS origin for direct endpoint forms. Available only without Gateway.  |
 
-| Capability                                                             | Current status                                                                                                                                  |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| API Gateway Modifier and generated OpenAPI template                    | [#67](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/67); current Manifests record `apiGateway: false` and omit `gatewayTemplate` |
-| Recursive custom 404 routing and Function fallback copies              | [#68](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/68)                                                                          |
-| Direct request-target restoration and explicit public origin for forms | [#69](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/69); current Manifests omit `directInvocation`                               |
-| Configurable Function partitioning                                     | [#70](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/70); current Runtime Builds emit one shared Function                         |
+`directOrigin` must contain only an origin, without credentials, a path, query,
+or fragment. Astro `site` does not substitute for this option. Keep Astro's
+`security.checkOrigin` enabled. A Static-only Build emits no Function Artifact,
+even when the Functions Target or `functions: "separate"` is selected.
 
-Do not add invented modifier options to `astro.config.mjs`. The Gateway and direct
-invocation sections explain the agreed contract and identify the metadata needed
-to use it. A successful build today does not prove those routing features exist.
-Until #67 is implemented, Gateway configuration must be authored and verified by
-the user. Until #69 is implemented, the direct endpoint and form procedure below
-cannot be used with the current build.
+See [routing configuration examples](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/docs/beta-routing.md)
+for static Gateway builds, direct forms, Function partitioning, and a template
+consumer for an existing Pulumi or SST program. These options have local
+verification; the cloud procedures remain unverified in Yandex Cloud.
 
 ### Function dependencies
 
-`dependencyStrategy` applies to the whole Function Artifact:
+`dependencyStrategy` applies to every emitted Function Artifact:
 
 - `bundle`, the default, includes ordinary JavaScript dependencies through
   Astro's Vite/Rolldown pipeline. Node builtins remain runtime imports. The
@@ -196,6 +199,14 @@ dist/
     package-lock.json      present with the install strategy
 ```
 
+That is the default `functions: "shared"` layout. With `functions: "separate"`,
+deployable Functions live in `dist/functions/<stable-route-hash>/`, each with its
+own `index.js`, runtime chunks, package metadata, and optional lockfile.
+`dist/function/index.js` then dispatches local preview requests and is not a
+deployable Function Artifact. Upload only entries in `artifacts.functions`.
+With `apiGateway: true`, either build class also emits
+`dist/yandex-api-gateway.json`. A Static-only Build still has no Function Artifact.
+
 Read paths from the Manifest if you customize `outDir`. Keep every file in a
 Function Artifact, including all chunks. Do not upload only `index.js`, or upload
 the application's source `package.json` instead of the generated one.
@@ -229,7 +240,7 @@ JS
 
 The package exports its JSON Schema as
 `@astro-yandex-cloud/adapter/deployment-manifest.schema.json`. The
-[generated schema shipped in the package](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/packages/adapter/.generated/deployment-manifest.schema.json)
+[Effect Schema source](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/packages/adapter/src/manifest/schema.ts)
 and the packaged parser define version 1. Reject unknown schema versions. Within
 version 1, tolerate unknown additive fields while validating known fields and
 artifact references. Breaking changes after first publication require a new
@@ -254,13 +265,16 @@ verification. Local clean-install tests do not establish Yandex compatibility.
   kinds, and Function Artifact IDs. Patterns are routing requirements, not
   filenames or separate Function entrypoints.
 - `base` determines Object Storage placement. `assetsPrefix`, when present,
-  records the configured generated-asset origin; it does not rewrite arbitrary
-  `public/` references.
-- `routes.notFound[]` records explicit custom 404 scopes. Recording a scope does
-  not make the pending recursive routing implementation available.
-- When implemented and selected, `gatewayTemplate.path` locates the generated
-  OpenAPI template, and `directInvocation.requestTargetParameter` names the
-  reserved parameter for a direct Function URL. Neither is emitted today.
+  preserves Astro's configured string or extension/fallback map. It does not
+  collapse several asset origins into one or rewrite arbitrary `public/` references.
+- `routes.notFound[]` records concrete explicit static 404 scopes. With
+  `recursive404`, nested scopes include completed dynamic `getStaticPaths`
+  paths. `functionArtifactIds`, when present, names page Functions that contain
+  rendered fallback copies. The build creates no synthetic 404 page.
+- With the API Gateway Modifier, `gatewayTemplate.path` locates the generated
+  OpenAPI template. Runtime builds without Gateway emit
+  `directInvocation.requestTargetParameter`, the reserved parameter for restoring
+  the original application `path?query` on a direct Function URL.
 
 Enumerate all regular files recursively under the Client Artifact, including
 hidden files. The Manifest deliberately has no per-file inventory. For each
@@ -402,8 +416,9 @@ beforehand; this procedure does not depend on it.
 This procedure is **unverified in Yandex Cloud**. Skip it when
 `artifacts.functions` is empty. Use an existing Function per emitted Function
 Artifact and [an authenticated Yandex CLI profile](https://yandex.cloud/en/docs/cli/quickstart).
-The current build emits one shared Function; every On-demand Route references
-that artifact. Resource IDs and permissions are supplied by you.
+The default build emits one shared Function. With `functions: "separate"`, deploy
+each listed artifact to its own existing Function and preserve the route-to-artifact
+references. Resource IDs and permissions are supplied by you.
 
 ### Package and create a version
 
@@ -411,12 +426,13 @@ Set `FUNCTION_DIR` from the Manifest. Start with a fresh ZIP outside that direct
 and put its contents at the archive root:
 
 ```sh
-FUNCTION_DIR='dist/function'
+FUNCTION_DIR='dist/function' # Replace with this artifact's actual Manifest path.
 FUNCTION_ID='your-existing-function-id'
+FUNCTION_ARCHIVE="$PWD/function-release.zip"
 
 # Run in a subshell; function-release.zip must not already exist.
-(cd "$FUNCTION_DIR" && zip -r ../function-release.zip .)
-unzip -l dist/function-release.zip
+(cd "$FUNCTION_DIR" && zip -r "$FUNCTION_ARCHIVE" .)
+unzip -l "$FUNCTION_ARCHIVE"
 ```
 
 The archive must contain root-level `index.js`, `package.json`, every chunk and
@@ -434,7 +450,7 @@ yc serverless function version create \
   --entrypoint index.handler \
   --memory 256m \
   --execution-timeout 10s \
-  --source-path dist/function-release.zip \
+  --source-path "$FUNCTION_ARCHIVE" \
   --environment APP_ENV=beta
 
 yc serverless function version list --function-id "$FUNCTION_ID"
@@ -451,8 +467,8 @@ Astro client-visible build variables belong to the build and can be embedded in
 the Client Artifact, so they must not contain secrets.
 
 Use a named tag for traffic, not `$latest`. After inspecting the created version,
-set a candidate tag and test through an existing test Gateway or the supported
-direct procedure once available:
+set a candidate tag and test through an existing test Gateway or the constrained
+direct procedure below:
 
 ```sh
 NEW_VERSION_ID='the-active-version-id'
@@ -527,76 +543,52 @@ that origin. Verify the actual public host and form origin through your router.
 
 ### Template and user-supplied variables
 
-The generated-template workflow is **pending #67**, and its cloud steps are
-**unverified**. When a build emits `gatewayTemplate.path`, resolve it relative to
-`yandex-cloud.json`, copy that file for deployment customization, and preserve its
-complete route map. If the field is absent, this build has no generated template.
-Do not deploy the illustrative excerpt below as a complete application router.
+With `apiGateway: true`, `gatewayTemplate.path` identifies the generated JSON
+OpenAPI template relative to `yandex-cloud.json`. Copy it for deployment
+customization and preserve its complete route map. The template and Manifest
+come from the same completed-build route plan, including injected and internal
+routes. If the field is absent, this build has no generated template.
 
-The template's declared variables are the source of truth for names. Provide your
-existing bucket name, Function IDs mapped to artifact IDs, and service-account
-IDs. The invocation account needs `functions.functionInvoker` on the Function;
-the storage reader needs permission to read the chosen objects. The following
-illustrates the [variable syntax](https://yandex.cloud/en/docs/api-gateway/concepts/extensions/parametrization)
-and [Function integration](https://yandex.cloud/en/docs/api-gateway/concepts/extensions/cloud-functions)
-for `/docs`:
+Inspect `x-yc-apigateway.variables`. Every resource variable has an invalid
+placeholder default. Supply an existing bucket and storage-reader service
+account when static routes exist, plus a Function ID and invocation service
+account for each referenced Function Artifact. Variable descriptions name the
+artifact they bind. The invocation account needs `functions.functionInvoker` on
+the Function, and the storage reader needs access to the chosen objects. Use the
+actual generated variable names rather than inventing one shared Function ID.
+See [Gateway variables](https://yandex.cloud/en/docs/api-gateway/concepts/extensions/parametrization),
+[Function integration](https://yandex.cloud/en/docs/api-gateway/concepts/extensions/cloud-functions),
+and [Object Storage integration](https://yandex.cloud/en/docs/api-gateway/concepts/extensions/object-storage).
 
-```yaml
-openapi: 3.0.0
-info:
-  title: Example page and endpoint routing
-  version: 1.0.0
-x-yc-apigateway:
-  variables:
-    bucket:
-      default: INVALID_BUCKET
-    storageAccount:
-      default: INVALID_STORAGE_ACCOUNT_ID
-    functionId:
-      default: INVALID_FUNCTION_ID
-    invokeAccount:
-      default: INVALID_INVOKE_ACCOUNT_ID
-    functionTag:
-      default: candidate
-paths:
-  /docs/:
-    get:
-      x-yc-apigateway-integration:
-        type: object_storage
-        bucket: "${var.bucket}"
-        object: docs/index.html
-        service_account_id: "${var.storageAccount}"
-  /docs/api/echo:
-    x-yc-apigateway-any-method:
-      x-yc-apigateway-integration:
-        type: cloud_functions
-        function_id: "${var.functionId}"
-        service_account_id: "${var.invokeAccount}"
-        tag: "${var.functionTag}"
-        payload_format_version: "0.1"
-```
+Prerendered pages and endpoints use exact URL-to-key mappings from the Manifest.
+On-demand patterns point to their referenced Function with
+`x-yc-apigateway-any-method` and `payload_format_version: "0.1"`, leaving method
+handling to Astro. Parameters and optional rest paths come from the actual
+route map. Compound parameter segments or overlaps whose Astro priority cannot
+be represented by Gateway fail the build with guidance. A shared Function can
+resolve overlaps internally when separate Functions cannot preserve the winner.
 
-Prerendered pages and endpoints use exact URL-to-key mappings from the Manifest,
-as in [the Object Storage integration](https://yandex.cloud/en/docs/api-gateway/concepts/extensions/object-storage).
-On-demand patterns point to their referenced Function using
-`x-yc-apigateway-any-method`, leaving HTTP method handling to Astro. Preserve
-parameter/rest matching, route precedence, base, and slash behavior. One shared
-Function can handle many routes; do not invent separate handlers for patterns.
+The template sets `ignoreTrailingSlashes: false`. Static pages use their
+canonical URL under `trailingSlash: "always"` or `"never"`; redirects for other
+spellings remain user-owned. With `"ignore"`, both spellings map to the emitted
+object. On-demand requests reach Astro for its slash behavior. Preserve generated
+rest parameter names, which can encode priority over recursive 404 fallbacks.
 
-After #67, use the complete generated template and its actual variable names.
-For an existing test Gateway, the update command has this shape:
+The [routing examples](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/docs/beta-routing.md#consume-the-template-in-a-deployment-program)
+include a consumer that fills every declared variable from existing Pulumi or
+SST resource outputs and selects a named Function tag in a deployment copy.
+For an existing test Gateway, apply that customized file:
 
 ```sh
 GATEWAY_ID='your-existing-test-gateway-id'
-GATEWAY_SPEC='your-customized-generated-template.yaml'
-yc serverless api-gateway update --id "$GATEWAY_ID" --spec "$GATEWAY_SPEC" \
-  --variables "bucket=$BUCKET,storageAccount=$STORAGE_ACCOUNT_ID,functionId=$FUNCTION_ID,invokeAccount=$INVOKE_ACCOUNT_ID,functionTag=candidate"
+GATEWAY_SPEC='dist/yandex-api-gateway.deployment.json'
+yc serverless api-gateway update --id "$GATEWAY_ID" --spec "$GATEWAY_SPEC"
 ```
 
-Set `STORAGE_ACCOUNT_ID` and `INVOKE_ACCOUNT_ID` to existing authorized accounts.
-Adapt the assignments to the generated variable declarations. This is a
-user-run update, following [the CLI reference](https://yandex.cloud/en/docs/cli/cli-ref/serverless/cli-ref/api-gateway/update),
-not a resource operation performed by the adapter.
+This is a user-run update, following [the CLI reference](https://yandex.cloud/en/docs/cli/cli-ref/serverless/cli-ref/api-gateway/update).
+The adapter does not update the Gateway. Review the copied specification, supplied
+identifiers and permissions before running the command. Cloud deployment remains
+unverified.
 
 ### Asset URLs, 404s, and Gateway limits
 
@@ -607,16 +599,24 @@ origin's object placement. This setting affects Astro-generated asset URLs,
 not arbitrary `public/` references. Root-relative `/robots.txt`, public images,
 and other well-known paths need your own URLs or routing arrangement. See
 [Astro's assetsPrefix reference](https://docs.astro.build/en/reference/configuration-reference/#buildassetsprefix).
+When using Astro's extension/fallback asset-prefix map, configure and verify
+each origin; the Manifest preserves the map instead of selecting one origin.
 
-The recursive 404 option is **pending #68** and applies only to Object Storage
-Targets with Gateway. Under the agreed contract, explicit static nested 404
-pages define scopes. Unknown URLs use the nearest ancestor scope and return
-404; a direct request to a nested 404 also returns 404. Matched endpoints keep
-their own response, including a 404 body. An unmatched `/api/...` URL still uses
-the nearest page fallback. Object Storage + Functions custom 404 pages must be
-static, with required fallback assets copied into the Function Artifact. Without
-an explicit custom 404, the service or Astro uses its normal fallback. Do not
-expect that recursive behavior from today's recorded scopes alone.
+Select `recursive404: true` together with `apiGateway: true` for recursive
+404 handling under either Object Storage Target. Explicit static 404 pages
+create scopes. Completed `getStaticPaths` output creates concrete dynamic scopes,
+not literal `[slug]` prefixes. Unknown URLs use the nearest ancestor scope and
+return 404; a direct request to a nested 404 also returns 404. Matched endpoints
+keep their own response, including a 404 body. An unmatched `/api/...` URL uses
+the nearest page fallback.
+
+Custom 404 pages must be prerendered; on-demand 404 pages fail the build. Page
+Functions retain rendered fallback HTML, and their artifact IDs appear in the
+Manifest's `functionArtifactIds`. Endpoint-only Functions do not become general
+page or asset servers. Browser assets referenced by fallback HTML still need
+the application's Object Storage/CDN delivery. Without an explicit custom 404,
+the adapter does not create one; the service or Astro uses its normal fallback.
+Without recursive handling, only the explicit root scope participates.
 
 Gateway's specification limit is **3.5 MB**, and its request/response limit is
 **2.5 MB**. Check the customized template size and real payloads, including
@@ -630,11 +630,11 @@ command, along with the matching Function live tag and Client Artifact.
 
 ## Constrained direct Function invocation
 
-This workflow is **pending #69 and unverified in Yandex Cloud**. It supports only
-stateless user-defined endpoints, including ordinary static forms posting to
-those endpoints. **Astro Actions, server islands, and on-demand pages require
-Gateway**, including stateless Astro Actions. Do not rely on the current build
-rejecting every incompatible direct-mode application before #69 lands.
+This workflow has local generated-handler and installed-package checks and is
+**unverified in Yandex Cloud**. It supports only stateless user-defined endpoints,
+including ordinary static forms posting to those endpoints. **Astro Actions,
+server islands, and on-demand pages require Gateway**, including stateless Astro
+Actions. Builds without the API Gateway Modifier reject those required routes.
 
 Yandex direct HTTPS invocation removes incoming **Cookie and Authorization**
 headers before the application receives the event. Platform-level authorization
@@ -642,13 +642,13 @@ does not make that Authorization header visible to Astro. Arrange invocation
 permissions on your existing Function according to your intended public or
 private access; the adapter grants none. See [header filtering](https://yandex.cloud/en/docs/functions/concepts/function-invoke#filter).
 
-When implemented, read the reserved parameter name from
+Read the reserved parameter name from
 `directInvocation.requestTargetParameter`, not from a guessed constant. Encode
 the entire original `path?query` once as its value on the provider Function URL.
 Include the Astro base in that path. A separate provider `tag` selects a version:
 
 ```js
-// Contract example for a build that actually emits directInvocation metadata.
+// Use metadata from your direct endpoint build.
 import { readFile } from "node:fs/promises";
 import { parseDeploymentManifest } from "@astro-yandex-cloud/adapter/deployment-manifest";
 
@@ -668,15 +668,15 @@ console.log(url.href);
 the reserved parameter for routing rather than application data. Appending
 `/docs/api/echo` to the provider Function URL does not replace this mechanism.
 
-Static form submissions require an **explicitly configured public origin** for
-the direct invocation feature. The runtime must verify the incoming `Origin`
-against it before constructing the URL Astro sees. Keep `security.checkOrigin`
-enabled; do not disable it to work around a cross-origin form. Astro `site` alone
-is not the pending validated-origin implementation. #69 will supply the actual
-configuration option; none exists in today's `AdapterOptions`.
+Static form submissions require `directOrigin: "https://www.example.com"` and
+a matching incoming `Origin`. The runtime validates it before constructing the
+public URL Astro sees. It rejects missing or untrusted form origins with 403.
+Keep `security.checkOrigin` enabled; Astro `site` alone does not authorize a
+direct form. `directOrigin` accepts only an HTTP or HTTPS origin and is available
+only without Gateway.
 
-Once that feature is available, use the generated URL as an ordinary static
-form's action and verify a real browser POST from the configured origin. Also
+Use the generated URL as an ordinary static form's action and verify a real
+browser POST from the configured origin. Also
 test rejection from a different origin, path/query restoration, repeated values,
 text/binary responses, and the absence of incoming Cookie and Authorization.
 This is a stateless endpoint form, not an Astro Action. Select a named version

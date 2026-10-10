@@ -19,6 +19,8 @@ export type PlannedRoute =
       kind: "prerendered";
       routeKind: "page" | "endpoint";
       pattern: string;
+      priority: number;
+      patternRegex: string;
       paths: Array<{
         url: string;
         objectKey: string;
@@ -30,10 +32,15 @@ export type PlannedRoute =
       routeKind: "page" | "endpoint";
       pattern: string;
       artifactId: ArtifactId<"function">;
+      priority: number;
+      patternRegex: string;
+      origin: string;
     };
 
 export interface RoutePlan {
   routes: PlannedRoute[];
+  base: string;
+  trailingSlash: "always" | "never" | "ignore";
 }
 
 interface RouteEvidence {
@@ -45,6 +52,10 @@ interface RouteEvidence {
   resolvedRoutes: readonly IntegrationResolvedRoute[];
   emittedAssets: ReadonlyMap<string, readonly URL[]>;
   hasFunction: boolean;
+  trailingSlash: "always" | "never" | "ignore";
+  hasServerIslands: boolean;
+  hasRuntimeImages: boolean;
+  imageEndpoint: string;
 }
 
 /** Preliminary route compatibility before Astro emits build artifacts. */
@@ -88,12 +99,16 @@ function pageFile(url: string, files: Set<string>): string {
 function isActiveInternalRoute(
   route: IntegrationResolvedRoute,
   clientHtml: string,
+  hasServerIslands: boolean,
+  hasRuntimeImages: boolean,
+  imageEndpoint: string,
 ): boolean {
   if (route.origin !== "internal") return true;
   if (route.pattern.startsWith("/_actions/")) return true;
   if (route.pattern.startsWith("/_server-islands/"))
-    return clientHtml.includes("/_server-islands/");
-  if (route.pattern === "/_image") return clientHtml.includes("/_image?");
+    return hasServerIslands || clientHtml.includes("/_server-islands/");
+  if (route.pattern === imageEndpoint)
+    return hasRuntimeImages || clientHtml.includes(`${imageEndpoint}?`);
   return false;
 }
 
@@ -122,7 +137,10 @@ export function reconcileRoutes(evidence: RouteEvidence): RoutePlan {
       throw new Error(
         `Prerendered Route ${url} has no emitted Client Artifact file ${file}.`,
       );
-    const publicUrl = withBase(base, url);
+    const publicUrl =
+      url === "/" && base !== "/" && evidence.trailingSlash === "never"
+        ? base
+        : withBase(base, url);
     if (seenUrls.has(publicUrl))
       throw new Error(`Ambiguous Prerendered Route ${publicUrl}.`);
     seenUrls.add(publicUrl);
@@ -132,6 +150,8 @@ export function reconcileRoutes(evidence: RouteEvidence): RoutePlan {
         kind: "prerendered",
         routeKind: route.type as "page" | "endpoint",
         pattern: withBase(base, route.pattern),
+        priority: resolvedRoutes.indexOf(route),
+        patternRegex: route.patternRegex.source,
         paths: [],
       };
       prerenderedRoutes.set(route.pattern, planned);
@@ -180,18 +200,29 @@ export function reconcileRoutes(evidence: RouteEvidence): RoutePlan {
           (route) =>
             (route.type === "page" || route.type === "endpoint") &&
             !route.isPrerendered &&
-            isActiveInternalRoute(route, evidence.clientHtml),
+            isActiveInternalRoute(
+              route,
+              evidence.clientHtml,
+              evidence.hasServerIslands,
+              evidence.hasRuntimeImages,
+              evidence.imageEndpoint,
+            ),
         )
         .map((route) => ({
           kind: "on-demand" as const,
           routeKind: route.type as "page" | "endpoint",
           pattern: withBase(base, route.pattern),
           artifactId: functionId,
+          priority: resolvedRoutes.indexOf(route),
+          patternRegex: route.patternRegex.source,
+          origin: route.origin,
         }))
     : [];
   for (const route of prerenderedRoutes.values())
     route.paths.sort((a, b) => a.url.localeCompare(b.url));
   return {
+    base,
+    trailingSlash: evidence.trailingSlash,
     routes: [...prerenderedRoutes.values(), ...onDemand].sort((a, b) =>
       a.pattern.localeCompare(b.pattern),
     ),
@@ -199,7 +230,10 @@ export function reconcileRoutes(evidence: RouteEvidence): RoutePlan {
 }
 
 /** Projects the route plan into the portable Manifest contract. */
-export function manifestRoutes(plan: RoutePlan): {
+export function manifestRoutes(
+  plan: RoutePlan,
+  recursive404 = false,
+): {
   prerendered: PrerenderedRouteRequirement[];
   onDemand: OnDemandRouteRequirement[];
   notFound: DeploymentManifestV1["routes"]["notFound"];
@@ -213,8 +247,14 @@ export function manifestRoutes(plan: RoutePlan): {
         ...route.paths.map((path) => ({ kind: route.routeKind, ...path })),
       );
       if (route.routeKind === "page" && /\/404\/?$/.test(route.pattern)) {
-        const scope = route.pattern.replace(/\/404\/?$/, "") || "/";
-        notFound.push(...route.paths.map((path) => ({ scope, ...path })));
+        notFound.push(
+          ...route.paths
+            .map((path) => ({
+              scope: path.url.replace(/\/404\/?$/, "") || "/",
+              ...path,
+            }))
+            .filter(({ scope }) => recursive404 || scope === plan.base),
+        );
       }
     } else {
       onDemand.push({

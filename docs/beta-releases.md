@@ -35,7 +35,8 @@ of the live settings. Its pending entries must be completed before closing #16.
   configure approval. The publication-policy job refuses publication when the
   reviewer rule is absent or administrator bypass is enabled.
 
-The version job has Contents and Pull requests write permissions, with no OIDC
+The version policy job has only Contents and Actions read permissions. The
+version job has Contents and Pull requests write permissions, with no OIDC
 permission. Publication policy has only read permissions. Only the publish job
 has `id-token: write`, and that job uses the protected `npm` environment.
 Both workflows share the `adapter-release` concurrency group and do not cancel
@@ -48,17 +49,27 @@ and `.changeset/pre.json` make the next `pnpm release:version` produce
 `0.1.0-beta.1`, including all pending package changes in its changelog. Do not
 publish the seed. The publish command rejects it.
 
-After this release setup reaches `main`, **Prepare beta version** creates or
-updates `changeset-release/main`. It runs Changesets, refreshes the pnpm lockfile,
-and formats the generated files. Review the resulting version PR and its CI,
+After this release setup reaches `main`, **Prepare beta version** waits for a
+successful **CI** push run on the current `main` commit before creating or
+updating `changeset-release/main`. A separate read-only policy job rejects PR or
+fork CI, stale commits, and the latest CI attempt when it is unfinished or failed.
+The version job checks out that exact commit and checks that `main` still points
+to it immediately before running Changesets. It refreshes the pnpm lockfile and
+formats the generated files. Review the resulting version PR and its CI,
 including the packed candidate, then merge it through the normal review process.
-For later betas, add a Changeset and let the same workflow prepare the next number.
+
+Manual dispatch of **Prepare beta version** also requires `main` and successful
+push CI for that exact current commit. If `main` advances while a run is queued,
+wait for the newer push CI instead of preparing a version from an older result.
+The workflow consumes no CI artifacts and executes no PR or fork source. For
+later betas, add a Changeset and let the same workflow prepare the next number.
 Keep prerelease mode enabled; exiting it is a separate stable-release decision.
 
 **Beta release rehearsal** runs on PRs and pushes. In its disposable checkout it
 runs version preparation, checks the first result is exactly `0.1.0-beta.1`,
 checks the lockfile, types, and formatting, and runs `pnpm pack:check`. The
-`rehearsed-beta` artifact contains the prepared tarball and SHA-512 report.
+`rehearsed-beta` artifact contains the prepared tarball and its filename,
+SHA-256 and SHA-512 identity report.
 This job has no publication credentials and only dry-runs npm publication.
 
 ## Bootstrap the npm package
@@ -74,7 +85,7 @@ and permission to create `@astro-yandex-cloud/adapter` before proceeding.
 2. Store it as `NPM_BOOTSTRAP_TOKEN` in the protected **npm environment**, never
    as a repository secret. Only the approved publish step receives it through
    `NODE_AUTH_TOKEN`.
-3. Complete the [release checklist](release-readiness.md) and review the merged
+3. Complete the [release checklist in issue #17](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/17) and review the merged
    version commit and passing CI for that exact `main` SHA.
 4. Run **Publish beta** with `main` selected. Its policy job requires a public
    repository, the environment's required reviewers, disabled administrator
@@ -82,7 +93,8 @@ and permission to create `@astro-yandex-cloud/adapter` before proceeding.
    `npm` deployment and approve it as a required reviewer.
 5. The approved job uses Node 24 and npm 11.21.0. It builds the adapter, packs one
    candidate with pnpm, passes that explicit path to the clean-application
-   checker, verifies its SHA-512 identity, and passes the same archive to
+   checker, records its filename and SHA-256 and SHA-512 digests, verifies its
+   SHA-512 identity again, and passes the same archive to
    `npm publish --ignore-scripts --access public --tag beta --provenance`.
    npm handles publication because its CLI supports trusted-publisher OIDC.
    Installation, version preparation, registry queries, and packing use pnpm.
@@ -174,6 +186,7 @@ credential first, investigate access, and record the incident.
 - [Changesets prereleases](https://github.com/changesets/changesets/blob/main/docs/prereleases.md)
 - [Changesets action compatible with Changesets 2](https://github.com/changesets/action/tree/v1.9.0)
 - [GitHub workflow trigger tokens](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)
+- [GitHub workflow completion events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
 - [GitHub environment protection](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
 - [npm trusted publishing](https://docs.npmjs.com/trusted-publishers)
 - [npm provenance](https://docs.npmjs.com/generating-provenance-statements)

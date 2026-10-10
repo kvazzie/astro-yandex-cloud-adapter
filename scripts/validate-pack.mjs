@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import process from "node:process";
 import { parseArgs, promisify } from "node:util";
 
@@ -36,6 +36,7 @@ if (values.registry) {
   );
 }
 const bytes = await readFile(tarball);
+const sha256 = createHash("sha256").update(bytes).digest("hex");
 const sha512 = createHash("sha512").update(bytes).digest("hex");
 const root = await mkdtemp(join(tmpdir(), "astro-yandex-packed-"));
 // Never inherit module-resolution hooks or workspace NODE_PATH from the caller.
@@ -210,6 +211,8 @@ try {
         name: candidate.name,
         version: candidate.version,
         tarball,
+        filename: basename(tarball),
+        sha256,
         sha512,
         size: bytes.length,
         ...(values.registry

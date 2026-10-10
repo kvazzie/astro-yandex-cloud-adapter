@@ -12,14 +12,14 @@ _Avoid_: Mode, platform, deployment
 An adapter configuration choice that refines how a Target shapes Artifact Generation without performing Deployment or Provisioning.
 
 **API Gateway Modifier**:
-A planned Target Modifier for every supported Target that prepares a build for Request Routing through API Gateway. The API Gateway resource and its final configuration remain user-owned.
+A Target Modifier for every supported Target that prepares a build for Request Routing through API Gateway. The API Gateway resource and its final configuration remain user-owned.
 
 **Object Storage Target**:
 The Target that produces only a Client Artifact and accepts only Static-only Builds.
 _Avoid_: Static target
 
 **Object Storage + Cloud Functions Target**:
-The Target that prepares a Client Artifact for Object Storage and produces Function Artifacts when the build has On-demand Routes. The planned invocation contract restricts direct Function URLs to stateless user-defined endpoints and uses the planned API Gateway Modifier for on-demand pages and Astro's internal endpoints.
+The Target that prepares a Client Artifact for Object Storage and produces Function Artifacts when the build has On-demand Routes. Its invocation contract restricts direct Function URLs to stateless user-defined endpoints and uses the API Gateway Modifier for on-demand pages and Astro's internal endpoints.
 _Avoid_: Hybrid target, server target
 
 **Serverless Container Target**:
@@ -51,7 +51,7 @@ A schema-versioned, machine-readable declaration of emitted Serving Artifacts an
 _Avoid_: Build metadata, deployment configuration
 
 **API Gateway Specification Template**:
-A planned OpenAPI description of the build's page and endpoint Request Routing through API Gateway, derived from the same route requirements as the Deployment Manifest when the planned API Gateway Modifier is selected. Deployment supplies resource identifiers and may customize the specification.
+An OpenAPI description of the build's page and endpoint Request Routing through API Gateway, derived from the same route requirements as the Deployment Manifest when the API Gateway Modifier is selected. Deployment supplies resource identifiers and may customize the specification.
 
 **Function Runtime Bridge**:
 A reusable translation between Yandex Cloud Functions invocations and Web Standards requests and responses. Its compatibility is established against real Yandex Cloud deployments and then shared by products that emit Function Artifacts.
