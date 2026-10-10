@@ -18,14 +18,24 @@ async function adapterDescription(options?: AdapterOptions) {
   return description;
 }
 
+function optionsError(options: unknown): unknown {
+  try {
+    yandexCloud(options as AdapterOptions);
+  } catch (error) {
+    return error;
+  }
+  throw new Error("Expected the adapter to reject invalid options.");
+}
+
 describe("adapter options and routes", () => {
   it("defaults to object-storage", () => {
     expect(yandexCloud().name).toBe("@astro-yandex-cloud/adapter");
   });
 
   it("rejects recursive 404 without Gateway", () => {
-    expect(() => yandexCloud({ recursive404: true })).toThrow(
-      /recursive.*Gateway/i,
+    expect(optionsError({ recursive404: true })).toHaveProperty(
+      "cause._tag",
+      "ParseError",
     );
   });
 
@@ -56,9 +66,83 @@ describe("adapter options and routes", () => {
   });
 
   it("rejects install dependencies for Object Storage", () => {
-    expect(() =>
-      yandexCloud({ target: "object-storage", dependencyStrategy: "install" }),
-    ).toThrow(/dependency strategy.*Object Storage/i);
+    expect(
+      optionsError({ target: "object-storage", dependencyStrategy: "install" }),
+    ).toHaveProperty("cause._tag", "ParseError");
+  });
+
+  it.each([
+    { dependencyStrategy: "install" },
+    { functions: "separate" },
+    { target: "object-storage", functions: "separate" },
+    { directOrigin: "https://static.example" },
+    { target: "object-storage", directOrigin: "https://static.example" },
+    {
+      target: "object-storage-functions",
+      apiGateway: true,
+      directOrigin: "https://static.example",
+    },
+  ])("rejects incompatible options while decoding: %j", (options) => {
+    expect(optionsError(options)).toHaveProperty("cause._tag", "ParseError");
+  });
+
+  it.each([
+    "not-an-origin",
+    "ftp://static.example",
+    "https://user:password@static.example",
+    "https://static.example/path",
+    "https://static.example?query=value",
+    "https://static.example#fragment",
+  ])(
+    "rejects invalid direct origins while decoding options: %s",
+    (directOrigin) => {
+      expect(
+        optionsError({ target: "object-storage-functions", directOrigin }),
+      ).toHaveProperty("cause._tag", "ParseError");
+    },
+  );
+
+  it.each([
+    { dependencyStrategy: "bundle", functions: "shared" },
+    { apiGateway: true, recursive404: true },
+    {
+      target: "object-storage-functions",
+      apiGateway: true,
+      recursive404: true,
+      dependencyStrategy: "install",
+      functions: "separate",
+    },
+    {
+      target: "object-storage-functions",
+      apiGateway: false,
+      recursive404: false,
+      directOrigin: "http://localhost:8080",
+    },
+  ] satisfies AdapterOptions[])("accepts compatible options: %j", (options) => {
+    expect(() => yandexCloud(options)).not.toThrow();
+  });
+
+  it("embeds the normalized direct origin in the Function runtime config", async () => {
+    const hook = yandexCloud({
+      target: "object-storage-functions",
+      directOrigin: "https://STATIC.EXAMPLE:443/",
+    }).hooks["astro:config:setup"];
+    let runtimeSource: unknown;
+
+    await hook?.({
+      config: { vite: {}, outDir: new URL("file:///tmp/adapter-options/") },
+      updateConfig: (patch: {
+        vite: { plugins: [{ load: (id: string) => unknown }] };
+      }) => {
+        runtimeSource = patch.vite.plugins[0].load(
+          "\0virtual:yandex-cloud-runtime-config",
+        );
+      },
+    } as never);
+
+    expect(runtimeSource).toContain(
+      'export const directOrigin = "https://static.example";',
+    );
   });
 
   it("rejects on-demand routes for object storage", async () => {
