@@ -17,25 +17,39 @@ const HttpOriginSchema = Schema.URL.pipe(
 const RoutingOptionsSchema = Schema.Union(
   Schema.Struct({
     apiGateway: Schema.Literal(true),
-    recursive404: Schema.optional(Schema.Boolean),
+    recursive404: Schema.optionalWith(Schema.Boolean, { default: () => false }),
   }),
   Schema.Struct({
-    apiGateway: Schema.optional(Schema.Literal(false)),
-    recursive404: Schema.optional(Schema.Literal(false)),
+    apiGateway: Schema.optionalWith(Schema.Literal(false), {
+      default: () => false,
+    }),
+    recursive404: Schema.optionalWith(Schema.Literal(false), {
+      default: () => false,
+    }),
   }),
 );
 
 const TargetOptionsSchema = Schema.Union(
   Schema.Struct({
-    target: Schema.optional(Schema.Literal("object-storage")),
-    dependencyStrategy: Schema.optional(Schema.Literal("bundle")),
-    functions: Schema.optional(Schema.Literal("shared")),
+    target: Schema.optionalWith(Schema.Literal("object-storage"), {
+      default: () => "object-storage",
+    }),
+    dependencyStrategy: Schema.optionalWith(Schema.Literal("bundle"), {
+      default: () => "bundle",
+    }),
+    functions: Schema.optionalWith(Schema.Literal("shared"), {
+      default: () => "shared",
+    }),
     directOrigin: Schema.optional(Schema.Never),
   }),
   Schema.Struct({
     target: Schema.Literal("object-storage-functions"),
-    dependencyStrategy: Schema.optional(Schema.Literal("bundle", "install")),
-    functions: Schema.optional(Schema.Literal("shared", "separate")),
+    dependencyStrategy: Schema.optionalWith(Schema.Literal("bundle", "install"), {
+      default: () => "bundle",
+    }),
+    functions: Schema.optionalWith(Schema.Literal("shared", "separate"), {
+      default: () => "shared",
+    }),
     directOrigin: Schema.optional(HttpOriginSchema),
   }),
 );
@@ -77,21 +91,21 @@ export const BuildPlanSchema = Schema.Union(
 
 export type BuildPlan = Schema.Schema.Type<typeof BuildPlanSchema>;
 
-/** Resolves decoded options into a compatible Target-specific build plan. */
+/** Maps validated, defaulted options into a compatible Target-specific build plan. */
 export function decodeOptionsToBuildPlan(options: Options): BuildPlan {
-  const target = options.target ?? "object-storage";
   const routing = {
-    apiGateway: options.apiGateway ?? false,
-    recursive404: options.recursive404 ?? false,
+    apiGateway: options.apiGateway,
+    recursive404: options.recursive404,
   };
-  if (target === "object-storage") {
-    return { target, ...routing };
-  }
-  return {
-    target,
-    dependencyStrategy: options.dependencyStrategy ?? "bundle",
-    functions: options.functions ?? "shared",
-    ...routing,
-    ...(options.directOrigin ? { directOrigin: options.directOrigin.origin } : {}),
-  };
+  return options.target === "object-storage"
+    ? { target: options.target, ...routing }
+    : {
+        target: options.target,
+        dependencyStrategy: options.dependencyStrategy,
+        functions: options.functions,
+        ...routing,
+        ...(options.directOrigin
+          ? { directOrigin: options.directOrigin.origin }
+          : {}),
+      };
 }
