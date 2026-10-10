@@ -30,15 +30,29 @@ describe("adapter options and routes", () => {
   });
 
   it("rejects unknown targets", () => {
-    expect(() => yandexCloud({ target: "vm" as never })).toThrow(
-      /Unknown.*target/,
-    );
+    expect.assertions(2);
+    try {
+      yandexCloud({ target: "vm" as never });
+    } catch (error) {
+      expect(error).toHaveProperty("hook", "integration:options");
+      expect(error).toHaveProperty(
+        "cause.message",
+        expect.stringMatching(/\["target"\][\s\S]*actual "vm"/),
+      );
+    }
   });
 
   it("rejects unknown dependency strategies", () => {
-    expect(() => yandexCloud({ dependencyStrategy: "copy" as never })).toThrow(
-      /Unknown.*dependency strategy/,
-    );
+    expect.assertions(2);
+    try {
+      yandexCloud({ dependencyStrategy: "copy" as never });
+    } catch (error) {
+      expect(error).toHaveProperty("hook", "integration:options");
+      expect(error).toHaveProperty(
+        "cause.message",
+        expect.stringMatching(/\["dependencyStrategy"\][\s\S]*actual "copy"/),
+      );
+    }
   });
 
   it("rejects install dependencies for Object Storage", () => {

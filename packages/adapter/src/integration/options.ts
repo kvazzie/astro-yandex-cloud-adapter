@@ -1,22 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import type { DependencyStrategy, FunctionPartition, Target } from "../types.js";
-
-interface RoutingOptions {
-  apiGateway: boolean;
-  recursive404: boolean;
-}
-
-export type BuildPlan =
-  | (RoutingOptions & { target: "object-storage" })
-  | (RoutingOptions & {
-      target: "object-storage-functions";
-      dependencyStrategy: DependencyStrategy;
-      functions: FunctionPartition;
-      directOrigin?: string;
-    });
-
-const optionsSchema = Schema.Struct({
+export const OptionsSchema = Schema.Struct({
   target: Schema.optional(
     Schema.Literal("object-storage", "object-storage-functions"),
   ),
@@ -27,36 +11,32 @@ const optionsSchema = Schema.Struct({
   directOrigin: Schema.optional(Schema.String),
 });
 
-/** Validates user choices once for the integration instance. */
-export function decodeOptions(value: unknown): BuildPlan {
-  let options: Schema.Schema.Type<typeof optionsSchema>;
-  try {
-    options = Schema.decodeUnknownSync(optionsSchema)(value ?? {});
-  } catch {
-    if (
-      typeof value === "object" &&
-      value !== null &&
-      "target" in value &&
-      !(["object-storage", "object-storage-functions"] as unknown[]).includes(
-        value.target,
-      )
-    ) {
-      throw new TypeError(
-        `Unknown Yandex Cloud adapter target: ${String(value.target)}.`,
-      );
-    }
-    if (
-      typeof value === "object" &&
-      value !== null &&
-      "dependencyStrategy" in value
-    ) {
-      throw new TypeError(
-        `Unknown Yandex Cloud adapter dependency strategy: ${String(value.dependencyStrategy)}.`,
-      );
-    }
-    throw new TypeError("Invalid Yandex Cloud adapter options.");
-  }
-  const target: Target = options.target ?? "object-storage";
+export type Options = Schema.Schema.Type<typeof OptionsSchema>;
+
+const routingFields = {
+  apiGateway: Schema.Boolean,
+  recursive404: Schema.Boolean,
+};
+
+export const BuildPlanSchema = Schema.Union(
+  Schema.Struct({
+    target: Schema.Literal("object-storage"),
+    ...routingFields,
+  }),
+  Schema.Struct({
+    target: Schema.Literal("object-storage-functions"),
+    dependencyStrategy: Schema.Literal("bundle", "install"),
+    functions: Schema.Literal("shared", "separate"),
+    directOrigin: Schema.optional(Schema.String),
+    ...routingFields,
+  }),
+);
+
+export type BuildPlan = Schema.Schema.Type<typeof BuildPlanSchema>;
+
+/** Resolves decoded options into a compatible Target-specific build plan. */
+export function decodeOptionsToBuildPlan(options: Options): BuildPlan {
+  const target = options.target ?? "object-storage";
   const routing = {
     apiGateway: options.apiGateway ?? false,
     recursive404: options.recursive404 ?? false,

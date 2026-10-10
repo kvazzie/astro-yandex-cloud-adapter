@@ -7,7 +7,8 @@ import {
 import { ADAPTER_NAME } from "./constants.js";
 import { reportArtifactSizes } from "./build/report.js";
 import { injectedRuntimeTypes } from "./injected-types.js";
-import { decodeOptions } from "./integration/options.js";
+import { decodeOptionsToBuildPlan, OptionsSchema } from "./integration/options.js";
+import type { Options } from "./integration/options.js";
 import { createIntegrationSession } from "./integration/session.js";
 import { runtimeConfigPlugin } from "./runtime-config.js";
 import { selectTarget } from "./target/index.js";
@@ -47,10 +48,11 @@ function hookError(
 }
 
 /** Creates the Bare Adapter integration for the selected Yandex Cloud Target. */
-export default defineIntegration<AdapterOptions | undefined, AdapterOptions>({
+export default defineIntegration<Options, AdapterOptions>({
   name: ADAPTER_NAME,
+  schema: OptionsSchema,
   setup: ({ options }) => {
-    const plan = decodeOptions(options);
+    const plan = decodeOptionsToBuildPlan(options);
     const target = selectTarget(plan);
     const session = createIntegrationSession();
 
