@@ -2,6 +2,7 @@ node_modules
 dist
 .astro
 .artifacts
+packages/adapter/.generated/
 coverage
 *.tgz
 .DS_Store

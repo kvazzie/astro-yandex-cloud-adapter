@@ -85,7 +85,7 @@ and permission to create `@astro-yandex-cloud/adapter` before proceeding.
 2. Store it as `NPM_BOOTSTRAP_TOKEN` in the protected **npm environment**, never
    as a repository secret. Only the approved publish step receives it through
    `NODE_AUTH_TOKEN`.
-3. Complete the [release checklist](release-readiness.md) and review the merged
+3. Complete the [release checklist in issue #17](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/17) and review the merged
    version commit and passing CI for that exact `main` SHA.
 4. Run **Publish beta** with `main` selected. Its policy job requires a public
    repository, the environment's required reviewers, disabled administrator

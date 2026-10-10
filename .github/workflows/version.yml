@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   version-policy:
+    # Version PR automation is enabled only in the upstream repository.
     if: >-
       github.repository == 'kvazzie/astro-yandex-cloud-adapter' &&
       github.ref == 'refs/heads/main' &&

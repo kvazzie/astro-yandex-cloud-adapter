@@ -14,7 +14,7 @@ The cloud procedures below were checked against primary documentation on
 2026-10-05 but have not been executed against Yandex Cloud. Local build, handler,
 preview, package, and S3 tests do not establish provider compatibility. Stable
 release and supported Sharp claims require the later real-cloud tests in the
-[release checklist](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/docs/release-readiness.md).
+[stable promotion checklist in issue #83](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/83).
 
 Start with installation and local preview, then deploy only the artifacts your
 Manifest lists:
@@ -240,7 +240,7 @@ JS
 
 The package exports its JSON Schema as
 `@astro-yandex-cloud/adapter/deployment-manifest.schema.json`. The
-[generated schema shipped in the package](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/packages/adapter/.generated/deployment-manifest.schema.json)
+[Effect Schema source](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/packages/adapter/src/manifest/schema.ts)
 and the packaged parser define version 1. Reject unknown schema versions. Within
 version 1, tolerate unknown additive fields while validating known fields and
 artifact references. Breaking changes after first publication require a new

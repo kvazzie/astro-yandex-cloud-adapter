@@ -4,7 +4,7 @@ The repository is a pnpm monorepo for tightly coupled Yandex Cloud Astro product
 
 ## Now: Bare Adapter beta
 
-Publish `@astro-yandex-cloud/adapter@0.1.0-beta.1` when the [beta release gate](docs/release-readiness.md#010-beta1) is complete.
+Publish `@astro-yandex-cloud/adapter@0.1.0-beta.1` when the [beta release gate in issue #17](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/17) is complete.
 
 The Bare Adapter owns Artifact Generation only. The current integration candidate
 implements the remaining routing contract; review, final candidate CI, protected
@@ -29,7 +29,7 @@ The beta covers:
 
 ## Stable Bare Adapter
 
-Promote to `0.1.0` only after the [stable cloud gate](docs/release-readiness.md#stable-010) passes for actual Yandex Object Storage and Cloud Functions resources.
+Promote to `0.1.0` only after the [stable cloud gate in issue #83](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/83) passes for actual Yandex Object Storage and Cloud Functions resources.
 
 Stable promotion does not require the SST component or GitHub Action. A manual deployment path can establish the evidence.
 

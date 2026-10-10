@@ -1,8 +1,19 @@
+import { readFileSync } from "node:fs";
+
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
 import { parseDeploymentManifest } from "../../packages/adapter/src/deployment-manifest.js";
-import schema from "../../packages/adapter/.generated/deployment-manifest.schema.json" with { type: "json" };
+
+const schema: Record<string, unknown> = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../packages/adapter/.generated/deployment-manifest.schema.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as Record<string, unknown>;
 
 const validateSchema = new Ajv2020().compile(schema);
 
