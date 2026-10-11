@@ -161,8 +161,18 @@ const strategy: DependencyStrategy = "install";
 const partition: FunctionPartition = "separate";
 const options: AdapterOptions = { target, dependencyStrategy: strategy, apiGateway: true, recursive404: true, functions: partition };
 const direct: AdapterOptions = { target, directOrigin: "https://static.example" };
+adapter();
+adapter({ target });
 adapter(direct);
 adapter(options);
+// @ts-expect-error Function dependency options require the Function Target.
+adapter({ dependencyStrategy: "bundle" });
+// @ts-expect-error Object Storage cannot configure Function dependencies.
+adapter({ target: "object-storage", dependencyStrategy: "bundle" });
+// @ts-expect-error Function partition options require the Function Target.
+adapter({ functions: "shared" });
+// @ts-expect-error Object Storage cannot configure Function partitioning.
+adapter({ target: "object-storage", functions: "shared" });
 export function useTypes(runtime: Runtime, result: Result): [YandexCloudRuntime, YandexCloudHttpResult, YandexCloudHttpEvent, YandexCloudInvocationContext] {
   return [runtime, result, runtime.event, runtime.context];
 }

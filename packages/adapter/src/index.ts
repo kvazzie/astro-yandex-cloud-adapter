@@ -7,7 +7,7 @@ import {
 import { ADAPTER_NAME } from "./constants.js";
 import { reportArtifactSizes } from "./build/report.js";
 import { injectedRuntimeTypes } from "./injected-types.js";
-import { decodeOptionsToBuildPlan, OptionsSchema } from "./integration/options.js";
+import { OptionsSchema } from "./integration/options.js";
 import type { Options } from "./integration/options.js";
 import { createIntegrationSession } from "./integration/session.js";
 import { runtimeConfigPlugin } from "./runtime-config.js";
@@ -52,8 +52,7 @@ export default defineIntegration<Options, AdapterOptions>({
   name: ADAPTER_NAME,
   schema: OptionsSchema,
   setup: ({ options }) => {
-    const plan = decodeOptionsToBuildPlan(options);
-    const target = selectTarget(plan);
+    const target = selectTarget(options);
     const session = createIntegrationSession();
 
     return {
@@ -64,7 +63,7 @@ export default defineIntegration<Options, AdapterOptions>({
           yield* Effect.sync(() =>
             updateConfig({
               ...patch,
-              vite: { plugins: [runtimeConfigPlugin(config.site, plan)] },
+              vite: { plugins: [runtimeConfigPlugin(config.site, options)] },
             }),
           );
         }).pipe(Effect.mapError(hookError("astro:config:setup"))),

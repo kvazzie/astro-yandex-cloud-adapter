@@ -72,7 +72,11 @@ describe("adapter options and routes", () => {
   });
 
   it.each([
+    { dependencyStrategy: "bundle" },
+    { target: "object-storage", dependencyStrategy: "bundle" },
     { dependencyStrategy: "install" },
+    { functions: "shared" },
+    { target: "object-storage", functions: "shared" },
     { functions: "separate" },
     { target: "object-storage", functions: "separate" },
     { directOrigin: "https://static.example" },
@@ -103,7 +107,11 @@ describe("adapter options and routes", () => {
   );
 
   it.each([
-    { dependencyStrategy: "bundle", functions: "shared" },
+    {
+      target: "object-storage-functions",
+      dependencyStrategy: "bundle",
+      functions: "shared",
+    },
     { apiGateway: true, recursive404: true },
     {
       target: "object-storage-functions",

@@ -15,20 +15,20 @@ import {
   writePreviewDispatcher,
 } from "../function/partition.js";
 import { prepareNotFoundArtifacts } from "../build/not-found.js";
-import type { BuildPlan } from "../integration/options.js";
+import type { Options } from "../integration/options.js";
 import type { CompletedBuild } from "../integration/session.js";
 import type { TargetModule } from "./module.js";
 import { adapter, buildDirectories } from "./shared.js";
 
 export function objectStorageFunctionsModule(
-  plan: Extract<BuildPlan, { target: "object-storage-functions" }>,
+  options: Extract<Options, { target: "object-storage-functions" }>,
 ): TargetModule {
   return {
     target: "object-storage-functions",
     astroBuildConfig(config: AstroConfig) {
       return Effect.try({
         try: () => {
-          assertUserExternals(config, plan.dependencyStrategy);
+          assertUserExternals(config, options.dependencyStrategy);
           return { build: buildDirectories(config.outDir) };
         },
         catch: (cause) => ({
@@ -46,22 +46,22 @@ export function objectStorageFunctionsModule(
           staticOutput: "stable",
           hybridOutput: "stable",
           serverOutput: "stable",
-          sharpImageService: sharpImageService(plan.dependencyStrategy),
+          sharpImageService: sharpImageService(options.dependencyStrategy),
           envGetSecret: "stable",
           i18nDomains: "unsupported",
         }),
       );
     },
     serverViteConfig(vite: InlineConfig) {
-      return configureServerBuild(vite, plan.dependencyStrategy);
+      return configureServerBuild(vite, options.dependencyStrategy);
     },
     generateArtifacts(build: CompletedBuild) {
       return completeBuild(build, {
-        target: plan.target,
-        dependencyStrategy: plan.dependencyStrategy,
-        apiGateway: plan.apiGateway,
-        recursive404: plan.recursive404,
-        functionPartition: plan.functions,
+        target: options.target,
+        dependencyStrategy: options.dependencyStrategy,
+        apiGateway: options.apiGateway,
+        recursive404: options.recursive404,
+        functionPartition: options.functions,
         prepareArtifacts: (build, routePlan) =>
           Effect.gen(function* () {
             const incompatible = routePlan.routes.filter(
@@ -69,7 +69,7 @@ export function objectStorageFunctionsModule(
                 route.kind === "on-demand" &&
                 (route.routeKind === "page" || route.origin === "internal"),
             );
-            if (!plan.apiGateway && incompatible.length) {
+            if (!options.apiGateway && incompatible.length) {
               return yield* Effect.fail({
                 _tag: "UnsupportedRoute" as const,
                 message: `Direct Function URLs support only stateless user-defined endpoints. These required routes need apiGateway: true: ${incompatible.map((route) => route.pattern).join(", ")}.`,
@@ -87,7 +87,7 @@ export function objectStorageFunctionsModule(
                 message: `Custom 404 page ${dynamic404.pattern} must be prerendered. Add export const prerender = true.`,
               });
             }
-            const prepared = yield* partitionFunctions(build, routePlan, plan);
+            const prepared = yield* partitionFunctions(build, routePlan, options);
             if (!prepared.functions.length)
               yield* Effect.tryPromise({
                 try: () =>
@@ -104,7 +104,7 @@ export function objectStorageFunctionsModule(
                   build,
                   prepared.routePlan,
                   prepared.functions,
-                  plan.recursive404,
+                  options.recursive404,
                 ),
               catch: (cause) => ({
                 _tag: "InvalidArtifact" as const,
@@ -124,7 +124,7 @@ export function objectStorageFunctionsModule(
                   }),
                 });
             }
-            if (plan.functions === "separate" && prepared.functions.length)
+            if (options.functions === "separate" && prepared.functions.length)
               yield* Effect.tryPromise({
                 try: () =>
                   writePreviewDispatcher(
