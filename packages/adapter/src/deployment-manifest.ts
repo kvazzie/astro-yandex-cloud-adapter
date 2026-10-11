@@ -29,6 +29,27 @@ function belongsToBase(base: string, path: string): boolean {
 }
 
 function checkReferences(manifest: DeploymentManifestV1): void {
+  if (manifest.modifiers.recursive404 && !manifest.modifiers.apiGateway)
+    invalidManifest("recursive 404 requires the API Gateway modifier.");
+  if (
+    manifest.modifiers.functions === "separate" &&
+    manifest.target !== "object-storage-functions"
+  )
+    invalidManifest(
+      "separate partitioning requires the Object Storage + Cloud Functions Target.",
+    );
+  if (
+    manifest.modifiers.dependencyStrategy === "install" &&
+    manifest.target !== "object-storage-functions"
+  )
+    invalidManifest(
+      "install dependencies require the Object Storage + Cloud Functions Target.",
+    );
+  if (
+    manifest.modifiers.functions === "shared" &&
+    manifest.artifacts.functions.length > 1
+  )
+    invalidManifest("shared partitioning cannot describe multiple Functions.");
   if (
     !isCanonicalUrlPath(manifest.base) ||
     (manifest.base !== "/" && manifest.base.endsWith("/"))
@@ -53,6 +74,14 @@ function checkReferences(manifest: DeploymentManifestV1): void {
   if (manifest.directInvocation && manifest.modifiers.apiGateway) {
     invalidManifest("direct invocation cannot accompany an API Gateway template.");
   }
+  if (manifest.directInvocation && !manifest.artifacts.functions.length)
+    invalidManifest("direct invocation needs a Function Artifact.");
+  if (
+    manifest.artifacts.functions.length &&
+    !manifest.modifiers.apiGateway &&
+    !manifest.directInvocation
+  )
+    invalidManifest("direct Functions need request-target metadata.");
   const functionIds = new Set(manifest.artifacts.functions.map(({ id }) => id));
   const staticUrls = new Set<string>();
   const prefix = manifest.base === "/" ? "" : `${manifest.base.slice(1)}/`;
@@ -80,6 +109,16 @@ function checkReferences(manifest: DeploymentManifestV1): void {
   const onDemandPatterns = new Set<string>();
   for (const route of manifest.routes.onDemand) {
     if (
+      !manifest.modifiers.apiGateway &&
+      (route.kind !== "endpoint" ||
+        /^\/(?:_image|_actions|_server-islands)(?:\/|$)/.test(
+          route.pattern.slice(manifest.base === "/" ? 0 : manifest.base.length),
+        ))
+    )
+      invalidManifest(
+        "direct Functions can serve only stateless user-defined endpoints; pages and internal routes need API Gateway.",
+      );
+    if (
       !isCanonicalUrlPath(route.pattern) ||
       !belongsToBase(manifest.base, route.pattern)
     ) {
@@ -99,6 +138,15 @@ function checkReferences(manifest: DeploymentManifestV1): void {
   if (!manifest.routes.onDemand.length && manifest.artifacts.functions.length) {
     invalidManifest("Function Artifacts need On-demand Routes.");
   }
+  if (
+    manifest.artifacts.functions.some(
+      (artifact) =>
+        !manifest.routes.onDemand.some(
+          (route) => route.artifactId === artifact.id,
+        ),
+    )
+  )
+    invalidManifest("every Function Artifact must serve an On-demand Route.");
   const notFoundScopes = new Set<string>();
   for (const scope of manifest.routes.notFound) {
     const expectedUrl = `${scope.scope === "/" ? "" : scope.scope}/404`;
@@ -116,8 +164,16 @@ function checkReferences(manifest: DeploymentManifestV1): void {
       !belongsToBase(manifest.base, scope.url) ||
       !scope.objectKey.startsWith(prefix) ||
       scope.artifactId !== manifest.artifacts.client.id ||
-      (scope.functionArtifactId !== undefined &&
-        !functionIds.has(scope.functionArtifactId)) ||
+      (scope.functionArtifactIds !== undefined &&
+        (new Set(scope.functionArtifactIds).size !==
+          scope.functionArtifactIds.length ||
+          scope.functionArtifactIds.some(
+            (id) =>
+              !functionIds.has(id) ||
+              !manifest.routes.onDemand.some(
+                (route) => route.kind === "page" && route.artifactId === id,
+              ),
+          ))) ||
       (scope.url !== expectedUrl && scope.url !== `${expectedUrl}/`) ||
       !matchingPage ||
       notFoundScopes.has(scope.scope)

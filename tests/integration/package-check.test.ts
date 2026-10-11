@@ -232,6 +232,10 @@ if (args[0] === "install") {
       await check;
       expect(JSON.parse(await readFile(report, "utf8"))).toMatchObject({
         sourceCommit,
+        filename: "explicit-candidate.tgz",
+        sha256: createHash("sha256")
+          .update(await readFile(candidate))
+          .digest("hex"),
         checks: [
           "exports",
           "manifest-contract",
@@ -240,6 +244,9 @@ if (args[0] === "install") {
           "object-storage-functions:static:/docs",
           "object-storage-functions:bundle:/docs",
           "object-storage-functions:install:/docs",
+          "object-storage:gateway-404:/docs",
+          "object-storage-functions:direct-form:/docs",
+          "object-storage-functions:separate-gateway-404:/docs",
         ],
       });
     } else {
@@ -273,6 +280,10 @@ it.each(["minimum", "workspace"])(
       name: "@astro-yandex-cloud/adapter",
       version: "0.0.0-package-check",
       tarball: candidate,
+      filename: "explicit-candidate.tgz",
+      sha256: createHash("sha256")
+        .update(await readFile(candidate))
+        .digest("hex"),
       sha512: createHash("sha512")
         .update(await readFile(candidate))
         .digest("hex"),
@@ -284,6 +295,9 @@ it.each(["minimum", "workspace"])(
         "object-storage-functions:static:/docs",
         "object-storage-functions:bundle:/docs",
         "object-storage-functions:install:/docs",
+        "object-storage:gateway-404:/docs",
+        "object-storage-functions:direct-form:/docs",
+        "object-storage-functions:separate-gateway-404:/docs",
       ],
     });
   },

@@ -1,0 +1,8 @@
+---
+export function getStaticPaths() {
+  return Array.from({ length: 4_000 }, (_, index) => ({ params: { id: `page-${index}` } }));
+}
+---
+
+<!doctype html>
+<title>Gateway specification limit</title>

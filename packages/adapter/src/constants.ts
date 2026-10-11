@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import type { PackageJson } from "pkg-types";
 
 export const ADAPTER_NAME = "@astro-yandex-cloud/adapter" as const;
+export { DIRECT_REQUEST_TARGET_PARAMETER } from "./runtime/constants.js";
 const packageJson = createRequire(import.meta.url)(
   "../package.json",
 ) as PackageJson;

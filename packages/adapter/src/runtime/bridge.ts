@@ -1,4 +1,5 @@
 import type {
+  FunctionInvocationOptions,
   YandexCloudHttpEvent,
   YandexCloudHttpResult,
   YandexCloudInvocationContext,
@@ -6,12 +7,25 @@ import type {
 } from "./types.js";
 import * as Effect from "effect/Effect";
 
+import { DIRECT_REQUEST_TARGET_PARAMETER } from "./constants.js";
+
 export type {
   YandexCloudHttpEvent,
   YandexCloudHttpResult,
   YandexCloudInvocationContext,
   YandexCloudRuntime,
 } from "./types.js";
+
+/** A malformed direct invocation that must not reach application code. */
+export class FunctionRequestError extends Error {
+  constructor(
+    readonly status: 400 | 403,
+    message: string,
+  ) {
+    super(message);
+    this.name = "FunctionRequestError";
+  }
+}
 
 function firstHeader(
   event: YandexCloudHttpEvent,
@@ -65,6 +79,55 @@ function eventQuery(event: YandexCloudHttpEvent): string {
   return query.toString();
 }
 
+/** Validates the provider wrapper separately from the application's query. */
+function directRequestTarget(query: string): string {
+  const invalid = () =>
+    new FunctionRequestError(400, "Invalid or missing direct request target.");
+  const targets = new URLSearchParams(query).getAll(
+    DIRECT_REQUEST_TARGET_PARAMETER,
+  );
+  if (targets.length !== 1) throw invalid();
+  const target = targets[0]!;
+  if (
+    !target.startsWith("/") ||
+    target.startsWith("//") ||
+    /[\\#\s]/u.test(target)
+  )
+    throw invalid();
+  const path = target.split("?", 1)[0]!;
+  let decodedPath: string;
+  try {
+    const decoded = decodeURIComponent(target);
+    if (!decoded.startsWith("/") || decoded.startsWith("//")) throw invalid();
+    decodedPath = decodeURIComponent(path);
+    // URLSearchParams repairs malformed outer encoding; reject it instead.
+    for (const entry of query.split("&")) {
+      const equals = entry.indexOf("=");
+      const rawName = equals < 0 ? entry : entry.slice(0, equals);
+      if (
+        decodeURIComponent(rawName.replaceAll("+", " ")) ===
+        DIRECT_REQUEST_TARGET_PARAMETER
+      )
+        if (
+          decodeURIComponent(entry.slice(equals + 1).replaceAll("+", " ")) !==
+          target
+        )
+          throw invalid();
+    }
+  } catch {
+    throw invalid();
+  }
+  if (/[\\\p{Cc}]/u.test(decodedPath)) throw invalid();
+  if (
+    path.split("/").some((segment) => {
+      const value = decodeURIComponent(segment);
+      return value === "." || value === "..";
+    })
+  )
+    throw invalid();
+  return target;
+}
+
 function originForEvent(
   event: YandexCloudHttpEvent,
   configuredSite?: string,
@@ -78,6 +141,35 @@ function originForEvent(
   );
 }
 
+/** Uses only a configured origin after verifying incoming browser origin data. */
+function directRequestOrigin(
+  event: YandexCloudHttpEvent,
+  headers: Headers,
+  method: string,
+  configuredSite: string | undefined,
+  directOrigin: string | undefined,
+): string {
+  const origin = headers.get("origin");
+  const contentType = headers
+    .get("content-type")
+    ?.split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
+  const formSubmission =
+    !["GET", "HEAD", "OPTIONS"].includes(method) &&
+    (contentType === "application/x-www-form-urlencoded" ||
+      contentType === "multipart/form-data" ||
+      contentType === "text/plain");
+  if (formSubmission && (!directOrigin || !origin))
+    throw new FunctionRequestError(
+      403,
+      "Direct form submissions require a configured directOrigin and matching Origin header.",
+    );
+  if (origin && (!directOrigin || origin !== directOrigin))
+    throw new FunctionRequestError(403, "Untrusted direct request Origin.");
+  return directOrigin ?? originForEvent(event, configuredSite);
+}
+
 export function getClientAddress(event: YandexCloudHttpEvent): string | undefined {
   return (
     event.requestContext?.identity?.sourceIp ??
@@ -88,6 +180,7 @@ export function getClientAddress(event: YandexCloudHttpEvent): string | undefine
 export function toWebRequest(
   event: YandexCloudHttpEvent,
   configuredSite?: string,
+  options?: FunctionInvocationOptions,
 ): Request {
   if (!event || typeof event !== "object")
     throw new TypeError("Expected a Yandex HTTPS event.");
@@ -104,9 +197,23 @@ export function toWebRequest(
     throw new TypeError("The Yandex HTTPS event contains an empty HTTP method.");
 
   const query = eventQuery(event);
-  const url = `${originForEvent(event, configuredSite)}${eventPath(event)}${query ? `?${query}` : ""}`;
   const headers = new Headers();
   appendHeaders(headers, event);
+  const target =
+    options && !options.apiGateway
+      ? directRequestTarget(query)
+      : `${eventPath(event)}${query ? `?${query}` : ""}`;
+  const origin =
+    options && !options.apiGateway
+      ? directRequestOrigin(
+          event,
+          headers,
+          method,
+          configuredSite,
+          options.directOrigin,
+        )
+      : originForEvent(event, configuredSite);
+  const url = `${origin}${target}`;
 
   let body: BodyInit | undefined;
   if (method !== "GET" && method !== "HEAD" && event.body != null) {
@@ -195,10 +302,11 @@ export function invoke(
     clientAddress: string | undefined,
     locals: { runtime: YandexCloudRuntime },
   ) => Promise<Response>,
+  options?: FunctionInvocationOptions,
 ): Effect.Effect<YandexCloudHttpResult, unknown> {
   return Effect.gen(function* () {
     const request = yield* Effect.try({
-      try: () => toWebRequest(event, configuredSite),
+      try: () => toWebRequest(event, configuredSite, options),
       catch: (error) => error,
     });
     const response = yield* Effect.tryPromise({
@@ -210,5 +318,18 @@ export function invoke(
       try: () => fromWebResponse(response),
       catch: (error) => error,
     });
-  });
+  }).pipe(
+    Effect.catchAll((error) =>
+      error instanceof FunctionRequestError
+        ? Effect.tryPromise(() =>
+            fromWebResponse(
+              new Response(error.message, {
+                status: error.status,
+                headers: { "content-type": "text/plain; charset=utf-8" },
+              }),
+            ),
+          )
+        : Effect.fail(error),
+    ),
+  );
 }

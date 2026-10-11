@@ -1,8 +1,19 @@
+import { readFileSync } from "node:fs";
+
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
 import { parseDeploymentManifest } from "../../packages/adapter/src/deployment-manifest.js";
-import schema from "../../packages/adapter/.generated/deployment-manifest.schema.json" with { type: "json" };
+
+const schema: Record<string, unknown> = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../packages/adapter/.generated/deployment-manifest.schema.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as Record<string, unknown>;
 
 const validateSchema = new Ajv2020().compile(schema);
 
@@ -48,10 +59,36 @@ function functionManifest() {
     pattern: "/docs/api/ping",
     artifactId: "function:shared",
   });
-  return value;
+  return {
+    ...value,
+    directInvocation: { requestTargetParameter: "__astro_path" },
+  };
 }
 
 describe("Deployment Manifest consumers", () => {
+  it("rejects separate Function partitioning on Object Storage", () => {
+    const value = staticManifest();
+    Object.assign(value.modifiers, { functions: "separate" });
+    expect(() => parseDeploymentManifest(value)).toThrow(/partition.*Functions/i);
+  });
+
+  it.each([
+    "/docs/_image",
+    "/docs/_actions/[...path]",
+    "/docs/_server-islands/[name]",
+  ])("rejects a direct internal route %s", (pattern) => {
+    const value = functionManifest();
+    value.routes.onDemand[0]!.pattern = pattern;
+    expect(() => parseDeploymentManifest(value)).toThrow(
+      /user-defined endpoints/i,
+    );
+  });
+
+  it("rejects recursive 404 without Gateway", () => {
+    const value = staticManifest();
+    Object.assign(value.modifiers, { recursive404: true });
+    expect(() => parseDeploymentManifest(value)).toThrow(/recursive.*Gateway/i);
+  });
   it("accepts v1 with additive fields at every depth", () => {
     const value = {
       ...staticManifest(),

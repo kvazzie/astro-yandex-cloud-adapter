@@ -14,7 +14,7 @@ This is a single-context repo with root `CONTEXT.md` and `docs/adr/`. See `docs/
 
 ### Releases
 
-When preparing or verifying a release, read [the release checklist](docs/release-readiness.md).
+When preparing or verifying the first beta release, read [the release checklist in issue #17](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/17). For stable promotion, read [issue #83](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/83).
 
 ### Setup
 

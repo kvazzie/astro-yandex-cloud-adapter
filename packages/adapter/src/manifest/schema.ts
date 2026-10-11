@@ -48,7 +48,9 @@ const notFoundScope = extensible({
   url: urlPath,
   objectKey: relativePath,
   artifactId: nonEmpty,
-  functionArtifactId: Schema.optional(nonEmpty),
+  functionArtifactIds: Schema.optional(
+    Schema.Array(nonEmpty).pipe(Schema.minItems(1)),
+  ),
 });
 
 export const ManifestV1Schema = extensible({
@@ -57,10 +59,17 @@ export const ManifestV1Schema = extensible({
   target: Schema.Literal("object-storage", "object-storage-functions"),
   modifiers: extensible({
     apiGateway: Schema.Boolean,
+    recursive404: Schema.optional(Schema.Boolean),
+    functions: Schema.optional(Schema.Literal("shared", "separate")),
     dependencyStrategy: Schema.optional(Schema.Literal("bundle", "install")),
   }),
   base: basePath,
-  assetsPrefix: Schema.optional(nonEmpty),
+  assetsPrefix: Schema.optional(
+    Schema.Union(
+      nonEmpty,
+      Schema.Record({ key: Schema.String, value: Schema.String }),
+    ),
+  ),
   artifacts: extensible({
     client: clientArtifact,
     functions: Schema.Array(functionArtifact),

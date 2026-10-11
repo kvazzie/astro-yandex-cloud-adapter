@@ -32,8 +32,9 @@ dist-tag. Cloud procedures are documented but unverified in Yandex Cloud.
 Project terminology is defined in [`CONTEXT.md`](CONTEXT.md). Architectural decisions
 and design constraints live in [`docs/adr`](docs/adr).
 
-See [`docs/release-readiness.md`](docs/release-readiness.md) for beta and stable release
-gates, and [`ROADMAP.md`](ROADMAP.md) for planned deployment products and shared packages.
+Track beta release gates in [issue #17](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/17)
+and stable promotion in [issue #83](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/83).
+See [`ROADMAP.md`](ROADMAP.md) for planned deployment products and shared packages.
 
 Run `devenv test` for the [local S3 upload and update checks](docs/local-s3-testing.md).
 The CI job retains their logs and JUnit report for release review.

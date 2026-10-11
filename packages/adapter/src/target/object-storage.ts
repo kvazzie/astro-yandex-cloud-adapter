@@ -5,13 +5,13 @@ import type { InlineConfig } from "vite";
 import { completeBuild } from "../build/complete.js";
 import { manifestRoutes, registeredOnDemandRoutes } from "../build/routes.js";
 import { assertUserExternals, configureServerBuild } from "../function/config.js";
-import type { BuildPlan } from "../integration/options.js";
+import type { Options } from "../integration/options.js";
 import type { CompletedBuild } from "../integration/session.js";
 import type { TargetModule } from "./module.js";
 import { adapter, buildDirectories } from "./shared.js";
 
 export function objectStorageModule(
-  plan: Extract<BuildPlan, { target: "object-storage" }>,
+  options: Extract<Options, { target: "object-storage" }>,
 ): TargetModule {
   return {
     target: "object-storage",
@@ -52,7 +52,9 @@ export function objectStorageModule(
     },
     generateArtifacts(build: CompletedBuild) {
       return completeBuild(build, {
-        target: plan.target,
+        target: options.target,
+        apiGateway: options.apiGateway,
+        recursive404: options.recursive404,
         prepareArtifacts: (_build, routePlan, hasFunction) => {
           const onDemand = manifestRoutes(routePlan).onDemand.map(
             (route) => route.pattern,
@@ -64,7 +66,7 @@ export function objectStorageModule(
                 ? `The object-storage target cannot serve on-demand routes: ${onDemand.join(", ")}. Use target "object-storage-functions" or prerender these routes.`
                 : 'The object-storage target cannot produce a Function Artifact. Use target "object-storage-functions".',
             });
-          return Effect.void;
+          return Effect.succeed({ routePlan, functions: [] });
         },
       });
     },

@@ -13,7 +13,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "test": "pnpm build && vitest run",
-    "test:unit": "vitest run tests/unit",
+    "test:unit": "pnpm --filter @astro-yandex-cloud/adapter schema:generate && vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:s3": "node scripts/test-s3.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",

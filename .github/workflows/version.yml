@@ -1,7 +1,9 @@
 name: Prepare beta version
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -13,20 +15,62 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  version-policy:
+    # Version PR automation is enabled only in the upstream repository.
+    if: >-
+      github.repository == 'kvazzie/astro-yandex-cloud-adapter' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.conclusion == 'success'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.policy.outputs.sha }}
+    steps:
+      # workflow_run must execute only the workflow's main source, never PR code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Require successful push CI on the current main commit
+        id: policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-version-policy.mjs
+
   version:
-    if: github.ref == 'refs/heads/main'
+    needs: version-policy
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.version-policy.outputs.sha }}
+          persist-credentials: false
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Recheck main before changing version files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPROVED_SHA: ${{ needs.version-policy.outputs.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$APPROVED_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$APPROVED_SHA"
       - name: Create or update the version pull request
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0, Changesets 2
         with:

@@ -4,15 +4,22 @@ The repository is a pnpm monorepo for tightly coupled Yandex Cloud Astro product
 
 ## Now: Bare Adapter beta
 
-Publish `@astro-yandex-cloud/adapter@0.1.0-beta.1` when the [beta release gate](docs/release-readiness.md#010-beta1) is complete.
+Publish `@astro-yandex-cloud/adapter@0.1.0-beta.1` when the [beta release gate in issue #17](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/17) is complete.
 
-The Bare Adapter owns Artifact Generation only. Its immediate priorities are:
+The Bare Adapter owns Artifact Generation only. The current integration candidate
+implements the remaining routing contract; review, final candidate CI, protected
+`main` landing, publication and credential replacement are still release gates.
+See the [routing examples](docs/beta-routing.md) and
+[first beta evidence record](docs/releases/0.1.0-beta.1-evidence.md).
+
+The beta covers:
 
 - Correct Static-only and Runtime Build classification, including Astro-internal and integration-injected routes.
 - Working Astro Actions through API Gateway payload `0.1`.
 - Direct Function Invocation for stateless user-defined endpoints, including forms with an explicit public origin and Astro's origin check preserved.
 - Target Modifiers, including an API Gateway Modifier that emits a customizable OpenAPI specification template without creating a Gateway.
 - Optional recursive static 404 pages for Object Storage builds with API Gateway, including concrete dynamic scopes.
+- Shared or separate Function Artifacts with stable route references.
 - Working preview for both build classes.
 - Non-root base placement.
 - Bundle and install dependency strategies using Astro's build pipeline.
@@ -22,7 +29,7 @@ The Bare Adapter owns Artifact Generation only. Its immediate priorities are:
 
 ## Stable Bare Adapter
 
-Promote to `0.1.0` only after the [stable cloud gate](docs/release-readiness.md#stable-010) passes for actual Yandex Object Storage and Cloud Functions resources.
+Promote to `0.1.0` only after the [stable cloud gate in issue #83](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/83) passes for actual Yandex Object Storage and Cloud Functions resources.
 
 Stable promotion does not require the SST component or GitHub Action. A manual deployment path can establish the evidence.
 

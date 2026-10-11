@@ -1,5 +1,13 @@
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -30,6 +38,7 @@ async function startPreview(
   target: "object-storage" | "object-storage-functions",
   base = "/",
   configOverrides: Pick<Astro.AstroUserConfig, "build" | "trailingSlash"> = {},
+  adapterOptions: { apiGateway?: boolean; recursive404?: boolean } = {},
 ): Promise<{ server: PreviewServer; origin: string; application: string }> {
   const application = join(root, `application-${applicationCount++}`);
   await cp(join(fixtures, fixture, "src"), join(application, "src"), {
@@ -42,6 +51,13 @@ async function startPreview(
     join(application, "public/preview.mjs"),
     "export const preview = true;\n",
   );
+  if (adapterOptions.recursive404) {
+    await mkdir(join(application, "src/pages/guide"), { recursive: true });
+    await writeFile(
+      join(application, "src/pages/guide/404.astro"),
+      "<h1>Guide missing page</h1>",
+    );
+  }
   if (fixture === "mixed") {
     await cp(
       join(fixtures, "static/src/pages/about.astro"),
@@ -53,7 +69,7 @@ async function startPreview(
     `import yandexCloud from "@astro-yandex-cloud/adapter";
 import { defineConfig, passthroughImageService } from "astro/config";
 export default defineConfig({
-  adapter: yandexCloud({ target: ${JSON.stringify(target)} }),
+  adapter: yandexCloud({ target: ${JSON.stringify(target)}, apiGateway: ${String(fixture === "mixed" || fixture === "actions")}, ...${JSON.stringify(adapterOptions)} }),
   base: ${JSON.stringify(base)},
   site: "https://fixture.example",
   output: ${JSON.stringify(fixture === "actions" ? "server" : "static")},
@@ -172,6 +188,75 @@ describe.sequential("preview from an installed adapter tarball", () => {
       await expect(fetch(`${origin}${prefix}/`)).rejects.toThrow();
     },
   );
+
+  it.each(["/", "/docs"])(
+    "previews the normal root custom 404 under %s without recursive mode",
+    async (base) => {
+      const { server, origin } = await startPreview(
+        "static",
+        "object-storage",
+        base,
+      );
+      const prefix = base === "/" ? "" : base;
+      try {
+        for (const path of ["/missing", "/404", "/404/"]) {
+          const response = await fetch(`${origin}${prefix}${path}`);
+          expect(response.status).toBe(404);
+          expect(await response.text()).toContain("Missing page");
+        }
+        const head = await fetch(`${origin}${prefix}/missing`, { method: "HEAD" });
+        expect(head.status).toBe(404);
+        expect(await head.text()).toBe("");
+        if (prefix)
+          expect(await (await fetch(`${origin}/outside`)).text()).toBe(
+            "Not Found",
+          );
+      } finally {
+        await server.stop();
+        await server.closed();
+      }
+    },
+  );
+
+  it("previews nearest recursive 404 pages and explicit 404 URLs without a Function Artifact", async () => {
+    const { server, origin } = await startPreview(
+      "static",
+      "object-storage",
+      "/docs",
+      {},
+      { apiGateway: true, recursive404: true },
+    );
+    try {
+      for (const path of [
+        "/docs/guide/missing",
+        "/docs/guide/404",
+        "/docs/guide/404/",
+      ]) {
+        const missing = await fetch(`${origin}${path}`);
+        expect(missing.status).toBe(404);
+        expect(missing.headers.get("content-type")).toBe(
+          "text/html; charset=utf-8",
+        );
+        expect(await missing.text()).toContain("Guide missing page");
+      }
+      const rootMissing = await fetch(`${origin}/docs/elsewhere`);
+      expect(rootMissing.status).toBe(404);
+      expect(await rootMissing.text()).toContain("Missing page");
+      const head = await fetch(`${origin}/docs/guide/missing`, { method: "HEAD" });
+      expect(head.status).toBe(404);
+      expect(head.headers.get("content-type")).toBe("text/html; charset=utf-8");
+      expect(await head.text()).toBe("");
+      expect(await (await fetch(`${origin}/docs-other/missing`)).text()).toBe(
+        "Not Found",
+      );
+      const existing = await fetch(`${origin}/docs/about/`);
+      expect(existing.status).toBe(200);
+      expect(await existing.text()).toContain("Static about page");
+    } finally {
+      await server.stop();
+      await server.closed();
+    }
+  });
 
   it.each([
     {

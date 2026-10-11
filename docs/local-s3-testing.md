@@ -86,4 +86,4 @@ failed runs:
 
 These tests cover local S3 object behavior. They do not establish Yandex Object
 Storage website index, error, redirect, or other cloud-specific behavior. Real
-Yandex Cloud verification remains a separate [release gate](release-readiness.md).
+Yandex Cloud verification remains a separate [stable release gate in issue #83](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/83).
