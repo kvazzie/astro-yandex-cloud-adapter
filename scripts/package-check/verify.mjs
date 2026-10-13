@@ -152,15 +152,15 @@ for (const [subpath, entry] of Object.entries(candidate.exports)) {
 }
 assert.equal(typeof yandexCloud, "function");
 typeProbe += `
-import adapter, { type AdapterOptions, type Target, type DependencyStrategy, type FunctionPartition, type DeploymentManifestV1,
+import adapter, { type EncodedOptions, type Target, type DependencyStrategy, type FunctionPartition, type DeploymentManifestV1,
   type YandexCloudRuntime, type YandexCloudInvocationContext, type YandexCloudHttpEvent, type YandexCloudHttpResult } from "${name}";
 import type { YandexCloudRuntime as Runtime, YandexCloudHttpResult as Result } from "${name}/runtime";
 import { parseDeploymentManifest, defineDeploymentManifest } from "${name}/deployment-manifest";
 const target: Target = "object-storage-functions";
 const strategy: DependencyStrategy = "install";
 const partition: FunctionPartition = "separate";
-const options: AdapterOptions = { target, dependencyStrategy: strategy, apiGateway: true, recursive404: true, functions: partition };
-const direct: AdapterOptions = { target, directOrigin: "https://static.example" };
+const options: EncodedOptions = { target, dependencyStrategy: strategy, apiGateway: true, recursive404: true, functions: partition };
+const direct: EncodedOptions = { target, directOrigin: "https://static.example" };
 adapter();
 adapter({ target });
 adapter(direct);

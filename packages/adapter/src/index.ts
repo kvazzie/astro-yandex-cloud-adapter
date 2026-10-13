@@ -13,14 +13,14 @@ import { createIntegrationSession } from "./integration/session.js";
 import { runtimeConfigPlugin } from "./runtime-config.js";
 import { selectTarget } from "./target/index.js";
 import type { BuildError } from "./target/module.js";
-import type { AdapterOptions } from "./types.js";
+import type { EncodedOptions } from "./types.js";
 
 export {
   defineDeploymentManifest,
   parseDeploymentManifest,
 } from "./deployment-manifest.js";
 export type {
-  AdapterOptions,
+  EncodedOptions,
   DependencyStrategy,
   FunctionPartition,
   DeploymentManifestV1,
@@ -48,7 +48,7 @@ function hookError(
 }
 
 /** Creates the Bare Adapter integration for the selected Yandex Cloud Target. */
-export default defineIntegration<Options, AdapterOptions>({
+export default defineIntegration<Options, EncodedOptions>({
   name: ADAPTER_NAME,
   schema: OptionsSchema,
   setup: ({ options }) => {

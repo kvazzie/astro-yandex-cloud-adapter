@@ -109,7 +109,7 @@ for recovery after a partially completed publication.
 
 ## Public runtime types
 
-The root entrypoint keeps `AdapterOptions`, `Target`, `DependencyStrategy`,
+The root entrypoint keeps `EncodedOptions`, `Target`, `DependencyStrategy`,
 `FunctionPartition`, and runtime/context types.
 `@astro-yandex-cloud/adapter/runtime` is a type-only
 entrypoint. Translation helpers are internal to the generated server and have no
