@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import yandexCloud from "../../packages/adapter/src/index.js";
-import type { AdapterOptions } from "../../packages/adapter/src/types.js";
+import type { EncodedOptions } from "../../packages/adapter/src/types.js";
 
-async function adapterDescription(options?: AdapterOptions) {
+async function adapterDescription(options?: EncodedOptions) {
   const hook = yandexCloud(options).hooks["astro:config:done"];
   let description: unknown;
 
@@ -20,7 +20,7 @@ async function adapterDescription(options?: AdapterOptions) {
 
 function optionsError(options: unknown): unknown {
   try {
-    yandexCloud(options as AdapterOptions);
+    yandexCloud(options as EncodedOptions);
   } catch (error) {
     return error;
   }
@@ -126,7 +126,7 @@ describe("adapter options and routes", () => {
       recursive404: false,
       directOrigin: "http://localhost:8080",
     },
-  ] satisfies AdapterOptions[])("accepts compatible options: %j", (options) => {
+  ] satisfies EncodedOptions[])("accepts compatible options: %j", (options) => {
     expect(() => yandexCloud(options)).not.toThrow();
   });
 

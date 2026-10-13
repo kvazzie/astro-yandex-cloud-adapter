@@ -5,7 +5,7 @@ export type Target = "object-storage" | "object-storage-functions";
 export type DependencyStrategy = "bundle" | "install";
 export type FunctionPartition = "shared" | "separate";
 
-export type AdapterOptions = typeof OptionsSchema.Encoded;
+export type EncodedOptions = typeof OptionsSchema.Encoded;
 
 export type {
   YandexCloudHttpEvent,
