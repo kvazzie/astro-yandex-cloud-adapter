@@ -9,3 +9,6 @@ coverage
 # Third-party agent skills installed by the Skills CLI.
 .agents/skills/*
 !.agents/skills/.gitignore
+
+# CLI-managed harness symlinks.
+.claude/
