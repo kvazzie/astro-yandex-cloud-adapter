@@ -1,4 +1,4 @@
-import { ADAPTER_NAME } from "./constants.js";
+import { ADAPTER_NAME } from "./constants.ts";
 
 export function injectedRuntimeTypes(): string {
   return `declare namespace App {

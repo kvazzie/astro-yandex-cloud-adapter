@@ -7,10 +7,10 @@ import * as Effect from "effect/Effect";
 import {
   formatFunctionPackageJson,
   formatNpmLockfile,
-} from "../install-lockfile.js";
-import { npmRegistry, type Registry } from "./registry.js";
-import { asDirectoryPath, findRuntimePackageImports } from "./imports.js";
-import { resolvePinnedRuntimeDependencies } from "./dependencies.js";
+} from "../install-lockfile.ts";
+import { npmRegistry, type Registry } from "./registry.ts";
+import { asDirectoryPath, findRuntimePackageImports } from "./imports.ts";
+import { resolvePinnedRuntimeDependencies } from "./dependencies.ts";
 
 /** Validates and packages an emitted Function Artifact as one operation. */
 export function prepareFunctionArtifact(

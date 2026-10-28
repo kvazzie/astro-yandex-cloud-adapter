@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { build } from "astro";
 import { describe, expect, it } from "vitest";
-import type { YandexCloudManifestV1 } from "../../packages/adapter/src/types.js";
+import type { YandexCloudManifestV1 } from "../../packages/adapter/src/types.ts";
 
 const fixtures = resolve(import.meta.dirname, "../fixtures");
 

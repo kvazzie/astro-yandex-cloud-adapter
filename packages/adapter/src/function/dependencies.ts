@@ -9,9 +9,9 @@ import semver from "semver";
 import {
   compareNames,
   type ResolvedRuntimeDependency,
-} from "../install-lockfile.js";
-import { asDirectoryPath, type DirectoryPath } from "./imports.js";
-import type { Registry, RegistryVersionMetadata } from "./registry.js";
+} from "../install-lockfile.ts";
+import { asDirectoryPath, type DirectoryPath } from "./imports.ts";
+import type { Registry, RegistryVersionMetadata } from "./registry.ts";
 
 interface DependencySource {
   version: string;

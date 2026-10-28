@@ -5,4 +5,4 @@ export type {
   YandexCloudHttpResult,
   YandexCloudInvocationContext,
   YandexCloudRuntime,
-} from "./runtime/types.js";
+} from "./runtime/types.ts";

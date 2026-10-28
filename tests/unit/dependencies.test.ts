@@ -5,15 +5,15 @@ import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { resolvePinnedRuntimeDependencies } from "../../packages/adapter/src/function/dependencies.js";
+import { resolvePinnedRuntimeDependencies } from "../../packages/adapter/src/function/dependencies.ts";
 import {
   formatFunctionPackageJson,
   formatNpmLockfile,
-} from "../../packages/adapter/src/install-lockfile.js";
+} from "../../packages/adapter/src/install-lockfile.ts";
 import type {
   Registry,
   RegistryVersionMetadata,
-} from "../../packages/adapter/src/function/registry.js";
+} from "../../packages/adapter/src/function/registry.ts";
 
 describe("install dependency resolution", () => {
   it("fails when the flat Function Artifact lockfile cannot represent two versions", async () => {

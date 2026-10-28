@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   formatFunctionPackageJson,
   formatNpmLockfile,
-} from "../../packages/adapter/src/install-lockfile.js";
-import type { ResolvedRuntimeDependency } from "../../packages/adapter/src/install-lockfile.js";
+} from "../../packages/adapter/src/install-lockfile.ts";
+import type { ResolvedRuntimeDependency } from "../../packages/adapter/src/install-lockfile.ts";
 
 const nanoid: ResolvedRuntimeDependency = {
   name: "nanoid",

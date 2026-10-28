@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
-import type { FunctionArtifactPolicy } from "./types.js";
-import { nearestNotFoundScope } from "./not-found-scope.js";
+import type { FunctionArtifactPolicy } from "./types.ts";
+import { nearestNotFoundScope } from "./not-found-scope.ts";
 
 /** Supplies the nearest concrete custom page without replacing endpoint responses. */
 export async function staticNotFoundResponse(

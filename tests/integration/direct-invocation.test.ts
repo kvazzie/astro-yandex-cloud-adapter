@@ -10,7 +10,7 @@ import type {
   YandexCloudHttpEvent,
   YandexCloudHttpResult,
   YandexCloudInvocationContext,
-} from "../../packages/adapter/src/runtime.js";
+} from "../../packages/adapter/src/runtime.ts";
 
 interface GeneratedHandler {
   handler(

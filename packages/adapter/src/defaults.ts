@@ -1,4 +1,4 @@
-import type { DependencyStrategy } from "./types.js";
+import type { DependencyStrategy } from "./types.ts";
 
 export const defaults: {
   STRATEGY: DependencyStrategy;

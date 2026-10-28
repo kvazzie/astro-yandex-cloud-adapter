@@ -10,8 +10,8 @@ import {
   parseModule,
   visitSyntax,
   type SyntaxNode,
-} from "../function/emitted-modules.js";
-import { emittedRouteComponents } from "../function/partition.js";
+} from "../function/emitted-modules.ts";
+import { emittedRouteComponents } from "../function/partition.ts";
 
 /** Finds image calls reachable from runtime routes, excluding registered-only endpoints. */
 export async function hasRuntimeImageCalls(

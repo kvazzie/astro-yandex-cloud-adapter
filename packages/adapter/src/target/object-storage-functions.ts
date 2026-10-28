@@ -3,22 +3,22 @@ import { rm } from "node:fs/promises";
 import * as Effect from "effect/Effect";
 import type { InlineConfig } from "vite";
 
-import { completeBuild } from "../build/complete.js";
+import { completeBuild } from "../build/complete.ts";
 import {
   assertUserExternals,
   configureServerBuild,
   sharpImageService,
-} from "../function/config.js";
+} from "../function/config.ts";
 import {
   applyFunctionPolicy,
   partitionFunctions,
   writePreviewDispatcher,
-} from "../function/partition.js";
-import { prepareNotFoundArtifacts } from "../build/not-found.js";
-import type { Options } from "../integration/options.js";
-import type { CompletedBuild } from "../integration/session.js";
-import type { TargetModule } from "./module.js";
-import { adapter, buildDirectories } from "./shared.js";
+} from "../function/partition.ts";
+import { prepareNotFoundArtifacts } from "../build/not-found.ts";
+import type { Options } from "../integration/options.ts";
+import type { CompletedBuild } from "../integration/session.ts";
+import type { TargetModule } from "./module.ts";
+import { adapter, buildDirectories } from "./shared.ts";
 
 export function objectStorageFunctionsModule(
   options: Extract<Options, { target: "object-storage-functions" }>,

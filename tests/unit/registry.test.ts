@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { npmRegistry } from "../../packages/adapter/src/function/registry.js";
+import { npmRegistry } from "../../packages/adapter/src/function/registry.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();

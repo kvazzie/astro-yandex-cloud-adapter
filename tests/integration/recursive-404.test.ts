@@ -7,11 +7,11 @@ import { describe, expect, it } from "vitest";
 import type {
   YandexCloudManifestV1,
   YandexCloudInvocationContext,
-} from "../../packages/adapter/src/types.js";
+} from "../../packages/adapter/src/types.ts";
 import type {
   YandexCloudHttpResult,
   YandexCloudHttpEvent,
-} from "../../packages/adapter/src/runtime.js";
+} from "../../packages/adapter/src/runtime.ts";
 
 const fixtures = resolve(import.meta.dirname, "../fixtures");
 const context: YandexCloudInvocationContext = {

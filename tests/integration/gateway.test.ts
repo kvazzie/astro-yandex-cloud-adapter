@@ -3,9 +3,9 @@ import { join, resolve } from "node:path";
 
 import { build, type AstroConfig } from "astro";
 import { describe, expect, it } from "vitest";
-import yandexCloud from "./helpers/built-adapter.js";
+import yandexCloud from "./helpers/built-adapter.ts";
 
-import type { DeploymentManifestV1 } from "../../packages/adapter/src/types.js";
+import type { DeploymentManifestV1 } from "../../packages/adapter/src/types.ts";
 
 const fixtures = resolve(import.meta.dirname, "../fixtures");
 

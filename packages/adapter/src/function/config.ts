@@ -3,7 +3,7 @@ import { isBuiltin } from "node:module";
 import type { AstroAdapter, AstroConfig } from "astro";
 import type { InlineConfig } from "vite";
 
-import type { DependencyStrategy } from "../types.js";
+import type { DependencyStrategy } from "../types.ts";
 
 export function assertUserExternals(
   config: AstroConfig,

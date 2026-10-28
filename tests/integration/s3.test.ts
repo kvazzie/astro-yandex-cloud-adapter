@@ -13,14 +13,14 @@ import {
   buildClientArtifact,
   createClientApplication,
   uploadClientArtifact,
-} from "./helpers/client-artifact.js";
-import { localS3Client, waitForS3 } from "./helpers/local-s3.js";
+} from "./helpers/client-artifact.ts";
+import { localS3Client, waitForS3 } from "./helpers/local-s3.ts";
 import {
   deleteTestBucket,
   expectS3Objects,
   listObjectKeys,
   type ExpectedS3Object,
-} from "./lib/s3.js";
+} from "./lib/s3.ts";
 
 describe.sequential("Client Artifact uploads to local S3", () => {
   let client: S3Client;

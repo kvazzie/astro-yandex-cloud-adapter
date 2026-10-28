@@ -8,15 +8,15 @@ import { promisify } from "node:util";
 import { build } from "astro";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import yandexCloud from "./helpers/built-adapter.js";
+import yandexCloud from "./helpers/built-adapter.ts";
 
-import type { YandexCloudHttpResult } from "../../packages/adapter/src/runtime.js";
+import type { YandexCloudHttpResult } from "../../packages/adapter/src/runtime.ts";
 import type {
   YandexCloudHttpEvent,
   YandexCloudInvocationContext,
   YandexCloudManifestV1,
-} from "../../packages/adapter/src/types.js";
-import { readDirectorySnapshot } from "./lib/files.js";
+} from "../../packages/adapter/src/types.ts";
+import { readDirectorySnapshot } from "./lib/files.ts";
 
 const fixtures = resolve(import.meta.dirname, "../fixtures");
 const runCommand = promisify(execFile);

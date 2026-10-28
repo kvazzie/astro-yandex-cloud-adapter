@@ -1,6 +1,6 @@
 import type { AstroAdapter } from "astro";
 
-import { ADAPTER_NAME } from "../constants.js";
+import { ADAPTER_NAME } from "../constants.ts";
 
 export function buildDirectories(outDir: URL) {
   return {

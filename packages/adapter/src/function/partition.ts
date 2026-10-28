@@ -6,19 +6,19 @@ import { fileURLToPath } from "node:url";
 import * as Effect from "effect/Effect";
 import { glob } from "tinyglobby";
 
-import type { PlannedRoute, RoutePlan } from "../build/routes.js";
-import type { CompletedBuild } from "../integration/session.js";
-import type { FunctionArtifactPolicy } from "../runtime/types.js";
-import type { BuildError } from "../target/module.js";
-import type { DependencyStrategy } from "../types.js";
+import type { PlannedRoute, RoutePlan } from "../build/routes.ts";
+import type { CompletedBuild } from "../integration/session.ts";
+import type { FunctionArtifactPolicy } from "../runtime/types.ts";
+import type { BuildError } from "../target/module.ts";
+import type { DependencyStrategy } from "../types.ts";
 import {
   isSyntaxNode,
   localModuleReferences,
   parseModule,
   type SyntaxNode,
   visitSyntax,
-} from "./emitted-modules.js";
-import { prepareFunctionArtifact } from "./package.js";
+} from "./emitted-modules.ts";
+import { prepareFunctionArtifact } from "./package.ts";
 
 export interface PreparedFunctionArtifact {
   id: string;

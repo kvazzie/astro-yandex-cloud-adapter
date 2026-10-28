@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { copyFile, mkdir } from "node:fs/promises";
 
-import type { CompletedBuild } from "../integration/session.js";
-import type { PreparedFunctionArtifact } from "../function/partition.js";
-import type { FunctionArtifactPolicy } from "../runtime/types.js";
-import { manifestRoutes, type RoutePlan } from "./routes.js";
+import type { CompletedBuild } from "../integration/session.ts";
+import type { PreparedFunctionArtifact } from "../function/partition.ts";
+import type { FunctionArtifactPolicy } from "../runtime/types.ts";
+import { manifestRoutes, type RoutePlan } from "./routes.ts";
 
 /** Copies completed static error pages into each Function that serves pages. */
 export async function prepareNotFoundArtifacts(

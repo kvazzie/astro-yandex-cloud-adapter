@@ -2,8 +2,8 @@ import type { AstroAdapter, AstroConfig, IntegrationResolvedRoute } from "astro"
 import type * as Effect from "effect/Effect";
 import type { InlineConfig } from "vite";
 
-import type { CompletedBuild } from "../integration/session.js";
-import type { DeploymentManifestV1, Target } from "../types.js";
+import type { CompletedBuild } from "../integration/session.ts";
+import type { DeploymentManifestV1, Target } from "../types.ts";
 
 export interface AstroBuildConfigPatch {
   build: { client: URL; server: URL; serverEntry: string };
