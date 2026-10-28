@@ -83,6 +83,12 @@ in the stack. The native pnpm migration runs its changeset checks inside the alr
 `quality` job. It needs no additional required check name. Verify the check names
 against the merged `ci.yml` and a CI run.
 
+Each Astro matrix row selects the newest release in its configured range whose
+Node engine accepts that row's runtime. For example, the fixed Node 22.15 row
+selects a compatible Astro 7 even when newer Astro 7 releases raise their Node
+minimum. The Node 24 row tests current Astro 7. Keep `engineStrict` enabled and
+record the actual resolved versions from the job log.
+
 A PR author cannot approve their own PR, but a separate human collaborator is not
 required for this repository's ordinary review gate. CodeRabbit can request
 changes and submit approval after reviewing the latest commit, resolving its

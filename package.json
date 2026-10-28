@@ -36,6 +36,7 @@
     "mime-types": "^3.0.2",
     "prettier": "^3.6.2",
     "sharp": "^0.34.0",
+    "semver": "^7.8.5",
     "tsdown": "^0.15.1",
     "typescript": "^5.9.2",
     "typescript-eslint": "8.55.0",
