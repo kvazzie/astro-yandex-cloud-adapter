@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   cp,
   mkdir,
@@ -39,7 +40,8 @@ async function fixture(initialBump: "patch" | "none" | null = "patch") {
     await writeFile(join(root, file), text);
   };
   let published = false;
-  const registry = createServer((request, response) => {
+  /** Serve deterministic npm metadata for an unpublished or published first beta. */
+  function respondToRegistry(request: IncomingMessage, response: ServerResponse) {
     response.setHeader("Content-Type", "application/json");
     if (!published) {
       response.writeHead(404).end('{"error":"not_found"}');
@@ -57,7 +59,8 @@ async function fixture(initialBump: "patch" | "none" | null = "patch") {
             },
       ),
     );
-  });
+  }
+  const registry = createServer(respondToRegistry);
   registries.push(registry);
   await new Promise<void>((done) => registry.listen(0, "127.0.0.1", done));
   const address = registry.address();
