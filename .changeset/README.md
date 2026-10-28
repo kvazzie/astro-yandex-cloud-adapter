@@ -26,6 +26,9 @@ pnpm change --bump none --summary "Update CI checks; package behavior and publis
 
 Use a fresh file. Editing a changeset already on the PR base does not count as
 acknowledging the new change. A `none` intent must include an explanation.
+Ordinary PRs preserve existing intents, the release ledger, changelog and package
+version. Package metadata, dependencies and the lockfile can change alongside a
+new intent. Generated release changes belong to the version PR.
 
 Check the committed branch against its PR base:
 
@@ -40,7 +43,8 @@ both inside the already-required `quality` job. The generated version PR is acce
 `pnpm release:version` run from its base, without branch-name or label bypasses.
 
 Install the optional local pre-push hook with `pnpm hooks:install`. It checks
-committed changes against the remote's `main` tracking ref without fetching.
+branch updates against the remote's `main` tracking ref without fetching. Tags,
+other non-branch destinations and branch deletions skip the check.
 For a stacked branch, set `CHANGESET_BASE` to its actual base when pushing.
 If you already use custom hooks, integrate `.githooks/pre-push` into them instead
 of replacing your hooks path. CI is the required check even when hooks are absent.

@@ -21,7 +21,8 @@ const name = "@astro-yandex-cloud/adapter";
 const intent = (bump: string, summary = "Explain the package change.") =>
   `---\n"${name}": ${bump}\n---\n\n${summary}\n`;
 
-async function fixture() {
+/** Create a committed workspace with a local registry for release and hook checks. */
+async function fixture(initialBump: "patch" | "none" | null = "patch") {
   const root = await mkdtemp(join(tmpdir(), "adapter-changesets-"));
   roots.push(root);
   const command = (file: string, args: string[]) =>
@@ -75,14 +76,19 @@ async function fixture() {
   }
   await symlink(resolve("node_modules"), join(root, "node_modules"), "dir");
   await write(".gitignore", "node_modules\n");
+  const workspace = JSON.parse(
+    await readFile(resolve("package.json"), "utf8"),
+  ) as {
+    scripts: Record<string, string>;
+  };
   await write(
     "package.json",
     JSON.stringify({
       private: true,
       packageManager: "pnpm@12.15.0",
       scripts: {
-        "release:version":
-          "node scripts/release-version.mjs && pnpm exec prettier --write .changeset/ledger.yaml packages/adapter/package.json packages/adapter/CHANGELOG.md",
+        "release:version": workspace.scripts["release:version"],
+        "changeset:check": workspace.scripts["changeset:check"],
       },
     }),
   );
@@ -94,15 +100,28 @@ async function fixture() {
     "packages/adapter/package.json",
     JSON.stringify({ name, version: "0.1.0-beta.0" }),
   );
-  await write(".changeset/existing.md", intent("patch"));
+  await write(".changeset/README.md", "Release intents.\n");
+  if (initialBump) await write(".changeset/existing.md", intent(initialBump));
   await git("init", "--initial-branch=main");
   await git("add", ".");
   await git("commit", "-m", "Base");
   const base = (await git("rev-parse", "HEAD")).stdout.trim();
+  /** Send a Git pre-push update to the actual hook without changing local hook configuration. */
+  const hook = (localRef: string, remoteRef: string, sha = base) => {
+    const invocation = run(resolve(".githooks/pre-push"), ["origin"], {
+      cwd: root,
+      env: { ...process.env, CHANGESET_BASE: base },
+    });
+    invocation.child.stdin?.end(
+      `${localRef} ${sha} ${remoteRef} ${"0".repeat(40)}\n`,
+    );
+    return invocation;
+  };
   return {
     root,
     write,
     command,
+    hook,
     publishFirstBeta: () => {
       published = true;
     },
@@ -134,6 +153,127 @@ afterEach(async () => {
   );
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
+});
+
+it.each(["none", null] as const)(
+  "leaves the seed unpublished with only %s release intents",
+  async (bump) => {
+    const f = await fixture(bump);
+    await f.command("pnpm", ["release:version"]);
+    expect(
+      JSON.parse(
+        await readFile(join(f.root, "packages/adapter/package.json"), "utf8"),
+      ),
+    ).toHaveProperty("version", "0.1.0-beta.0");
+    for (const file of [
+      ".changeset/ledger.yaml",
+      "packages/adapter/CHANGELOG.md",
+    ]) {
+      await expect(readFile(join(f.root, file))).rejects.toHaveProperty(
+        "code",
+        "ENOENT",
+      );
+    }
+  },
+);
+
+it.each([
+  ["refs/tags/v0.1.0-beta.1", "refs/tags/v0.1.0-beta.1"],
+  ["refs/heads/main", "refs/tags/v0.1.0-beta.1"],
+  ["refs/notes/review", "refs/notes/review"],
+])(
+  "skips a push of %s to non-branch destination %s",
+  async (localRef, remoteRef) => {
+    const f = await fixture();
+    await expect(f.hook(localRef, remoteRef)).resolves.toHaveProperty(
+      "stdout",
+      "",
+    );
+  },
+);
+
+it.each(["refs/heads/main", "HEAD"])(
+  "checks branch updates pushed from %s",
+  async (localRef) => {
+    const f = await fixture();
+    await expect(f.hook(localRef, "refs/heads/main")).rejects.toThrow(
+      "No committed changes",
+    );
+  },
+);
+
+it("skips a branch deletion in the pre-push hook", async () => {
+  const f = await fixture();
+  await expect(
+    f.hook("refs/heads/main", "refs/heads/main", "0".repeat(40)),
+  ).resolves.toHaveProperty("stdout", "");
+});
+
+it.each([
+  ".changeset/ledger.yaml",
+  "packages/adapter/CHANGELOG.md",
+  ".changeset/existing.md",
+])("rejects edits to %s even alongside a fresh none intent", async (file) => {
+  const f = await fixture();
+  await f.write(
+    ".changeset/fresh.md",
+    intent("none", "Only repository checks changed."),
+  );
+  await f.write(
+    file,
+    file.endsWith("existing.md")
+      ? intent("patch", "Rewrite an old change.")
+      : "Invented release data.\n",
+  );
+  await f.commit();
+  await expect(f.check()).rejects.toThrow(
+    "Ordinary PRs must not edit generated release files",
+  );
+});
+
+it("rejects renaming an existing intent to make it look new", async () => {
+  const f = await fixture();
+  await f.write(
+    ".changeset/renamed.md",
+    await readFile(join(f.root, ".changeset/existing.md"), "utf8"),
+  );
+  await rm(join(f.root, ".changeset/existing.md"));
+  await f.commit();
+  await expect(f.check()).rejects.toThrow(
+    "Ordinary PRs must not edit generated release files",
+  );
+});
+
+it("rejects manually bumping the package alongside a fresh intent", async () => {
+  const f = await fixture();
+  await f.write(".changeset/fresh.md", intent("none", "Only CI changed."));
+  await f.write(
+    "packages/adapter/package.json",
+    JSON.stringify({ name, version: "0.1.0-beta.99" }),
+  );
+  await f.commit();
+  await expect(f.check()).rejects.toThrow(
+    "Leave package version changes to the generated version PR",
+  );
+});
+
+it("allows package metadata and lockfile changes with a fresh intent", async () => {
+  const f = await fixture();
+  await f.write(".changeset/fresh.md", intent("patch"));
+  await f.write(
+    "packages/adapter/package.json",
+    JSON.stringify({
+      name,
+      version: "0.1.0-beta.0",
+      description: "Clarify the package description.",
+    }),
+  );
+  await f.write("pnpm-lock.yaml", 'lockfileVersion: "9.0"\n');
+  await f.commit();
+  await expect(f.check()).resolves.toHaveProperty(
+    "stdout",
+    "Checked 1 new changeset(s).\n",
   );
 });
 

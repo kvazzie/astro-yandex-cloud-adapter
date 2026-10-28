@@ -18,7 +18,7 @@
     "test:s3": "node scripts/test-s3.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pack:check": "pnpm build && node scripts/pack-candidate.mjs",
-    "release:version": "node scripts/release-version.mjs && pnpm install --lockfile-only --no-frozen-lockfile && pnpm exec prettier --write .changeset/ledger.yaml packages/adapter/package.json packages/adapter/CHANGELOG.md pnpm-lock.yaml",
+    "release:version": "node scripts/release-version.mjs && pnpm install --lockfile-only --no-frozen-lockfile && pnpm exec prettier --no-error-on-unmatched-pattern --write .changeset/ledger.yaml packages/adapter/package.json packages/adapter/CHANGELOG.md pnpm-lock.yaml",
     "release:publish": "pnpm build && node scripts/pack-candidate.mjs --publish",
     "release:verify": "node scripts/verify-registry.mjs",
     "changeset:check": "pnpm change check && node scripts/check-changesets.mjs",

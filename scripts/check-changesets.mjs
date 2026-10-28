@@ -18,7 +18,7 @@ const git = (...args) =>
   execFileSync("git", args, { cwd: root, encoding: "utf8" });
 const head = git("rev-parse", "--verify", `${values.head}^{commit}`).trim();
 const base = git("merge-base", values.base, head).trim();
-const changed = git("diff", "--name-only", "-z", base, head)
+const changed = git("diff", "--no-renames", "--name-only", "-z", base, head)
   .split("\0")
   .filter(Boolean);
 assert(
@@ -40,6 +40,30 @@ const added = git(
       /^\.changeset\/[^/]+\.md$/.test(file) && file !== ".changeset/README.md",
   );
 if (added.length > 0) {
+  const generatedEdits = changed.filter(
+    (file) =>
+      file === ".changeset/ledger.yaml" ||
+      file === "packages/adapter/CHANGELOG.md" ||
+      (/^\.changeset\/[^/]+\.md$/.test(file) &&
+        file !== ".changeset/README.md" &&
+        !added.includes(file)),
+  );
+  assert.equal(
+    generatedEdits.length,
+    0,
+    `Ordinary PRs must not edit generated release files: ${generatedEdits.join(", ")}`,
+  );
+  if (changed.includes("packages/adapter/package.json")) {
+    const before = JSON.parse(
+      git("show", `${base}:packages/adapter/package.json`),
+    );
+    const after = JSON.parse(git("show", `${head}:packages/adapter/package.json`));
+    assert.equal(
+      after.version,
+      before.version,
+      "Leave package version changes to the generated version PR.",
+    );
+  }
   for (const file of added) readIntent(git("show", `${head}:${file}`));
   process.stdout.write(`Checked ${added.length} new changeset(s).\n`);
 } else {
