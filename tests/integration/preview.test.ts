@@ -17,6 +17,7 @@ import { promisify } from "node:util";
 import type { PreviewServer } from "astro";
 import type * as Astro from "astro";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 const fixtures = resolve(import.meta.dirname, "../fixtures");
 const runCommand = promisify(execFile);
@@ -107,9 +108,12 @@ describe.sequential("preview from an installed adapter tarball", () => {
         "utf8",
       ),
     ) as { version: string };
-    const workspacePackage = JSON.parse(
-      await readFile(resolve(import.meta.dirname, "../../package.json"), "utf8"),
-    ) as { pnpm: { overrides: { unifont: string } } };
+    const workspace = parse(
+      await readFile(
+        resolve(import.meta.dirname, "../../pnpm-workspace.yaml"),
+        "utf8",
+      ),
+    ) as { overrides: { unifont: string } };
     await writeFile(
       join(root, "package.json"),
       JSON.stringify({
@@ -121,7 +125,7 @@ describe.sequential("preview from an installed adapter tarball", () => {
           nanoid: "3.3.17",
         },
         // Match the workspace's Astro dependency pin on the supported Node minimum.
-        overrides: { unifont: workspacePackage.pnpm.overrides.unifont },
+        overrides: { unifont: workspace.overrides.unifont },
       }),
     );
     await runCommand(
