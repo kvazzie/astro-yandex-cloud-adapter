@@ -39,6 +39,6 @@ All selected lock entries pin the reviewed upstream commit through `ref`. Skill 
 
 GitHub Issues, the five canonical triage labels, and a single shared domain glossary with `docs/adr/` are already configured. All five triage labels exist in GitHub. The workspace contains the adapter, examples, and fixtures; these use the same domain vocabulary.
 
-The upstream instructions use `GLOSSARY.md`. The project's authoritative glossary is `CONTEXT.md`. A relative `GLOSSARY.md -> CONTEXT.md` compatibility symlink is proposed separately, pending setup confirmation. `CLAUDE.md` continues to link to `AGENTS.md`.
+`GLOSSARY.md` is the single domain glossary, matching the upstream skill convention. `AGENTS.md` contains repository instructions, and `docs/adr/` records architectural decisions.
 
 Edit `docs/agents/*.md` directly when repository conventions change. Setup does not need to be rerun for ordinary skill updates.

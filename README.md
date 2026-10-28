@@ -19,7 +19,7 @@ export default defineConfig({
 See [`packages/adapter/README.md`](packages/adapter/README.md) for runtime behavior and
 deployment limitations.
 
-Project terminology is defined in [`CONTEXT.md`](CONTEXT.md). Architectural decisions
+Project terminology is defined in [`GLOSSARY.md`](GLOSSARY.md). Architectural decisions
 and design constraints live in [`docs/adr`](docs/adr).
 
 See [`docs/release-readiness.md`](docs/release-readiness.md) for beta and stable release
