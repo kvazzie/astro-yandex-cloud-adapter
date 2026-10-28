@@ -1,0 +1,29 @@
+{
+  "name": "@astro-yandex-cloud/eslint-plugin",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ESLint rules for module conventions in the Astro Yandex Cloud monorepo",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "eslint": "^9.32.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.2.0",
+    "eslint": "^9.32.0",
+    "typescript": "^5.9.2"
+  }
+}

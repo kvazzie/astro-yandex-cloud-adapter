@@ -8,7 +8,7 @@ import type {
   DeploymentManifestV1,
   OnDemandRouteRequirement,
   PrerenderedRouteRequirement,
-} from "../manifest/schema.js";
+} from "../manifest/schema.ts";
 
 type ArtifactId<K extends "client" | "function"> = string & Brand.Brand<K>;
 const clientId = "client:primary" as ArtifactId<"client">;

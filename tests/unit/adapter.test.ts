@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import yandexCloud from "../../packages/adapter/src/index.js";
-import type { AdapterOptions } from "../../packages/adapter/src/types.js";
+import yandexCloud from "../../packages/adapter/src";
+import type { AdapterOptions } from "../../packages/adapter/src/types.ts";
 
 async function adapterDescription(options?: AdapterOptions) {
   const hook = yandexCloud(options).hooks["astro:config:done"];

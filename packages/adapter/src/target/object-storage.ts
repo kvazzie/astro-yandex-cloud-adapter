@@ -2,13 +2,13 @@ import type { AstroConfig, IntegrationResolvedRoute } from "astro";
 import * as Effect from "effect/Effect";
 import type { InlineConfig } from "vite";
 
-import { completeBuild } from "../build/complete.js";
-import { manifestRoutes, registeredOnDemandRoutes } from "../build/routes.js";
-import { assertUserExternals, configureServerBuild } from "../function/config.js";
-import type { Options } from "../integration/options.js";
-import type { CompletedBuild } from "../integration/session.js";
-import type { TargetModule } from "./module.js";
-import { adapter, buildDirectories } from "./shared.js";
+import { completeBuild } from "../build/complete.ts";
+import { manifestRoutes, registeredOnDemandRoutes } from "../build/routes.ts";
+import { assertUserExternals, configureServerBuild } from "../function/config.ts";
+import type { Options } from "../integration/options.ts";
+import type { CompletedBuild } from "../integration/session.ts";
+import type { TargetModule } from "./module.ts";
+import { adapter, buildDirectories } from "./shared.ts";
 
 export function objectStorageModule(
   options: Extract<Options, { target: "object-storage" }>,

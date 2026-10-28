@@ -4,21 +4,21 @@ import {
   EffectifyIntegrationHookError,
 } from "effectify/astro/integration";
 
-import { ADAPTER_NAME } from "./constants.js";
-import { reportArtifactSizes } from "./build/report.js";
-import { injectedRuntimeTypes } from "./injected-types.js";
-import { OptionsSchema } from "./integration/options.js";
-import type { Options } from "./integration/options.js";
-import { createIntegrationSession } from "./integration/session.js";
-import { runtimeConfigPlugin } from "./runtime-config.js";
-import { selectTarget } from "./target/index.js";
-import type { BuildError } from "./target/module.js";
-import type { AdapterOptions } from "./types.js";
+import { ADAPTER_NAME } from "./constants.ts";
+import { reportArtifactSizes } from "./build/report.ts";
+import { injectedRuntimeTypes } from "./injected-types.ts";
+import { OptionsSchema } from "./integration/options.ts";
+import type { Options } from "./integration/options.ts";
+import { createIntegrationSession } from "./integration/session.ts";
+import { runtimeConfigPlugin } from "./runtime-config.ts";
+import { selectTarget } from "./target";
+import type { BuildError } from "./target/module.ts";
+import type { AdapterOptions } from "./types.ts";
 
 export {
   defineDeploymentManifest,
   parseDeploymentManifest,
-} from "./deployment-manifest.js";
+} from "./deployment-manifest.ts";
 export type {
   AdapterOptions,
   DependencyStrategy,
@@ -29,12 +29,12 @@ export type {
   Target,
   YandexCloudManifestV1,
   YandexCloudRuntime,
-} from "./types.js";
+} from "./types.ts";
 export type {
   YandexCloudHttpEvent,
   YandexCloudInvocationContext,
   YandexCloudHttpResult,
-} from "./runtime.js";
+} from "./runtime.ts";
 
 function hookError(
   hook: "astro:config:setup" | "astro:config:done" | "astro:build:done",

@@ -6,9 +6,9 @@ import { PutObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import { build } from "astro";
 import { contentType, lookup } from "mime-types";
 
-import { parseDeploymentManifest } from "../../../packages/adapter/src/deployment-manifest.js";
+import { parseDeploymentManifest } from "../../../packages/adapter/src/deployment-manifest.ts";
 
-import { readDirectorySnapshot } from "../lib/files.js";
+import { readDirectorySnapshot } from "../lib/files.ts";
 
 /** Uploads the manifest's Client Artifact without deleting any existing objects. */
 export async function uploadClientArtifact(

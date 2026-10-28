@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
-import yandexCloud from "../../packages/adapter/src/index.js";
+import yandexCloud from "../../packages/adapter/src";
 
 describe("artifact size reports", () => {
   it("reports exact local bytes including nested, hidden, and binary Client Artifact files", async () => {

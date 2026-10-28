@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
-import { parseDeploymentManifest } from "../../packages/adapter/src/deployment-manifest.js";
+import { parseDeploymentManifest } from "../../packages/adapter/src/deployment-manifest.ts";
 
 const schema: Record<string, unknown> = JSON.parse(
   readFileSync(

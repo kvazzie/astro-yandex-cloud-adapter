@@ -4,4 +4,4 @@ const module = (await import(
 )) as { default: typeof yandexCloud };
 
 export default module.default;
-import type yandexCloud from "../../../packages/adapter/src/index.js";
+import type yandexCloud from "../../../packages/adapter/src";

@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { ManifestV1Schema, type DeploymentManifestV1 } from "./manifest/schema.js";
+import { ManifestV1Schema, type DeploymentManifestV1 } from "./manifest/schema.ts";
 
 function invalidManifest(detail: string): never {
   throw new TypeError(`Invalid Deployment Manifest: ${detail}`);

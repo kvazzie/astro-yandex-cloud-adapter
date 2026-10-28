@@ -8,14 +8,14 @@ import {
 import * as Effect from "effect/Effect";
 import * as Either from "effect/Either";
 
-import { invoke } from "./runtime/bridge.js";
-import { staticNotFoundResponse } from "./runtime/not-found.js";
+import { invoke } from "./runtime/bridge.ts";
+import { staticNotFoundResponse } from "./runtime/not-found.ts";
 import type {
   FunctionArtifactPolicy,
   YandexCloudHttpEvent,
   YandexCloudHttpResult,
   YandexCloudInvocationContext,
-} from "./runtime.js";
+} from "./runtime.ts";
 
 setGetEnv((key) => process.env[key]);
 const app = createApp({ streaming: false });

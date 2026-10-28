@@ -4,17 +4,17 @@ import type {
   YandexCloudHttpResult,
   YandexCloudInvocationContext,
   YandexCloudRuntime,
-} from "./types.js";
+} from "./types.ts";
 import * as Effect from "effect/Effect";
 
-import { DIRECT_REQUEST_TARGET_PARAMETER } from "./constants.js";
+import { DIRECT_REQUEST_TARGET_PARAMETER } from "./constants.ts";
 
 export type {
   YandexCloudHttpEvent,
   YandexCloudHttpResult,
   YandexCloudInvocationContext,
   YandexCloudRuntime,
-} from "./types.js";
+} from "./types.ts";
 
 /** A malformed direct invocation that must not reach application code. */
 export class FunctionRequestError extends Error {

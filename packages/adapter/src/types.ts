@@ -1,5 +1,5 @@
-import type { DeploymentManifestV1 } from "./manifest/schema.js";
-import type { OptionsSchema } from "./integration/options.js";
+import type { DeploymentManifestV1 } from "./manifest/schema.ts";
+import type { OptionsSchema } from "./integration/options.ts";
 
 export type Target = "object-storage" | "object-storage-functions";
 export type DependencyStrategy = "bundle" | "install";
@@ -11,12 +11,12 @@ export type {
   YandexCloudHttpEvent,
   YandexCloudInvocationContext,
   YandexCloudRuntime,
-} from "./runtime/types.js";
+} from "./runtime/types.ts";
 
 export type {
   DeploymentManifestV1,
   OnDemandRouteRequirement,
   PrerenderedRouteRequirement,
-} from "./manifest/schema.js";
+} from "./manifest/schema.ts";
 
 export type YandexCloudManifestV1 = DeploymentManifestV1;

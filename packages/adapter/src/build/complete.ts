@@ -6,24 +6,24 @@ import type { AstroConfig } from "astro";
 import * as Effect from "effect/Effect";
 import { glob } from "tinyglobby";
 
-import { ADAPTER_VERSION, DIRECT_REQUEST_TARGET_PARAMETER } from "../constants.js";
+import { ADAPTER_VERSION, DIRECT_REQUEST_TARGET_PARAMETER } from "../constants.ts";
 import {
   defineDeploymentManifest,
   parseDeploymentManifest,
-} from "../deployment-manifest.js";
-import type { Target, YandexCloudManifestV1 } from "../types.js";
-import { validateFunctionEntrypoint } from "../function/package.js";
+} from "../deployment-manifest.ts";
+import type { Target, YandexCloudManifestV1 } from "../types.ts";
+import { validateFunctionEntrypoint } from "../function/package.ts";
 import {
   isSyntaxNode,
   parseModule,
   visitSyntax,
-} from "../function/emitted-modules.js";
-import type { CompletedBuild } from "../integration/session.js";
-import type { BuildError } from "../target/module.js";
-import type { PartitionedFunctions } from "../function/partition.js";
-import { generateGatewayTemplate } from "./gateway.js";
-import { manifestRoutes, reconcileRoutes, type RoutePlan } from "./routes.js";
-import { hasRuntimeImageCalls } from "./runtime-image.js";
+} from "../function/emitted-modules.ts";
+import type { CompletedBuild } from "../integration/session.ts";
+import type { BuildError } from "../target/module.ts";
+import type { PartitionedFunctions } from "../function/partition.ts";
+import { generateGatewayTemplate } from "./gateway.ts";
+import { manifestRoutes, reconcileRoutes, type RoutePlan } from "./routes.ts";
+import { hasRuntimeImageCalls } from "./runtime-image.ts";
 
 function failure(_tag: BuildError["_tag"], error: unknown): BuildError {
   return {

@@ -12,8 +12,8 @@ import type {
   YandexCloudHttpEvent,
   YandexCloudInvocationContext,
   YandexCloudManifestV1,
-} from "../../packages/adapter/src/types.js";
-import type { YandexCloudHttpResult } from "../../packages/adapter/src/runtime.js";
+} from "../../packages/adapter/src/types.ts";
+import type { YandexCloudHttpResult } from "../../packages/adapter/src/runtime.ts";
 
 const fixtures = resolve(import.meta.dirname, "../fixtures");
 const runCommand = promisify(execFile);

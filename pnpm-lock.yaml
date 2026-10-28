@@ -10,6 +10,9 @@ overrides:
 importers:
   .:
     devDependencies:
+      "@astro-yandex-cloud/eslint-plugin":
+        specifier: workspace:*
+        version: link:packages/eslint-plugin
       "@aws-sdk/client-s3":
         specifier: ^3.1146.0
         version: 3.1146.0
@@ -122,6 +125,18 @@ importers:
       vite:
         specifier: ^8.0.13
         version: 8.2.0(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)
+
+  packages/eslint-plugin:
+    devDependencies:
+      "@types/node":
+        specifier: ^24.2.0
+        version: 24.13.3
+      eslint:
+        specifier: ^9.32.0
+        version: 9.39.5(jiti@2.7.0)
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
 
   tests/fixtures/actions:
     dependencies:
@@ -3426,6 +3441,7 @@ packages:
         integrity: sha512-DgZS62aPLXKlnxILS/AYCoRvHaZeXceIzlXPkkGGzJWSow1aEk0lbTlxUSlyjC8jcaKxAdOnTDz+o1JFSBsyjw==,
       }
     engines: { node: ^18.18.0 || ^20.9.0 || >=21.1.0 }
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: "*"

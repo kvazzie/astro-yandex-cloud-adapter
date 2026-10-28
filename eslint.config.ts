@@ -1,11 +1,12 @@
+import yandexCloud from "@astro-yandex-cloud/eslint-plugin";
 import eslint from "@eslint/js";
 import { defineConfig, globalIgnores } from "eslint/config";
 import prettier from "eslint-config-prettier";
 import tseslint from "typescript-eslint";
 
 const typedFiles = [
-  "packages/adapter/src/**/*.ts",
-  "packages/adapter/*.ts",
+  "packages/*/src/**/*.{ts,js}",
+  "packages/*/*.ts",
   "tests/unit/**/*.ts",
   "tests/integration/**/*.ts",
   "*.ts",
@@ -29,7 +30,19 @@ export default defineConfig(
   },
   prettier,
   {
+    files: ["**/*.ts"],
+    plugins: {
+      "astro-yandex-cloud": yandexCloud,
+    },
+    rules: {
+      "astro-yandex-cloud/import-paths": "error",
+    },
+  },
+  {
     files: typedFiles,
+    plugins: {
+      "astro-yandex-cloud": yandexCloud,
+    },
     languageOptions: {
       parserOptions: {
         projectService: true,

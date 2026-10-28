@@ -1,7 +1,7 @@
 import type { Plugin } from "vite";
 
-import { RESOLVED_RUNTIME_CONFIG_ID, RUNTIME_CONFIG_ID } from "./constants.js";
-import type { Options } from "./integration/options.js";
+import { RESOLVED_RUNTIME_CONFIG_ID, RUNTIME_CONFIG_ID } from "./constants.ts";
+import type { Options } from "./integration/options.ts";
 
 /** Embeds validated build choices in the generated Function handler. */
 export function runtimeConfigPlugin(

@@ -16,13 +16,14 @@
     "test:unit": "pnpm --filter @astro-yandex-cloud/adapter schema:generate && vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:s3": "node scripts/test-s3.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --filter @astro-yandex-cloud/eslint-plugin typecheck",
     "pack:check": "pnpm build && node scripts/pack-candidate.mjs",
     "release:version": "pnpm changeset version && pnpm install --lockfile-only && pnpm exec prettier --write .changeset/pre.json packages/adapter/package.json packages/adapter/CHANGELOG.md pnpm-lock.yaml",
     "release:publish": "pnpm build && node scripts/pack-candidate.mjs --publish",
     "release:verify": "node scripts/verify-registry.mjs"
   },
   "devDependencies": {
+    "@astro-yandex-cloud/eslint-plugin": "workspace:*",
     "@aws-sdk/client-s3": "^3.1146.0",
     "@changesets/cli": "^2.29.7",
     "@eslint/js": "^9.32.0",

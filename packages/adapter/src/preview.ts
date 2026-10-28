@@ -12,14 +12,14 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 
-import { parseDeploymentManifest } from "./deployment-manifest.js";
-import { nearestNotFoundScope } from "./runtime/not-found-scope.js";
-import type { DeploymentManifestV1 } from "./types.js";
+import { parseDeploymentManifest } from "./deployment-manifest.ts";
+import { nearestNotFoundScope } from "./runtime/not-found-scope.ts";
+import type { DeploymentManifestV1 } from "./types.ts";
 import type {
   YandexCloudHttpEvent,
   YandexCloudHttpResult,
   YandexCloudInvocationContext,
-} from "./runtime.js";
+} from "./runtime.ts";
 
 type Handler = (
   event: YandexCloudHttpEvent,

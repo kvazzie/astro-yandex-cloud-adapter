@@ -5,9 +5,9 @@ import { readFile } from "node:fs/promises";
 import { parse } from "acorn";
 import { glob } from "tinyglobby";
 
-import { defaults } from "../defaults.js";
-import { compareNames } from "../install-lockfile.js";
-import type { DependencyStrategy } from "../types.js";
+import { defaults } from "../defaults.ts";
+import { compareNames } from "../install-lockfile.ts";
+import type { DependencyStrategy } from "../types.ts";
 
 export async function findRuntimePackageImports(
   directoryPath: DirectoryPath,

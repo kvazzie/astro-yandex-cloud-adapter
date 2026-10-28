@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { AstroIntegrationLogger } from "astro";
 import { glob } from "tinyglobby";
 
-import type { DeploymentManifestV1 } from "../types.js";
+import type { DeploymentManifestV1 } from "../types.ts";
 
 /** Reports local file bytes, without constructing or validating deployment archives. */
 export async function reportArtifactSizes(

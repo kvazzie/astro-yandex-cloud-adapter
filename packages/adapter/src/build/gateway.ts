@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
-import type { DeploymentManifestV1 } from "../manifest/schema.js";
-import type { RoutePlan } from "./routes.js";
+import type { DeploymentManifestV1 } from "../manifest/schema.ts";
+import type { RoutePlan } from "./routes.ts";
 
 interface GatewayVariable {
   default: string;
