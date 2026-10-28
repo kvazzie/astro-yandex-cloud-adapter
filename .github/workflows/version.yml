@@ -71,10 +71,24 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$APPROVED_SHA"
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$APPROVED_SHA"
+      - name: Prepare versions with native pnpm changesets
+        run: pnpm release:version
       - name: Create or update the version pull request
-        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0, Changesets 2
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          version: pnpm release:version
-          github-token: ${{ github.token }}
+          token: ${{ github.token }}
+          base: main
+          branch: changeset-release/main
           title: Prepare adapter release
-          commit: Prepare adapter release
+          commit-message: Prepare adapter release
+          add-paths: |
+            .changeset/
+            packages/adapter/package.json
+            packages/adapter/CHANGELOG.md
+            pnpm-lock.yaml
+          body: |
+            Prepare the adapter beta from the reviewed change intents using `pnpm release:version`.
+
+            Review the generated version, changelog, ledger and CI evidence. The Changesets check reproduces these files from the base commit.
+
+            Merging this PR does not publish a package. Publication remains a separate manually dispatched workflow with human approval in the npm environment.

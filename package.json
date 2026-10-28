@@ -2,7 +2,7 @@
   "name": "astro-yandex-cloud-adapter-workspace",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@10.33.2",
+  "packageManager": "pnpm@12.15.0",
   "engines": {
     "node": ">=22.12.0"
   },
@@ -18,13 +18,14 @@
     "test:s3": "node scripts/test-s3.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pack:check": "pnpm build && node scripts/pack-candidate.mjs",
-    "release:version": "pnpm changeset version && pnpm install --lockfile-only && pnpm exec prettier --write .changeset/pre.json packages/adapter/package.json packages/adapter/CHANGELOG.md pnpm-lock.yaml",
+    "release:version": "node scripts/release-version.mjs && pnpm install --lockfile-only --no-frozen-lockfile && pnpm exec prettier --no-error-on-unmatched-pattern --write .changeset/ledger.yaml packages/adapter/package.json packages/adapter/CHANGELOG.md pnpm-lock.yaml",
     "release:publish": "pnpm build && node scripts/pack-candidate.mjs --publish",
-    "release:verify": "node scripts/verify-registry.mjs"
+    "release:verify": "node scripts/verify-registry.mjs",
+    "changeset:check": "pnpm change check && node scripts/check-changesets.mjs",
+    "hooks:install": "git config --local core.hooksPath .githooks"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.1146.0",
-    "@changesets/cli": "^2.29.7",
     "@eslint/js": "^9.32.0",
     "@types/mime-types": "^3.0.1",
     "@types/node": "^24.2.0",
@@ -35,15 +36,12 @@
     "mime-types": "^3.0.2",
     "prettier": "^3.6.2",
     "sharp": "^0.34.0",
+    "semver": "^7.8.5",
     "tsdown": "^0.15.1",
     "typescript": "^5.9.2",
     "typescript-eslint": "8.55.0",
     "vite": "^8.0.13",
-    "vitest": "^3.2.4"
-  },
-  "pnpm": {
-    "overrides": {
-      "unifont": "0.7.4"
-    }
+    "vitest": "^3.2.4",
+    "yaml": "^2.9.1"
   }
 }

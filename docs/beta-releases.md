@@ -1,7 +1,7 @@
 # Prepare and publish beta releases
 
 Version preparation and publication are separate workflows. Neither merging a
-feature PR nor merging the Changesets version PR publishes a package.
+feature PR nor merging the pnpm version PR publishes a package.
 
 ## Repository setup
 
@@ -44,26 +44,43 @@ an in-progress publication. Release actions are pinned to commit SHAs.
 
 ## Prepare the first version
 
-The checked-in `0.1.0-beta.0` is an unpublished versioning seed. The beta Changeset
-and `.changeset/pre.json` make the next `pnpm release:version` produce
-`0.1.0-beta.1`, including all pending package changes in its changelog. Do not
-publish the seed. The publish command rejects it.
+The checked-in `0.1.0-beta.0` is an unpublished versioning seed. Native pnpm
+uses the manifest version verbatim for an unpublished package, so
+`pnpm release:version` first selects `0.1.0-beta.1` when release intents are
+pending, then runs `pnpm version -r`. This consumes the intents into
+`.changeset/ledger.yaml` and writes the committed changelog. The command does
+not publish. Do not publish the seed; the publish command rejects it.
+
+Release configuration lives in `pnpm-workspace.yaml`: the adapter stays on the
+`beta` lane and changelogs use repository storage. Preserve the committed ledger
+and add a fresh intent for each correction. Ordinary PRs use `pnpm change`, or
+`pnpm change --bump none` with a reason for changes requiring no release. See
+[the contribution policy](../.changeset/README.md).
+
+The existing required `quality` job validates native intents and requires a new
+intent in ordinary PRs. It accepts generated version PRs only after reproducing
+all their files from the PR base with `pnpm release:version`. The changeset
+checks are steps in this already-required job, so they need no additional branch
+protection setting.
 
 After this release setup reaches `main`, **Prepare beta version** waits for a
 successful **CI** push run on the current `main` commit before creating or
 updating `changeset-release/main`. A separate read-only policy job rejects PR or
 fork CI, stale commits, and the latest CI attempt when it is unfinished or failed.
 The version job checks out that exact commit and checks that `main` still points
-to it immediately before running Changesets. It refreshes the pnpm lockfile and
-formats the generated files. Review the resulting version PR and its CI,
+to it immediately before version preparation. It uses native pnpm versioning, refreshes the lockfile and formats the generated
+files. The pinned create-pull-request action maintains the version PR; it does
+not version packages or publish them. Review the resulting version PR and its CI,
 including the packed candidate, then merge it through the normal review process.
 
 Manual dispatch of **Prepare beta version** also requires `main` and successful
 push CI for that exact current commit. If `main` advances while a run is queued,
 wait for the newer push CI instead of preparing a version from an older result.
 The workflow consumes no CI artifacts and executes no PR or fork source. For
-later betas, add a Changeset and let the same workflow prepare the next number.
-Keep prerelease mode enabled; exiting it is a separate stable-release decision.
+later betas, add a changeset and let the same workflow prepare the next number.
+Keep the beta lane enabled. A minor or major intent can change the stable target;
+the release command rejects targets beyond `0.1.0` until release policy is
+explicitly updated. Stable promotion is a separate decision tracked in #83.
 
 **Beta release rehearsal** runs on PRs and pushes. In its disposable checkout it
 runs version preparation, checks the first result is exactly `0.1.0-beta.1`,
@@ -183,8 +200,9 @@ credential first, investigate access, and record the incident.
 
 ## References
 
-- [Changesets prereleases](https://github.com/changesets/changesets/blob/main/docs/prereleases.md)
-- [Changesets action compatible with Changesets 2](https://github.com/changesets/action/tree/v1.9.0)
+- [pnpm release management](https://pnpm.io/versioning)
+- [pnpm change](https://pnpm.io/cli/change)
+- [Version PR action](https://github.com/peter-evans/create-pull-request)
 - [GitHub workflow trigger tokens](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)
 - [GitHub workflow completion events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
 - [GitHub environment protection](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)

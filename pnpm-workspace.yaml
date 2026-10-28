@@ -3,6 +3,20 @@ packages:
   - examples/*
   - tests/fixtures/*
 
-onlyBuiltDependencies:
-  - esbuild
-  - sharp
+engineStrict: true
+resolutionMode: highest
+
+overrides:
+  unifont: 0.7.4
+
+allowBuilds:
+  "@parcel/watcher": false
+  esbuild: true
+  msgpackr-extract: false
+  sharp: true
+
+versioning:
+  lanes:
+    "@astro-yandex-cloud/adapter": beta
+  changelog:
+    storage: repository

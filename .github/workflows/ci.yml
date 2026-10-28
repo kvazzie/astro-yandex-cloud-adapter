@@ -13,12 +13,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22.12.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Validate native changesets
+        run: pnpm change check
+      - name: Require a new changeset or a reproducible version PR
+        if: github.event_name == 'pull_request'
+        env:
+          CHANGESET_BASE: ${{ github.event.pull_request.base.sha }}
+          CHANGESET_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/check-changesets.mjs --base "$CHANGESET_BASE" --head "$CHANGESET_HEAD"
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm format:check
@@ -147,7 +157,7 @@ jobs:
           fi
       - name: Update Astro
         if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
-        run: pnpm --include-workspace-root --recursive update "astro@${{ matrix.astro }}"
+        run: node scripts/update-astro.mjs "${{ matrix.astro }}"
       - name: Report tested versions
         if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
         run: |

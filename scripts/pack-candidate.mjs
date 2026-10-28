@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import process from "node:process";
 import { parseArgs, promisify } from "node:util";
+import { assertPreparedRelease } from "./release-state.mjs";
 
 const run = promisify(execFile);
 const { values } = parseArgs({
@@ -38,21 +39,9 @@ const artifacts = join(root, ".artifacts");
 await mkdir(artifacts, { recursive: true });
 
 if (values.publish) {
-  assert.match(
-    pkg.version,
-    /^0\.1\.0-beta\.[1-9]\d*$/,
-    "Only prepared 0.1.0 betas may be published by this release command.",
-  );
-  const pre = JSON.parse(
-    await readFile(join(root, ".changeset/pre.json"), "utf8"),
-  );
-  assert.equal(pre.mode, "pre");
-  assert.equal(pre.tag, "beta");
-  const planPath = join(artifacts, "release-plan.json");
-  await command("pnpm", ["changeset", "status", "--output", planPath]);
-  const plan = JSON.parse(await readFile(planPath, "utf8"));
-  assert.equal(plan.releases.length, 0, "Merge the version pull request first.");
-  // Match Changesets' immutable-version behavior. Only E404 means unpublished.
+  await command("pnpm", ["change", "check"]);
+  await assertPreparedRelease(root);
+  // Published versions remain immutable. Only a registry 404 means unpublished.
   try {
     await run(
       "pnpm",
@@ -65,7 +54,8 @@ if (values.publish) {
     process.exit(0);
   } catch (error) {
     const response = JSON.parse(error.stdout);
-    if (response.error?.code !== "E404") throw error;
+    if (!["E404", "ERR_PNPM_FETCH_404"].includes(response.error?.code))
+      throw error;
   }
 }
 
