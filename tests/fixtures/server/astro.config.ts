@@ -2,6 +2,6 @@ import yandexCloud from "@astro-yandex-cloud/adapter";
 import { defineConfig } from "astro/config";
 
 export default defineConfig({
-  adapter: yandexCloud({ target: "object-storage-functions" }),
-  output: "server",
+	adapter: yandexCloud({ target: "object-storage-functions" }),
+	output: "server",
 });

@@ -75,16 +75,30 @@ jobs:
             echo "::warning::astro@${{ matrix.astro }} is not currently published; compatibility check skipped"
           fi
       - name: Update Astro
-        if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
-        run: pnpm --include-workspace-root --recursive update "astro@${{ matrix.astro }}"
+        if:
+          ${{ !matrix.experimental ||
+          steps.experimental-release.outputs.available == 'true'
+          }}
+        run:
+          pnpm --include-workspace-root --recursive update
+          "astro@${{ matrix.astro }}"
       - name: Report tested versions
-        if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
+        if:
+          ${{ !matrix.experimental ||
+          steps.experimental-release.outputs.available == 'true'
+          }}
         run: |
           node --version
           pnpm exec astro --version
       - name: Build adapter package
-        if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
+        if:
+          ${{ !matrix.experimental ||
+          steps.experimental-release.outputs.available == 'true'
+          }}
         run: pnpm build
       - name: Build fixtures and execute generated handlers
-        if: ${{ !matrix.experimental || steps.experimental-release.outputs.available == 'true' }}
+        if:
+          ${{ !matrix.experimental ||
+          steps.experimental-release.outputs.available == 'true'
+          }}
         run: pnpm test:integration
