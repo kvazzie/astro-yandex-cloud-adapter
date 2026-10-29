@@ -49,7 +49,10 @@ describe("toWebRequest", () => {
 
 	it("uses Astro site when no host is provided", () => {
 		expect(
-			toWebRequest({ path: "base/page" }, "https://site.example/root").url,
+			toWebRequest(
+				{ path: "base/page" },
+				"https://site.example/root",
+			).url,
 		).toBe("https://site.example/base/page");
 	});
 
@@ -62,18 +65,25 @@ describe("toWebRequest", () => {
 			},
 		};
 		expect(getClientAddress(event)).toBe("192.0.2.8");
-		expect(runtimeLocals(event, { requestId: "request-1" })).toEqual({
+		expect(
+			runtimeLocals(event, { requestId: "request-1" }),
+		).toEqual({
 			runtime: { event, context: { requestId: "request-1" } },
 		});
 	});
 
 	it("rejects an event without enough origin information", () => {
-		expect(() => toWebRequest({ path: "/" })).toThrow(/no Host header/);
+		expect(() => toWebRequest({ path: "/" })).toThrow(
+			/no Host header/,
+		);
 	});
 
 	it("rejects an empty HTTP method", () => {
 		expect(() =>
-			toWebRequest({ httpMethod: "", headers: { host: "function.example" } }),
+			toWebRequest({
+				httpMethod: "",
+				headers: { host: "function.example" },
+			}),
 		).toThrow(/empty HTTP method/);
 	});
 });
@@ -92,7 +102,10 @@ describe("fromWebResponse", () => {
 
 		expect(result).toMatchObject({
 			statusCode: 302,
-			headers: { location: "/next", "content-type": "text/plain; charset=utf-8" },
+			headers: {
+				location: "/next",
+				"content-type": "text/plain; charset=utf-8",
+			},
 			body: "moved",
 			isBase64Encoded: false,
 		});
@@ -113,7 +126,9 @@ describe("fromWebResponse", () => {
 	});
 
 	it("handles empty responses without base64 encoding", async () => {
-		const result = await fromWebResponse(new Response(null, { status: 204 }));
+		const result = await fromWebResponse(
+			new Response(null, { status: 204 }),
+		);
 		expect(result).toMatchObject({
 			statusCode: 204,
 			body: "",

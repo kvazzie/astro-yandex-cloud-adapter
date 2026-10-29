@@ -4,7 +4,9 @@ import yandexCloud from "../../packages/adapter/src/index.js";
 
 describe("adapter options and routes", () => {
 	it("defaults to object-storage", () => {
-		expect(yandexCloud().name).toBe("@astro-yandex-cloud/adapter");
+		expect(yandexCloud().name).toBe(
+			"@astro-yandex-cloud/adapter",
+		);
 	});
 
 	it("rejects unknown targets", () => {

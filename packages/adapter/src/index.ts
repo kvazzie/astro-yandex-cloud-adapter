@@ -43,7 +43,9 @@ function injectedRuntimeTypes(): string {
 }
 
 /** Creates the Bare Adapter integration for the selected Yandex Cloud Target. */
-export default function yandexCloud(options?: AdapterOptions): AstroIntegration {
+export default function yandexCloud(
+	options?: AdapterOptions,
+): AstroIntegration {
 	const driver = createDriver(options);
 	let config: AstroConfig;
 	let routes: IntegrationResolvedRoute[] = [];
@@ -51,11 +53,16 @@ export default function yandexCloud(options?: AdapterOptions): AstroIntegration 
 	return {
 		name: ADAPTER_NAME,
 		hooks: {
-			"astro:config:setup": ({ config: initialConfig, updateConfig }) => {
+			"astro:config:setup": ({
+				config: initialConfig,
+				updateConfig,
+			}) => {
 				assertSupportedUserExternals(initialConfig);
 				updateConfig({
 					build: driver.configureBuild(initialConfig.outDir),
-					vite: { plugins: [runtimeConfigPlugin(initialConfig.site)] },
+					vite: {
+						plugins: [runtimeConfigPlugin(initialConfig.site)],
+					},
 				});
 			},
 			"astro:routes:resolved": ({ routes: resolvedRoutes }) => {
@@ -64,14 +71,22 @@ export default function yandexCloud(options?: AdapterOptions): AstroIntegration 
 						route.origin === "project" &&
 						(route.type === "page" || route.type === "endpoint"),
 				);
-				const onDemand = routes.filter((route) => !route.isPrerendered);
+				const onDemand = routes.filter(
+					(route) => !route.isPrerendered,
+				);
 				driver.assertRoutesSupported(onDemand.map(routePattern));
 			},
 			"astro:config:done":
 				/** Finalizes adapter metadata and generated runtime types. */
-				({ config: resolvedConfig, injectTypes, setAdapter }) => {
+				({
+					config: resolvedConfig,
+					injectTypes,
+					setAdapter,
+				}) => {
 					config = resolvedConfig;
-					const hasOnDemand = routes.some((route) => !route.isPrerendered);
+					const hasOnDemand = routes.some(
+						(route) => !route.isPrerendered,
+					);
 					setAdapter(driver.adapter(hasOnDemand));
 					injectTypes({
 						filename: "yandex-cloud.d.ts",
@@ -91,7 +106,9 @@ export default function yandexCloud(options?: AdapterOptions): AstroIntegration 
 				await driver.completeBuild({
 					config,
 					onDemand,
-					prerendered: pages.map((page) => routePathname(page.pathname)),
+					prerendered: pages.map((page) =>
+						routePathname(page.pathname),
+					),
 				});
 			},
 		},

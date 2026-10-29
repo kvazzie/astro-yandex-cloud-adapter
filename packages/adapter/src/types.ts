@@ -1,4 +1,5 @@
-export type Target = "object-storage" | "object-storage-functions";
+export type Target =
+	"object-storage" | "object-storage-functions";
 
 export interface AdapterOptions {
 	target?: Target;
@@ -13,7 +14,10 @@ export interface YandexCloudHttpEvent {
 	headers?: Record<string, string | undefined>;
 	multiValueHeaders?: Record<string, string[] | undefined>;
 	queryStringParameters?: Record<string, string | undefined>;
-	multiValueQueryStringParameters?: Record<string, string[] | undefined>;
+	multiValueQueryStringParameters?: Record<
+		string,
+		string[] | undefined
+	>;
 	body?: string | null;
 	isBase64Encoded?: boolean;
 	requestContext?: {

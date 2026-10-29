@@ -12,5 +12,9 @@ export default defineConfig({
 	format: "esm",
 	platform: "node",
 	target: "node22",
-	external: [/^astro(?:\/.*)?$/, "sharp", "virtual:yandex-cloud-runtime-config"],
+	external: [
+		/^astro(?:\/.*)?$/,
+		"sharp",
+		"virtual:yandex-cloud-runtime-config",
+	],
 });

@@ -2,7 +2,7 @@
 const config = {
 	singleQuote: false,
 	trailingComma: "all",
-	printWidth: 83,
+	proseWrap: "always",
 };
 
 export default config;

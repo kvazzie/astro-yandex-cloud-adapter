@@ -1,7 +1,18 @@
 import { builtinModules, createRequire } from "node:module";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import {
+	dirname,
+	join,
+	relative,
+	resolve,
+	sep,
+} from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import {
+	mkdir,
+	readFile,
+	readdir,
+	writeFile,
+} from "node:fs/promises";
 
 import type { AstroConfig } from "astro";
 import { init, parse } from "es-module-lexer";
@@ -13,8 +24,12 @@ const allowedBuiltins = new Set([
 	...builtinModules,
 	...builtinModules.map((name) => `node:${name}`),
 ]);
-async function javascriptFiles(directory: string): Promise<string[]> {
-	const entries = await readdir(directory, { withFileTypes: true });
+async function javascriptFiles(
+	directory: string,
+): Promise<string[]> {
+	const entries = await readdir(directory, {
+		withFileTypes: true,
+	});
 	const files = await Promise.all(
 		entries.map(async (entry) => {
 			const path = resolve(directory, entry.name);
@@ -44,7 +59,9 @@ function barePackage(specifier: string): string | undefined {
 		: specifier.split("/")[0];
 }
 
-async function unresolvedPackages(directory: string): Promise<Set<string>> {
+async function unresolvedPackages(
+	directory: string,
+): Promise<Set<string>> {
 	const packages = new Set<string>();
 	await init;
 	for (const file of await javascriptFiles(directory)) {
@@ -58,11 +75,18 @@ async function unresolvedPackages(directory: string): Promise<Set<string>> {
 	return packages;
 }
 
-async function installedVersion(root: URL, packageName: string): Promise<string> {
+async function installedVersion(
+	root: URL,
+	packageName: string,
+): Promise<string> {
 	const require = createRequire(new URL("package.json", root));
 	try {
-		const packagePath = require.resolve(`${packageName}/package.json`);
-		const packageJson = JSON.parse(await readFile(packagePath, "utf8")) as {
+		const packagePath = require.resolve(
+			`${packageName}/package.json`,
+		);
+		const packageJson = JSON.parse(
+			await readFile(packagePath, "utf8"),
+		) as {
 			version?: string;
 		};
 		if (packageJson.version) return packageJson.version;
@@ -71,12 +95,18 @@ async function installedVersion(root: URL, packageName: string): Promise<string>
 		for (;;) {
 			try {
 				const packageJson = JSON.parse(
-					await readFile(join(directory, "package.json"), "utf8"),
+					await readFile(
+						join(directory, "package.json"),
+						"utf8",
+					),
 				) as {
 					name?: string;
 					version?: string;
 				};
-				if (packageJson.name === packageName && packageJson.version)
+				if (
+					packageJson.name === packageName &&
+					packageJson.version
+				)
 					return packageJson.version;
 			} catch {
 				// Keep walking until the package root is found.
@@ -86,7 +116,9 @@ async function installedVersion(root: URL, packageName: string): Promise<string>
 			directory = parent;
 		}
 	}
-	throw new Error(`Could not determine the installed ${packageName} version.`);
+	throw new Error(
+		`Could not determine the installed ${packageName} version.`,
+	);
 }
 
 async function writeFunctionPackage(
@@ -95,7 +127,9 @@ async function writeFunctionPackage(
 ): Promise<void> {
 	const path = fileURLToPath(functionDirectory);
 	const packages = await unresolvedPackages(path);
-	const unsupported = [...packages].filter((name) => name !== "sharp");
+	const unsupported = [...packages].filter(
+		(name) => name !== "sharp",
+	);
 	if (unsupported.length) {
 		throw new Error(
 			`The function artifact contains unsupported external package imports: ${unsupported.join(", ")}. ` +
@@ -118,7 +152,9 @@ async function writeFunctionPackage(
 	);
 }
 
-async function validateFunctionArtifact(functionDirectory: URL): Promise<void> {
+async function validateFunctionArtifact(
+	functionDirectory: URL,
+): Promise<void> {
 	const entrypoint = new URL("index.js", functionDirectory);
 	try {
 		await readFile(entrypoint);
@@ -131,8 +167,12 @@ async function validateFunctionArtifact(functionDirectory: URL): Promise<void> {
 		);
 	}
 
-	const packages = await unresolvedPackages(fileURLToPath(functionDirectory));
-	const unsupported = [...packages].filter((name) => name !== "sharp");
+	const packages = await unresolvedPackages(
+		fileURLToPath(functionDirectory),
+	);
+	const unsupported = [...packages].filter(
+		(name) => name !== "sharp",
+	);
 	if (unsupported.length) {
 		throw new Error(
 			`Unresolved imports remain in the function artifact: ${unsupported.join(", ")}.`,
@@ -148,11 +188,16 @@ export async function prepareFunctionArtifact(
 	await validateFunctionArtifact(functionDirectory);
 }
 
-export async function readAstroVersion(root: URL): Promise<string> {
+export async function readAstroVersion(
+	root: URL,
+): Promise<string> {
 	return installedVersion(root, "astro");
 }
 
-export function artifactPath(outDir: URL, artifact: URL): string {
+export function artifactPath(
+	outDir: URL,
+	artifact: URL,
+): string {
 	return relative(fileURLToPath(outDir), fileURLToPath(artifact))
 		.split(sep)
 		.join("/");

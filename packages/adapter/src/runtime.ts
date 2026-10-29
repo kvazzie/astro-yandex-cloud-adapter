@@ -23,35 +23,54 @@ function firstHeader(
 	name: string,
 ): string | undefined {
 	const wanted = name.toLowerCase();
-	for (const [key, values] of Object.entries(event.multiValueHeaders ?? {})) {
-		if (key.toLowerCase() === wanted && values?.length) return values[0];
+	for (const [key, values] of Object.entries(
+		event.multiValueHeaders ?? {},
+	)) {
+		if (key.toLowerCase() === wanted && values?.length)
+			return values[0];
 	}
-	for (const [key, value] of Object.entries(event.headers ?? {})) {
+	for (const [key, value] of Object.entries(
+		event.headers ?? {},
+	)) {
 		if (key.toLowerCase() === wanted && value) return value;
 	}
 	return undefined;
 }
 
-function appendHeaders(target: Headers, event: YandexCloudHttpEvent): void {
+function appendHeaders(
+	target: Headers,
+	event: YandexCloudHttpEvent,
+): void {
 	const multiNames = new Set<string>();
-	for (const [name, values] of Object.entries(event.multiValueHeaders ?? {})) {
+	for (const [name, values] of Object.entries(
+		event.multiValueHeaders ?? {},
+	)) {
 		multiNames.add(name.toLowerCase());
 		for (const value of values ?? []) target.append(name, value);
 	}
-	for (const [name, value] of Object.entries(event.headers ?? {})) {
-		if (value !== undefined && !multiNames.has(name.toLowerCase()))
+	for (const [name, value] of Object.entries(
+		event.headers ?? {},
+	)) {
+		if (
+			value !== undefined &&
+			!multiNames.has(name.toLowerCase())
+		)
 			target.append(name, value);
 	}
 }
 
 function eventPath(event: YandexCloudHttpEvent): string {
 	const path =
-		event.rawPath ?? event.path ?? event.requestContext?.http?.path ?? "/";
+		event.rawPath ??
+		event.path ??
+		event.requestContext?.http?.path ??
+		"/";
 	return path.startsWith("/") ? path : `/${path}`;
 }
 
 function eventQuery(event: YandexCloudHttpEvent): string {
-	if (event.rawQueryString !== undefined) return event.rawQueryString;
+	if (event.rawQueryString !== undefined)
+		return event.rawQueryString;
 	const query = new URLSearchParams();
 	const multiNames = new Set<string>();
 	for (const [name, values] of Object.entries(
@@ -60,8 +79,11 @@ function eventQuery(event: YandexCloudHttpEvent): string {
 		multiNames.add(name);
 		for (const value of values ?? []) query.append(name, value);
 	}
-	for (const [name, value] of Object.entries(event.queryStringParameters ?? {})) {
-		if (value !== undefined && !multiNames.has(name)) query.append(name, value);
+	for (const [name, value] of Object.entries(
+		event.queryStringParameters ?? {},
+	)) {
+		if (value !== undefined && !multiNames.has(name))
+			query.append(name, value);
 	}
 	return query.toString();
 }
@@ -74,7 +96,10 @@ function originForEvent(
 		?.split(",")[0]
 		?.trim();
 	const host = forwardedHost || firstHeader(event, "host");
-	const forwardedProtocol = firstHeader(event, "x-forwarded-proto")
+	const forwardedProtocol = firstHeader(
+		event,
+		"x-forwarded-proto",
+	)
 		?.split(",")[0]
 		?.trim();
 
@@ -85,7 +110,9 @@ function originForEvent(
 	);
 }
 
-export function getClientAddress(event: YandexCloudHttpEvent): string | undefined {
+export function getClientAddress(
+	event: YandexCloudHttpEvent,
+): string | undefined {
 	return (
 		event.requestContext?.identity?.sourceIp ??
 		event.requestContext?.http?.sourceIp
@@ -108,7 +135,9 @@ export function toWebRequest(
 		.toUpperCase()
 		.trim();
 	if (!method)
-		throw new TypeError("The Yandex HTTPS event contains an empty HTTP method.");
+		throw new TypeError(
+			"The Yandex HTTPS event contains an empty HTTP method.",
+		);
 
 	const query = eventQuery(event);
 	const url = `${originForEvent(event, configuredSite)}${eventPath(event)}${query ? `?${query}` : ""}`;
@@ -116,7 +145,11 @@ export function toWebRequest(
 	appendHeaders(headers, event);
 
 	let body: BodyInit | undefined;
-	if (method !== "GET" && method !== "HEAD" && event.body != null) {
+	if (
+		method !== "GET" &&
+		method !== "HEAD" &&
+		event.body != null
+	) {
 		if (event.isBase64Encoded) {
 			const decoded = Buffer.from(event.body, "base64");
 			body = decoded.buffer.slice(
@@ -133,7 +166,8 @@ export function toWebRequest(
 
 function isTextual(contentType: string | null): boolean {
 	if (!contentType) return false;
-	const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+	const mediaType =
+		contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
 	return (
 		mediaType.startsWith("text/") ||
 		mediaType === "application/json" ||
@@ -147,7 +181,9 @@ function isTextual(contentType: string | null): boolean {
 }
 
 function responseCookies(headers: Headers): string[] {
-	const extendedHeaders = headers as Headers & { getSetCookie?: () => string[] };
+	const extendedHeaders = headers as Headers & {
+		getSetCookie?: () => string[];
+	};
 	if (typeof extendedHeaders.getSetCookie === "function")
 		return extendedHeaders.getSetCookie();
 	const cookie = headers.get("set-cookie");
@@ -168,8 +204,12 @@ export async function fromWebResponse(
 
 	const bytes = new Uint8Array(await response.arrayBuffer());
 	const empty =
-		response.status === 204 || response.status === 304 || bytes.byteLength === 0;
-	const textual = isTextual(response.headers.get("content-type"));
+		response.status === 204 ||
+		response.status === 304 ||
+		bytes.byteLength === 0;
+	const textual = isTextual(
+		response.headers.get("content-type"),
+	);
 
 	return {
 		statusCode: response.status,

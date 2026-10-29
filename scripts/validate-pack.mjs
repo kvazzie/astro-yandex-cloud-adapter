@@ -8,8 +8,11 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 const artifacts = resolve(".artifacts");
-const tarball = (await readdir(artifacts)).find((file) => file.endsWith(".tgz"));
-if (!tarball) throw new Error("npm pack did not create a tarball.");
+const tarball = (await readdir(artifacts)).find((file) =>
+	file.endsWith(".tgz"),
+);
+if (!tarball)
+	throw new Error("npm pack did not create a tarball.");
 
 const expectedEntrypoints = [
 	"index.js",
@@ -22,10 +25,17 @@ for (const entrypoint of expectedEntrypoints) {
 }
 
 const tarballPath = resolve(artifacts, tarball);
-const { stdout: listing } = await execFileAsync("tar", ["-tf", tarballPath]);
+const { stdout: listing } = await execFileAsync("tar", [
+	"-tf",
+	tarballPath,
+]);
 for (const entrypoint of expectedEntrypoints) {
-	if (!listing.split("\n").includes(`package/dist/${entrypoint}`)) {
-		throw new Error(`Packed tarball is missing dist/${entrypoint}.`);
+	if (
+		!listing.split("\n").includes(`package/dist/${entrypoint}`)
+	) {
+		throw new Error(
+			`Packed tarball is missing dist/${entrypoint}.`,
+		);
 	}
 }
 

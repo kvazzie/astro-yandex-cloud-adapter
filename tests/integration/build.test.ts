@@ -1,4 +1,9 @@
-import { cp, mkdtemp, readFile, readdir } from "node:fs/promises";
+import {
+	cp,
+	mkdtemp,
+	readFile,
+	readdir,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -11,33 +16,52 @@ import type { YandexCloudManifestV1 } from "../../packages/adapter/src/types.js"
 const fixtures = resolve(import.meta.dirname, "../fixtures");
 
 async function layout(directory: string): Promise<string[]> {
-	const entries = await readdir(directory, { withFileTypes: true });
+	const entries = await readdir(directory, {
+		withFileTypes: true,
+	});
 	const paths = await Promise.all(
 		entries.map(async (entry) => {
 			const path = join(directory, entry.name);
 			return entry.isDirectory()
-				? (await layout(path)).map((child) => `${entry.name}/${child}`)
+				? (await layout(path)).map(
+						(child) => `${entry.name}/${child}`,
+					)
 				: [entry.name];
 		}),
 	);
 	return paths.flat().sort();
 }
 
-async function manifest(fixture: string): Promise<YandexCloudManifestV1> {
+async function manifest(
+	fixture: string,
+): Promise<YandexCloudManifestV1> {
 	return JSON.parse(
-		await readFile(join(fixtures, fixture, "dist/yandex-cloud.json"), "utf8"),
+		await readFile(
+			join(fixtures, fixture, "dist/yandex-cloud.json"),
+			"utf8",
+		),
 	) as YandexCloudManifestV1;
 }
 
 describe.sequential("Astro artifact builds", () => {
 	beforeAll(async () => {
-		for (const fixture of ["static", "static-functions", "mixed", "server"]) {
-			await build({ root: `${join(fixtures, fixture)}/`, logLevel: "silent" });
+		for (const fixture of [
+			"static",
+			"static-functions",
+			"mixed",
+			"server",
+		]) {
+			await build({
+				root: `${join(fixtures, fixture)}/`,
+				logLevel: "silent",
+			});
 		}
 	});
 
 	it("emits an Object Storage-only static layout and manifest", async () => {
-		const files = (await layout(join(fixtures, "static/dist"))).map((file) => {
+		const files = (
+			await layout(join(fixtures, "static/dist"))
+		).map((file) => {
 			if (!file.startsWith("client/_astro/logo.")) return file;
 			return file.slice(file.lastIndexOf("/") + 1).includes("_")
 				? "client/_astro/logo.optimized.svg"
@@ -66,7 +90,9 @@ describe.sequential("Astro artifact builds", () => {
 		expect(files).toContain("client/public.txt");
 		expect(files).toContain("function/index.js");
 		expect(files).toContain("function/package.json");
-		expect(files.some((file) => file.startsWith("function/chunks/"))).toBe(true);
+		expect(
+			files.some((file) => file.startsWith("function/chunks/")),
+		).toBe(true);
 		expect(await manifest("mixed")).toMatchObject({
 			schemaVersion: 1,
 			target: "object-storage-functions",
@@ -81,7 +107,9 @@ describe.sequential("Astro artifact builds", () => {
 	});
 
 	it("omits a function when the functions target is fully static", async () => {
-		const files = await layout(join(fixtures, "static-functions/dist"));
+		const files = await layout(
+			join(fixtures, "static-functions/dist"),
+		);
 		expect(files).not.toContain("function/index.js");
 		expect(await manifest("static-functions")).toMatchObject({
 			target: "object-storage-functions",
@@ -92,8 +120,12 @@ describe.sequential("Astro artifact builds", () => {
 	});
 
 	it("executes the generated handler outside the fixture dependency tree", async () => {
-		const isolated = await mkdtemp(join(tmpdir(), "astro-yandex-function-"));
-		await cp(join(fixtures, "mixed/dist/function"), isolated, { recursive: true });
+		const isolated = await mkdtemp(
+			join(tmpdir(), "astro-yandex-function-"),
+		);
+		await cp(join(fixtures, "mixed/dist/function"), isolated, {
+			recursive: true,
+		});
 		const entrypoint = (await import(
 			`${pathToFileURL(join(isolated, "index.js")).href}?isolated=1`
 		)) as {
@@ -118,7 +150,9 @@ describe.sequential("Astro artifact builds", () => {
 					origin: "https://fixture.example",
 					"content-type": "text/plain",
 				},
-				multiValueQueryStringParameters: { value: ["one", "two"] },
+				multiValueQueryStringParameters: {
+					value: ["one", "two"],
+				},
 				body: "payload",
 				requestContext: { identity: { sourceIp: "192.0.2.42" } },
 			},
@@ -187,7 +221,11 @@ describe.sequential("Astro artifact builds", () => {
 			): Promise<{ statusCode: number; body: string }>;
 		};
 		const response = await entrypoint.handler(
-			{ httpMethod: "GET", path: "/", headers: { host: "server.example" } },
+			{
+				httpMethod: "GET",
+				path: "/",
+				headers: { host: "server.example" },
+			},
 			{},
 		);
 		expect(response.statusCode).toBe(200);
@@ -196,7 +234,12 @@ describe.sequential("Astro artifact builds", () => {
 
 	it("rejects an Object Storage build containing an on-demand route", async () => {
 		await expect(
-			build({ root: `${join(fixtures, "rejected")}/`, logLevel: "silent" }),
-		).rejects.toThrow(/object-storage target cannot serve on-demand routes/);
+			build({
+				root: `${join(fixtures, "rejected")}/`,
+				logLevel: "silent",
+			}),
+		).rejects.toThrow(
+			/object-storage target cannot serve on-demand routes/,
+		);
 	});
 });

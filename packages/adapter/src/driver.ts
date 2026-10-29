@@ -1,7 +1,10 @@
 import type { AstroAdapter, AstroConfig } from "astro";
 import type { InlineConfig } from "vite";
 
-import { prepareFunctionArtifact, writeDeploymentManifest } from "./artifacts.js";
+import {
+	prepareFunctionArtifact,
+	writeDeploymentManifest,
+} from "./artifacts.js";
 import { ADAPTER_NAME } from "./constants.js";
 import type { AdapterOptions } from "./types.js";
 
@@ -18,18 +21,19 @@ export interface TargetDriver {
 	completeBuild(build: CompletedBuild): Promise<void>;
 }
 
-const supportedAstroFeatures: AstroAdapter["supportedAstroFeatures"] = {
-	staticOutput: "stable",
-	hybridOutput: "stable",
-	serverOutput: "stable",
-	sharpImageService: {
-		support: "limited",
-		message:
-			"Sharp is externalized and has limited support in Yandex Cloud Functions.",
-	},
-	envGetSecret: "stable",
-	i18nDomains: "unsupported",
-};
+const supportedAstroFeatures: AstroAdapter["supportedAstroFeatures"] =
+	{
+		staticOutput: "stable",
+		hybridOutput: "stable",
+		serverOutput: "stable",
+		sharpImageService: {
+			support: "limited",
+			message:
+				"Sharp is externalized and has limited support in Yandex Cloud Functions.",
+		},
+		envGetSecret: "stable",
+		i18nDomains: "unsupported",
+	};
 
 function adapter(hasOnDemandRoutes: boolean): AstroAdapter {
 	return {
@@ -46,15 +50,24 @@ function adapter(hasOnDemandRoutes: boolean): AstroAdapter {
 	};
 }
 
-export function createDriver(options: AdapterOptions | undefined): TargetDriver {
+export function createDriver(
+	options: AdapterOptions | undefined,
+): TargetDriver {
 	const target = options?.target ?? "object-storage";
-	if (target !== "object-storage" && target !== "object-storage-functions") {
-		throw new TypeError(`Unknown Yandex Cloud adapter target: ${String(target)}.`);
+	if (
+		target !== "object-storage" &&
+		target !== "object-storage-functions"
+	) {
+		throw new TypeError(
+			`Unknown Yandex Cloud adapter target: ${String(target)}.`,
+		);
 	}
 
 	if (target === "object-storage") {
 		return {
-			configureBuild: (outDir) => ({ client: new URL("client/", outDir) }),
+			configureBuild: (outDir) => ({
+				client: new URL("client/", outDir),
+			}),
 			assertRoutesSupported: (onDemand) => {
 				if (!onDemand.length) return;
 				throw new Error(
@@ -63,7 +76,11 @@ export function createDriver(options: AdapterOptions | undefined): TargetDriver 
 				);
 			},
 			adapter,
-			completeBuild: async ({ config, onDemand, prerendered }) => {
+			completeBuild: async ({
+				config,
+				onDemand,
+				prerendered,
+			}) => {
 				await writeDeploymentManifest(config.outDir, config, {
 					target,
 					hasFunction: false,
@@ -147,11 +164,15 @@ function supportedExternal(specifier: string): boolean {
 	);
 }
 
-export function assertSupportedUserExternals(config: AstroConfig): void {
+export function assertSupportedUserExternals(
+	config: AstroConfig,
+): void {
 	const external = config.vite.ssr?.external;
 	if (external === undefined) return;
 	if (external === true || !Array.isArray(external)) {
-		throw new Error("V1 does not support custom Vite SSR package externals.");
+		throw new Error(
+			"V1 does not support custom Vite SSR package externals.",
+		);
 	}
 	const unsupported = external.filter(
 		(entry): entry is string =>
@@ -165,7 +186,9 @@ export function assertSupportedUserExternals(config: AstroConfig): void {
 }
 
 /** Applies Function Artifact bundling requirements to Astro's server Vite configuration. */
-export function serverViteConfig(vite: InlineConfig): InlineConfig {
+export function serverViteConfig(
+	vite: InlineConfig,
+): InlineConfig {
 	const currentBuild = vite.build ?? {};
 	const output = { chunkFileNames: "chunks/[name]-[hash].js" };
 	const currentOutput = currentBuild.rolldownOptions?.output;
