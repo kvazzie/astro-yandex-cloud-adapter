@@ -9,6 +9,6 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 stdout.write("restoring project agent skills from skills-lock.json...\n");
 execSync("npx skills experimental_install", {
-  cwd: root,
-  stdio: "inherit",
+	cwd: root,
+	stdio: "inherit",
 });
