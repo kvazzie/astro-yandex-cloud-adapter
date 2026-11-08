@@ -73,6 +73,11 @@ export default defineIntegration({
 				"astro:build:setup",
 				hooks.buildSetup,
 			),
+			"astro:build:ssr": runHook(
+				name,
+				"astro:build:ssr",
+				hooks.buildSsr,
+			),
 			"astro:build:done": runHook(
 				name,
 				"astro:build:done",

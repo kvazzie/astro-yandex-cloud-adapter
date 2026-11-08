@@ -2,6 +2,7 @@ import type { IntegrationResolvedRoute } from "astro";
 import type { RoutePlan } from "../../mandatory/ArtifactGeneration/RouteRequirements";
 
 export interface FunctionArtifactBuild {
+	readonly routeComponents: ReadonlyMap<string, string>;
 	readonly config: {
 		readonly root: URL;
 		readonly outDir: URL;

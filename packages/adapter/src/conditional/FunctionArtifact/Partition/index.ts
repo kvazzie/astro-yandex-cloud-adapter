@@ -81,9 +81,6 @@ export async function planPartitions(
 		new URL("index.js", config.build.server),
 		"utf8",
 	);
-	const emittedComponents = await emittedRouteComponents(
-		config.build.server,
-	);
 	for (const route of routes) {
 		const identity = `${route.routeKind}:${route.pattern}`;
 		const suffix = createHash("sha256")
@@ -113,7 +110,7 @@ export async function planPartitions(
 			keepServerIslands
 				? []
 				: [
-						emittedComponents.get(originalPattern) ??
+						build.routeComponents.get(originalPattern) ??
 							resolved.entrypoint,
 					],
 		);
@@ -223,81 +220,6 @@ export function wrapFunctionPolicy(
 		`\nconst __yandexArtifactHandler = (event, context, previewUrl) => ` +
 		`${handlerName}(event, context, previewUrl, {...${serialized}, artifactDirectory: new URL('./index.ts', import.meta.url)});\n`;
 	return applyEdits(source, edits) + wrapper;
-}
-
-/** Reads final component IDs after Astro resolves registered package entrypoints. */
-export async function emittedRouteComponents(
-	directory: URL,
-): Promise<Map<string, string>> {
-	const components = new Map<string, string>();
-	for (const file of await glob(["**/*.js", "**/*.mjs"], {
-		cwd: fileURLToPath(directory),
-		onlyFiles: true,
-	})) {
-		const source = await readFile(
-			new URL(file, directory),
-			"utf8",
-		);
-		visitSyntax(parseModule(source), (node) => {
-			if (
-				node.type !== "CallExpression" ||
-				!isSyntaxNode(node.callee) ||
-				typeof node.callee.name !== "string" ||
-				!/^deserializeManifest(?:\$\d+)?$/.test(
-					node.callee.name,
-				) ||
-				!Array.isArray(node.arguments)
-			)
-				return;
-			const serialized: unknown = node.arguments[0];
-			if (!isSyntaxNode(serialized)) return;
-			const routes = objectProperty(serialized, "routes");
-			if (!routes || !Array.isArray(routes.elements)) return;
-			for (const route of routes.elements as unknown[]) {
-				if (!isSyntaxNode(route)) continue;
-				const data = objectProperty(route, "routeData");
-				if (!data) continue;
-				const pattern = objectProperty(data, "route");
-				const component = objectProperty(data, "component");
-				if (
-					typeof pattern?.value !== "string" ||
-					typeof component?.value !== "string"
-				)
-					continue;
-				const existing = components.get(pattern.value);
-				if (existing && existing !== component.value)
-					throw new Error(
-						`Astro emitted conflicting route module identities for ${pattern.value}.`,
-					);
-				components.set(pattern.value, component.value);
-			}
-		});
-	}
-	return components;
-}
-
-/** Reads fixed properties without evaluating Astro's serialized manifest. */
-function objectProperty(
-	node: SyntaxNode,
-	name: string,
-): SyntaxNode | undefined {
-	if (
-		node.type !== "ObjectExpression" ||
-		!Array.isArray(node.properties)
-	)
-		return;
-	for (const property of node.properties as unknown[]) {
-		if (
-			isSyntaxNode(property) &&
-			property.type === "Property" &&
-			!property.computed &&
-			isSyntaxNode(property.key) &&
-			(property.key.name === name ||
-				property.key.value === name) &&
-			isSyntaxNode(property.value)
-		)
-			return property.value;
-	}
 }
 
 /** Removes other page loaders while retaining all route metadata for precedence. */

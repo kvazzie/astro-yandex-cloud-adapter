@@ -24,6 +24,7 @@ import * as Options from "../Options";
 type BuildState = {
 	config: AstroConfig | undefined;
 	routes: readonly IntegrationResolvedRoute[];
+	routeComponents: ReadonlyMap<string, string>;
 };
 
 function hookError(
@@ -49,6 +50,7 @@ export default class Hooks extends Effect.Service<Hooks>()(
 			const state: BuildState = {
 				config: undefined,
 				routes: [],
+				routeComponents: new Map(),
 			};
 
 			return {
@@ -59,6 +61,7 @@ export default class Hooks extends Effect.Service<Hooks>()(
 					Effect.gen(function* () {
 						state.config = undefined;
 						state.routes = [];
+						state.routeComponents = new Map();
 						const patch =
 							yield* strategy.astroBuildConfig(config);
 						updateConfig({
@@ -112,6 +115,25 @@ export default class Hooks extends Effect.Service<Hooks>()(
 							updateConfig(patch);
 						}
 					}),
+				buildSsr: ({
+					manifest,
+				}: HookParameters<"astro:build:ssr">) =>
+					Effect.sync(() => {
+						const components = new Map<string, string>();
+						for (const { routeData } of manifest.routes) {
+							const { route, component } = routeData;
+							const existing = components.get(route);
+							if (
+								existing !== undefined &&
+								existing !== component
+							)
+								throw new Error(
+									`Astro emitted conflicting route module identities for ${route}.`,
+								);
+							components.set(route, component);
+						}
+						state.routeComponents = components;
+					}),
 				buildDone: ({
 					pages,
 					assets,
@@ -129,6 +151,7 @@ export default class Hooks extends Effect.Service<Hooks>()(
 						const build = {
 							config: state.config,
 							resolvedRoutes: state.routes,
+							routeComponents: state.routeComponents,
 							pages,
 							emittedAssets: assets,
 						};

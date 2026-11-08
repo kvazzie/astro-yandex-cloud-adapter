@@ -4,6 +4,13 @@ import type { IntegrationResolvedRoute } from "astro";
 import yandexCloud, {
 	type EncodedOptions,
 } from "../../packages/adapter/src";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import Hooks from "../../packages/adapter/src/Hooks";
+import * as Options from "../../packages/adapter/src/Options";
+import { TargetBuild } from "../../packages/adapter/src/TargetBuild";
+import { Errors } from "../../packages/adapter/src/mandatory/ArtifactGeneration";
 import { Targets } from "../../packages/adapter/src/Options";
 
 const onDemandRoute = {
@@ -46,6 +53,153 @@ function optionsError(options: unknown): unknown {
 }
 
 describe("adapter options and routes", () => {
+	it("rejects conflicting SSR component identities through the public hook", async () => {
+		const hook = yandexCloud().hooks["astro:build:ssr"]!;
+		await expect(
+			hook({
+				manifest: {
+					routes: [
+						{
+							routeData: {
+								route: "/injected",
+								component: "package/first",
+							},
+						},
+						{
+							routeData: {
+								route: "/injected",
+								component: "package/second",
+							},
+						},
+					],
+				},
+			} as never),
+		).rejects.toMatchObject({
+			hook: "astro:build:ssr",
+			cause: {
+				message:
+					"Astro emitted conflicting route module identities for /injected.",
+			},
+		});
+	});
+
+	it("accepts repeated SSR records with the same component identity", async () => {
+		const hook = yandexCloud().hooks["astro:build:ssr"]!;
+		await expect(
+			hook({
+				manifest: {
+					routes: [
+						{
+							routeData: {
+								route: "/injected",
+								component: "package/entry",
+							},
+						},
+						{
+							routeData: {
+								route: "/injected",
+								component: "package/entry",
+							},
+						},
+					],
+				},
+			} as never),
+		).resolves.toBeUndefined();
+	});
+
+	it("isolates SSR identities and clears them before a build without SSR", async () => {
+		const observed: ReadonlyMap<string, string>[] = [];
+		const strategy = TargetBuild.of({
+			target: Targets.ObjectStorageTarget,
+			astroBuildConfig: () =>
+				Effect.succeed({
+					build: {
+						client: new URL("file:///tmp/client/"),
+						server: new URL("file:///tmp/server/"),
+						serverEntry: "index.js",
+					},
+				}),
+			astroAdapter: () =>
+				Effect.succeed({
+					name: "test",
+					serverEntrypoint: "test",
+					supportedAstroFeatures: {},
+				}),
+			serverViteConfig: () => Effect.succeed({}),
+			generateArtifacts: (build) => {
+				observed.push(build.routeComponents);
+				// Stop at the collaborator seam, before filesystem reporting.
+				return Effect.fail(
+					new Errors.InvalidManifest({ message: "observed" }),
+				);
+			},
+		});
+		const makeHooks = () =>
+			Effect.runSync(
+				Hooks.pipe(
+					Effect.provide(
+						Hooks.Default.pipe(
+							Layer.provide(
+								Layer.succeed(TargetBuild, strategy),
+							),
+							Layer.provide(
+								Layer.succeed(
+									Options.Tag,
+									Schema.decodeUnknownSync(Options.Schema)({}),
+								),
+							),
+						),
+					),
+				),
+			);
+		const first = makeHooks();
+		const second = makeHooks();
+		const finish = async (hooks: Hooks) => {
+			await Effect.runPromise(
+				hooks.configDone({
+					config: {},
+					injectTypes: () => {},
+					setAdapter: () => {},
+				} as never),
+			);
+			await Effect.runPromise(
+				hooks
+					.buildDone({
+						pages: [],
+						assets: new Map(),
+						logger: {},
+					} as never)
+					.pipe(Effect.ignore),
+			);
+		};
+		await Effect.runPromise(
+			first.buildSsr({
+				manifest: {
+					routes: [
+						{
+							routeData: {
+								route: "/injected",
+								component: "package/entry",
+							},
+						},
+					],
+				},
+			} as never),
+		);
+		await finish(first);
+		await finish(second);
+		await Effect.runPromise(
+			first.configSetup({
+				config: {},
+				updateConfig: () => {},
+			} as never),
+		);
+		await finish(first);
+		expect(
+			observed.map((components) => [...components]),
+		).toEqual([[["/injected", "package/entry"]], [], []]);
+	});
+
 	it("defaults to object-storage", () => {
 		expect(yandexCloud().name).toBe(
 			"@astro-yandex-cloud/adapter",

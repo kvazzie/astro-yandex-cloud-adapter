@@ -11,15 +11,13 @@ import {
 	visitSyntax,
 	type SyntaxNode,
 } from "../../conditional/FunctionArtifact/.emittedModules.ts";
-import { emittedRouteComponents } from "../../conditional/FunctionArtifact/Partition";
 
 /** Finds image calls reachable from runtime routes, excluding registered-only endpoints. */
 export async function hasRuntimeImageCalls(
 	directory: URL,
 	routes: readonly IntegrationResolvedRoute[],
+	routeComponents: ReadonlyMap<string, string>,
 ): Promise<boolean> {
-	const emittedComponents =
-		await emittedRouteComponents(directory);
 	const components = new Set(
 		routes
 			.filter(
@@ -30,8 +28,7 @@ export async function hasRuntimeImageCalls(
 			)
 			.map(
 				(route) =>
-					emittedComponents.get(route.pattern) ??
-					route.entrypoint,
+					routeComponents.get(route.pattern) ?? route.entrypoint,
 			),
 	);
 	const modules = new Map<
