@@ -10,6 +10,21 @@ overrides:
 importers:
   .:
     devDependencies:
+      "@astro-yandex-cloud/deployment-manifest":
+        specifier: workspace:*
+        version: link:packages/deployment-manifest
+      "@astro-yandex-cloud/eslint-plugin":
+        specifier: workspace:*
+        version: link:packages/eslint-plugin
+      "@astro-yandex-cloud/function-runtime-bridge":
+        specifier: workspace:*
+        version: link:packages/function-runtime-bridge
+      "@astro-yandex-cloud/package-info":
+        specifier: workspace:*
+        version: link:packages/package-info
+      "@astro-yandex-cloud/targets":
+        specifier: workspace:*
+        version: link:packages/targets
       "@aws-sdk/client-s3":
         specifier: ^3.1146.0
         version: 3.1146.0
@@ -31,6 +46,9 @@ importers:
       astro:
         specifier: ^7.1.0
         version: 7.1.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(jiti@2.7.0)(rollup@4.62.4)
+      effect:
+        specifier: ^3.22.2
+        version: 3.22.2
       eslint:
         specifier: ^9.32.0
         version: 9.39.5(jiti@2.7.0)
@@ -104,6 +122,15 @@ importers:
         specifier: ^0.2.17
         version: 0.2.17
     devDependencies:
+      "@astro-yandex-cloud/deployment-manifest":
+        specifier: workspace:*
+        version: link:../deployment-manifest
+      "@astro-yandex-cloud/function-runtime-bridge":
+        specifier: workspace:*
+        version: link:../function-runtime-bridge
+      "@astro-yandex-cloud/package-info":
+        specifier: workspace:*
+        version: link:../package-info
       "@types/semver":
         specifier: ^7.8.0
         version: 7.8.0
@@ -122,6 +149,74 @@ importers:
       vite:
         specifier: ^8.0.13
         version: 8.2.0(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)
+
+  packages/deployment-manifest:
+    dependencies:
+      "@astro-yandex-cloud/targets":
+        specifier: workspace:*
+        version: link:../targets
+      effect:
+        specifier: ^3.22.2
+        version: 3.22.2
+    devDependencies:
+      "@types/node":
+        specifier: ^24.2.0
+        version: 24.13.3
+      tsdown:
+        specifier: ^0.15.1
+        version: 0.15.12(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
+  packages/eslint-plugin:
+    devDependencies:
+      "@types/node":
+        specifier: ^24.2.0
+        version: 24.13.3
+      eslint:
+        specifier: ^9.32.0
+        version: 9.39.5(jiti@2.7.0)
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
+  packages/function-runtime-bridge:
+    dependencies:
+      effect:
+        specifier: ^3.22.2
+        version: 3.22.2
+    devDependencies:
+      "@types/node":
+        specifier: ^24.2.0
+        version: 24.13.3
+      tsdown:
+        specifier: ^0.15.1
+        version: 0.15.12(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
+  packages/package-info:
+    devDependencies:
+      "@types/node":
+        specifier: ^24.2.0
+        version: 24.13.3
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
+  packages/targets:
+    devDependencies:
+      "@types/node":
+        specifier: ^24.2.0
+        version: 24.13.3
+      tsdown:
+        specifier: ^0.15.1
+        version: 0.15.12(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
 
   tests/fixtures/actions:
     dependencies:
@@ -2471,6 +2566,9 @@ packages:
         integrity: sha512-i4YPS4B6ts7bjn7UwLnGjiZdprOvHvgGobFZsYK3GIY3E5hIqtj0rReU69BcTpGp+fvtraSNXeG1l+jtJvF55w==,
       }
     engines: { node: ">=18.0.0" }
+    deprecated:
+      Deprecated due to a bug in custom logger data redaction.
+      See https://github.com/aws/aws-sdk-js-v3/issues/8393.
 
   "@smithy/credential-provider-imds@4.5.2":
     resolution:
@@ -2921,7 +3019,8 @@ packages:
       {
         integrity: sha512-83x9rYbHazMaZkYrAFRVZXSQx2moFkz0F7cjTDUF3GWfS0a3p2vZXG1ZdhV86rStHApQCodBJW+XTD37xISIrQ==,
       }
-    engines: { node: ">=22.12.0", npm: ">=9.6.5", pnpm: ">=7.1.0" }
+    engines:
+      { node: ">=22.12.0", npm: ">=9.6.5", pnpm: ">=7.1.0" }
     hasBin: true
     peerDependencies:
       "@astrojs/markdown-remark": 7.2.2
@@ -3161,7 +3260,11 @@ packages:
       {
         integrity: sha512-OA0mILzGc1kCOCSJerOeqDxDQ4HOh+G8NbOJFOTgOCzpw7fCBubk0fEyxp8AgOL/jvLgYA/uV0cMbe43ElF1JA==,
       }
-    engines: { node: ^10 || ^12.20.0 || ^14.13.0 || >=15.0.0, npm: ">=7.0.0" }
+    engines:
+      {
+        node: ^10 || ^12.20.0 || ^14.13.0 || >=15.0.0,
+        npm: ">=7.0.0",
+      }
 
   css-tree@3.2.1:
     resolution:
@@ -3182,7 +3285,11 @@ packages:
       {
         integrity: sha512-0LrrStPOdJj+SPCCrGhzryycLjwcgUSHBtxNA8aIDxf0GLsRh1cKYhB00Gd1lDOS4yGH69+SNn13+TWbVHETFQ==,
       }
-    engines: { node: ^10 || ^12.20.0 || ^14.13.0 || >=15.0.0, npm: ">=7.0.0" }
+    engines:
+      {
+        node: ^10 || ^12.20.0 || ^14.13.0 || >=15.0.0,
+        npm: ">=7.0.0",
+      }
 
   debug@4.4.3:
     resolution:
@@ -3426,6 +3533,9 @@ packages:
         integrity: sha512-DgZS62aPLXKlnxILS/AYCoRvHaZeXceIzlXPkkGGzJWSow1aEk0lbTlxUSlyjC8jcaKxAdOnTDz+o1JFSBsyjw==,
       }
     engines: { node: ^18.18.0 || ^20.9.0 || >=21.1.0 }
+    deprecated:
+      This version is no longer supported. Please see
+      https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: "*"
@@ -5240,7 +5350,8 @@ packages:
       "@azure/storage-blob": ^12.26.0
       "@capacitor/preferences": ^6 || ^7 || ^8
       "@deno/kv": ">=0.9.0"
-      "@netlify/blobs": ^6.5.0 || ^7.0.0 || ^8.1.0 || ^9.0.0 || ^10.0.0
+      "@netlify/blobs":
+        ^6.5.0 || ^7.0.0 || ^8.1.0 || ^9.0.0 || ^10.0.0
       "@planetscale/database": ^1.19.0
       "@upstash/redis": ^1.34.3
       "@vercel/blob": ">=0.27.1"
@@ -5425,7 +5536,8 @@ packages:
         integrity: sha512-ub4okH7Z5KLjb6hDyjqrGXqWtWvoYdU3IGm/NorpgHncKoLTCfRIbvlhBm7r0YstIaQRYlp4yEbFqDcKSzXSSg==,
       }
     peerDependencies:
-      vite: ^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0
+      vite:
+        ^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0
     peerDependenciesMeta:
       vite:
         optional: true

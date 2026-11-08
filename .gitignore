@@ -3,6 +3,7 @@ dist
 .astro
 .artifacts
 packages/adapter/.generated/
+packages/deployment-manifest/.generated/
 coverage
 *.tgz
 .DS_Store

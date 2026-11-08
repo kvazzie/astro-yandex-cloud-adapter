@@ -29,8 +29,14 @@ deployment, verification, updates, and rollback. It also covers Gateway payload
 published; the guide explains checked-tarball installation and the future `beta`
 dist-tag. Cloud procedures are documented but unverified in Yandex Cloud.
 
-Project terminology is defined in [`CONTEXT.md`](CONTEXT.md). Architectural decisions
+Project terminology is defined in [`GLOSSARY.md`](GLOSSARY.md). Architectural decisions
 and design constraints live in [`docs/adr`](docs/adr).
+
+The [Categories × _Targets_ matrix](docs/target-change-matrix.md) records current
+responsibilities and change scenarios for evaluating module boundaries.
+
+See the [domain error catalogue](docs/domain-errors.md) for failed builds,
+rejected Manifests and requests, corrective actions, and non-blocking warnings.
 
 Track beta release gates in [issue #17](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/17)
 and stable promotion in [issue #83](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/83).

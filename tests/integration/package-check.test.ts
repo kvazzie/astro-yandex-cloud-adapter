@@ -6,7 +6,6 @@ import {
   cp,
   mkdtemp,
   readFile,
-  readdir,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -365,17 +364,20 @@ it("rejects an undeclared dependency even when the clean app installs it", async
 }, 300_000);
 
 it("rejects a missing declaration imported by a public type entrypoint", async () => {
+  let missingSpecifier: string | undefined;
   const tarball = await brokenCandidate(async (directory) => {
-    const chunk = (await readdir(join(directory, "dist"))).find((file) =>
-      /^runtime-.+\.d\.ts$/.test(file),
+    const entrypoint = await readFile(
+      join(directory, "dist/runtime.d.ts"),
+      "utf8",
     );
-    expect(chunk).toBeDefined();
-    await rm(join(directory, "dist", chunk!));
+    missingSpecifier = entrypoint.match(/from ["'](\.\/[^"']+\.js)["']/)?.[1];
+    expect(missingSpecifier).toBeDefined();
+    await rm(join(directory, "dist", missingSpecifier!.replace(/\.js$/, ".d.ts")));
   });
   await expect(
     run(process.execPath, [checker, tarball], {
       timeout: 300_000,
       maxBuffer: 10_000_000,
     }),
-  ).rejects.toThrow("Cannot find module './runtime-");
+  ).rejects.toThrow(`Cannot find module '${missingSpecifier}'`);
 }, 300_000);

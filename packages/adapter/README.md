@@ -226,12 +226,12 @@ script or authorization to allocate resources. Inspect it before any deployment:
 ```sh
 node --input-type=module <<'JS'
 import { readFile } from "node:fs/promises";
-import { parseDeploymentManifest } from "@astro-yandex-cloud/adapter/deployment-manifest";
+import { parseDeploymentManifest, encodeDeploymentManifest } from "@astro-yandex-cloud/adapter/deployment-manifest";
 
 const manifest = parseDeploymentManifest(
   JSON.parse(await readFile("dist/yandex-cloud.json", "utf8")),
 );
-console.log(JSON.stringify(manifest, null, 2));
+console.log(JSON.stringify(encodeDeploymentManifest(manifest), null, 2));
 console.log("Packaged schema:", import.meta.resolve(
   "@astro-yandex-cloud/adapter/deployment-manifest.schema.json",
 ));
@@ -240,11 +240,19 @@ JS
 
 The package exports its JSON Schema as
 `@astro-yandex-cloud/adapter/deployment-manifest.schema.json`. The
-[Effect Schema source](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/packages/adapter/src/manifest/schema.ts)
+[Effect Schema source](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/packages/deployment-manifest/src/DeploymentManifest/Schema.ts)
 and the packaged parser define version 1. Reject unknown schema versions. Within
 version 1, tolerate unknown additive fields while validating known fields and
 artifact references. Breaking changes after first publication require a new
 schema version.
+
+The parser returns a decoded
+[_Deployment Manifest_](../../GLOSSARY.md#deployment-manifest)
+whose selected [_Target_](../../GLOSSARY.md#target) is a numeric
+`Targets` enum member. Use `encodeDeploymentManifest` before
+serializing it: the encoded JSON keeps the established string
+target names. `EncodedDeploymentManifestV1` describes that JSON;
+`DeploymentManifestV1` describes the decoded value.
 
 The build generates the JSON Schema from the Effect Schema that also defines the
 TypeScript contract. Function Artifacts declare deployment facts such as runtime
@@ -683,6 +691,10 @@ This is a stateless endpoint form, not an Astro Action. Select a named version
 tag and use the Function update/rollback procedure above.
 
 ## Limitations and support
+
+The [domain error catalogue](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/docs/domain-errors.md)
+explains build failures, rejected Manifests and Function requests, corrective
+actions, and warnings that allow the build to continue.
 
 - Runtime filesystem assets not discovered by Astro/Vite need application-owned
   packaging and verification. A Function does not become a general static-file
