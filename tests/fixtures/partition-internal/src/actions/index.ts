@@ -1,5 +1,5 @@
 import { defineAction } from "astro:actions";
 
 export const server = {
-  greet: defineAction({ handler: async () => "Hello" }),
+	greet: defineAction({ handler: async () => "Hello" }),
 };

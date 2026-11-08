@@ -45,7 +45,8 @@
 		"vite": "^8.0.13",
 		"vitest": "^3.2.4",
 		"@astro-yandex-cloud/deployment-manifest": "workspace:*",
-		"@astro-yandex-cloud/targets": "workspace:*"
+		"@astro-yandex-cloud/targets": "workspace:*",
+		"semver": "^7.8.5"
 	},
 	"pnpm": {
 		"overrides": {
