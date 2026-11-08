@@ -9,3 +9,4 @@ coverage
 # Third-party agent skills installed by the Skills CLI.
 .agents/skills/*
 !.agents/skills/.gitignore
+!.agents/skills/.ignore
