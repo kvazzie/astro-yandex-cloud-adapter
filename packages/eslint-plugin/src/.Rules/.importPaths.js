@@ -17,15 +17,20 @@ const importPathsRule = {
 			if (!/^(?:\.{1,2})(?:\/|$)/.test(source)) return source;
 
 			const suffixStart = source.search(/[?#]/);
-			const path = suffixStart < 0 ? source : source.slice(0, suffixStart);
-			const suffix = suffixStart < 0 ? "" : source.slice(suffixStart);
+			const path =
+				suffixStart < 0 ? source : source.slice(0, suffixStart);
+			const suffix =
+				suffixStart < 0 ? "" : source.slice(suffixStart);
 			const stem = path.replace(/\.(?:js|ts)$/, "");
 			const absolute = resolve(dirname(context.filename), stem);
 			let file = `${absolute}.ts`;
 			let expected = `${stem}.ts`;
 
 			if (/\/$|^\.{1,2}$/.test(path) || !existsSync(file)) {
-				file = join(resolve(dirname(context.filename), path), "index.ts");
+				file = join(
+					resolve(dirname(context.filename), path),
+					"index.ts",
+				);
 				expected = `${path.replace(/\/$/, "")}/index.ts`;
 				if (!existsSync(file)) return source;
 			}
@@ -48,7 +53,8 @@ const importPathsRule = {
 				const source =
 					node.type === "Literal"
 						? node.value
-						: node.type === "TemplateLiteral" && node.expressions.length === 0
+						: node.type === "TemplateLiteral" &&
+							  node.expressions.length === 0
 							? node.quasis[0]?.value.cooked
 							: undefined;
 				if (typeof source !== "string") return;
@@ -60,7 +66,10 @@ const importPathsRule = {
 					messageId: "path",
 					data: { expected },
 					fix(fixer) {
-						return fixer.replaceText(node, JSON.stringify(expected));
+						return fixer.replaceText(
+							node,
+							JSON.stringify(expected),
+						);
 					},
 				});
 			},
