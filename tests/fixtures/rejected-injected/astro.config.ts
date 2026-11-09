@@ -3,6 +3,6 @@ import { defineConfig } from "astro/config";
 import { injectedRoute } from "../shared/injected-route.ts";
 
 export default defineConfig({
-  adapter: yandexCloud(),
-  integrations: [injectedRoute],
+	adapter: yandexCloud(),
+	integrations: [injectedRoute],
 });

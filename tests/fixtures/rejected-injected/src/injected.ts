@@ -1,3 +1,3 @@
 export function GET() {
-  return new Response("integration route");
+	return new Response("integration route");
 }
