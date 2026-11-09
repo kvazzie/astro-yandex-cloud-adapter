@@ -1,0 +1,32 @@
+{
+	"name": "@astro-yandex-cloud/targets",
+	"version": "0.0.0",
+	"private": true,
+	"description": "Shared numeric catalogue of supported Yandex Cloud build targets",
+	"type": "module",
+	"license": "MIT",
+	"sideEffects": false,
+	"engines": {
+		"node": ">=22.12.0"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsdown",
+		"typecheck": "tsc -p tsconfig.json --noEmit"
+	},
+	"devDependencies": {
+		"@types/node": "^24.2.0",
+		"tsdown": "^0.15.1",
+		"typescript": "^5.9.2"
+	}
+}

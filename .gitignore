@@ -2,11 +2,17 @@ node_modules
 dist
 .astro
 .artifacts
+packages/adapter/.generated/
+packages/deployment-manifest/.generated/
 coverage
 *.tgz
 .DS_Store
+.devenv
 
 # Third-party agent skills installed by the Skills CLI.
 .agents/skills/*
 !.agents/skills/.gitignore
 !.agents/skills/.ignore
+
+# CLI-managed harness symlinks created by scripts/setup-skills.mjs.
+.claude/

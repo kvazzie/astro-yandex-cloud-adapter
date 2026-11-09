@@ -1,0 +1,9 @@
+---
+import Greeting from "../components/Greeting.astro";
+---
+
+<!doctype html>
+<title>Server island fixture</title>
+<Greeting server:defer name="Ada">
+  <p slot="fallback">Loading greeting.</p>
+</Greeting>

@@ -1,0 +1,11 @@
+# Identify the maintainer for workflow and publication changes.
+# Main requires an approving review; code-owner approval is optional for solo maintenance.
+/.github/ @kvazzie
+/.coderabbit.yaml @kvazzie
+/scripts/ @kvazzie
+/.changeset/ @kvazzie
+/package.json @kvazzie
+/pnpm-lock.yaml @kvazzie
+/pnpm-workspace.yaml @kvazzie
+/packages/adapter/package.json @kvazzie
+/packages/adapter/tsdown.config.ts @kvazzie
