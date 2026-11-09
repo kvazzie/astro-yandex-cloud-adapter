@@ -65,11 +65,6 @@ const loadFoo = () => import('./foo.js');
 const loadBar = () => import('./bar.js');
 const pageMap = new Map([['page:foo', loadFoo], ['page:bar', loadBar]]);
 const serverIslandMap = new Map([]);
-const deserializeManifest = value => value;
-const manifest = deserializeManifest({ routes: [
-  { routeData: { route: '/foo', component: 'page:foo' } },
-  { routeData: { route: '/bar', component: 'page:bar' } }
-] });
 function handler(event, context, previewUrl, policy) { return policy; }
 export { handler };
 `;
@@ -91,6 +86,7 @@ export { handler };
 		"<h1>Missing</h1>",
 	);
 	const build: FunctionArtifact.FunctionArtifactBuild = {
+		routeComponents: new Map([["/foo", "page:foo"]]),
 		config: {
 			root,
 			outDir,
@@ -98,7 +94,7 @@ export { handler };
 			build: { server, client },
 		},
 		resolvedRoutes: [
-			{ pattern: "/foo", entrypoint: "page:foo" },
+			{ pattern: "/foo", entrypoint: "package/foo" },
 			{ pattern: "/bar", entrypoint: "page:bar" },
 		],
 	};

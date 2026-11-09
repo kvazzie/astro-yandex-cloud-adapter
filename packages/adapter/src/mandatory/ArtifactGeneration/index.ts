@@ -40,6 +40,7 @@ const { version } = readPackageInfo(import.meta.url);
 export interface CompletedBuild {
 	config: AstroConfig;
 	resolvedRoutes: readonly IntegrationResolvedRoute[];
+	routeComponents: ReadonlyMap<string, string>;
 	pages: readonly { pathname: string }[];
 	emittedAssets: ReadonlyMap<string, readonly URL[]>;
 }
@@ -174,6 +175,7 @@ async function inspectRoutes(
 			(await hasRuntimeImageCalls(
 				config.build.server,
 				build.resolvedRoutes,
+				build.routeComponents,
 			)),
 		imageEndpoint: config.image.endpoint.route,
 	});
