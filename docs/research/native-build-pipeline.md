@@ -231,6 +231,67 @@ follows. The adapter's built package was used unchanged. Existing
 full integration and cloud suites were not rerun for this
 documentation-only investigation.
 
+## Native multi-entry experiment, 2026-11-09
+
+After #91/#92/#93 merged into the working architecture branch, a
+disposable experiment tested whether multiple native entries
+around the same `createApp()` handler isolate route code. No
+adapter source was modified. The fixture had two on-demand
+endpoints returning distinct markers. A Vite plugin restricted to
+the SSR environment emitted two named chunks with Rolldown's
+`emitFile({ type: 'chunk', id, fileName })`. Both entries
+imported the same handler. Astro performed the application build;
+the probe did not invoke another bundler or override private
+virtual modules.
+
+Observed result on the installed Astro 7.1.6 pipeline:
+
+| Observation                                  | Entry one | Entry two |
+| -------------------------------------------- | --------- | --------- |
+| Separate entry file emitted                  | Yes       | Yes       |
+| Transitive chunk closure includes marker one | Yes       | Yes       |
+| Transitive chunk closure includes marker two | Yes       | Yes       |
+
+Calling entry one's handler for `/one` returned HTTP 200 and
+`PROBE_ONE_ONLY`; calling it for `/two` returned HTTP 200 and
+`PROBE_TWO_ONLY`.
+
+```text
+entry one ─┐
+           ├─ shared handler / createApp -> global page map -> both routes
+entry two ─┘
+```
+
+This falsifies the simple proposal that emitting multiple facades
+around the existing app entrypoint provides route isolation. It
+does not prove that all native partitioning designs are
+impossible. File selection must still exclude unrelated code; an
+allowlist at invocation time alone does not establish that
+exclusion.
+
+The production `createApp()` implementation imports a global
+manifest (S5). The exported `App` constructor is a candidate for
+further investigation, not a verified feature-preserving
+replacement. A package export alone does not establish a
+documented per-route compiler contract. Pages, middleware,
+Actions, islands, assets and routing precedence remain proof
+obligations.
+
+The probe used a minimal custom adapter and endpoints, not the
+complete Yandex handler or separately deployed directories. Its
+closure inspection used native `imports`/`dynamicImports`
+metadata. A default unsupported-Sharp diagnostic was logged; the
+build and both endpoint requests nevertheless completed. This
+experiment establishes no image-runtime compatibility.
+
+The source and raw results are retained locally outside the
+repository at
+`~/.local/share/codex/reports/native-isolation-probe/run.mjs` and
+`results.json`. Run the probe with Node from the same checkout
+environment; its absolute checkout path is explicit in the
+source. These are disposable research artifacts, not a new
+repository test convention.
+
 ## Installed primary source references
 
 Paths are relative to the resolved package root.
