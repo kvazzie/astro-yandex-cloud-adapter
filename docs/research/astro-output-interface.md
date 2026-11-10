@@ -18,14 +18,14 @@ questions; the originating conversation must then record explicit
 user decisions on those questions. A report arriving is not
 policy acceptance.
 
-Gate checkpoint: **intermediate contract artifacts received and
-read; policy gate open**. The source supplied its report, JSON
-and extractable recipe from `research/rewrite-error-contract`,
-researched against the same base SHA. They were uncommitted on
-delivery, with no PR/head for the report yet; the artifact hashes
-below identify the actual evidence read. Final provenance will be
-attached when supplied, without merging the research branch
-merely to read it. The originating conversation's latest checked
+Gate checkpoint: **final contract artifacts received and read;
+policy gate open**. The source is
+[research PR #98](https://github.com/kvazzie/astro-yandex-cloud-adapter/pull/98),
+head `ca8aa36ebd100896efc01838917731fd50ca8473`, researched
+against the same production base SHA. Its report, JSON and recipe
+match that commit byte for byte; their hashes below identify the
+evidence read. The PR is open and was not merged or copied into
+this branch. The originating conversation's latest checked
 instruction authorizes automatic transfer, not a new runtime
 policy. This remains a reviewable conditional draft, not a final
 implementation handoff.
@@ -87,17 +87,18 @@ evidence here.
 
 ## Contract evidence incorporated
 
-The delivered artifacts are
-`docs/research/rewrite-error-contract.md`,
-`rewrite-error-contract-results.json` and
-`rewrite-error-contract-recipe.md` in the dependency branch. At
-intermediate delivery their SHA-256 values were:
+The delivered artifacts are the
+[contract report](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/ca8aa36ebd100896efc01838917731fd50ca8473/docs/research/rewrite-error-contract.md),
+[JSON evidence](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/ca8aa36ebd100896efc01838917731fd50ca8473/docs/research/rewrite-error-contract-results.json)
+and
+[extractable recipe](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/ca8aa36ebd100896efc01838917731fd50ca8473/docs/research/rewrite-error-contract-recipe.md).
+At the checked research head their SHA-256 values are:
 
 | Artifact        | SHA-256                                                            |
 | --------------- | ------------------------------------------------------------------ |
-| Report          | `aa6915412430fe30bd42cfd0eba4f19fa05ee23da94a690d07b78da9986510a5` |
-| JSON            | `002518722c01e982893bb0ca1be9d7b9663af8b5f28ade7c93b2c6434a4b825c` |
-| Recipe document | `badfec5f3ec572d701dd28e3c1303d627f2dec456ffd60357e199c68a8caa155` |
+| Report          | `53f90d7285c39ab537450dc6857760ad8c521742d0fe554530adad99e092c632` |
+| JSON            | `ddaa740d927c0f9cda595c1ef20565255d4b53ddd2c7adf5543178ff72f1549f` |
+| Recipe document | `fe7851950ccbc8d480dd39ae3b80af8f49bfc8515165176b5578f687390b2522` |
 
 A disposable read-only evidence check verified **36 successful
 native builds, 780 fresh-process observations and 168 preview
@@ -106,9 +107,14 @@ recorded SHA-256
 `014cc11a4ed8ed905e535f2581408c41dc0df7cb7e0b1921e9ca214274302d64`.
 The study ran Astro 7.1.6 and 7.4.8 on Node 26.13.0, with real
 public-adapter shared/separate output and a full standard
-reference App. This design did not rerun those experiments. R1–R4
-below were checked directly in the delivered JSON for both
-versions, not inferred from #96.
+reference App. `toolchainAudit` establishes the compiler actually
+resolved Vite **8.3.6** / Rolldown **1.2.16**; top-level Vite
+8.3.7 / Rolldown 1.2.18 in those environments are different
+resolution facts. The final report also records a fresh
+frozen-environment reproduction matching all recorded
+response/error/ call/load and preview tuples. This design did not
+rerun those experiments. R1–R4 below were checked directly in the
+delivered JSON for both versions, not inferred from #96.
 
 | Case                                                                  | Reference / production shared                                        | Production separate                                                                           |
 | --------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
