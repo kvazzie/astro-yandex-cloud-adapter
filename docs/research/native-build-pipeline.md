@@ -19,7 +19,7 @@ The inspected checkout was `feat/complete-beta-routing` at
 uncommitted module reorganization. Adapter paths below name that
 working tree, not files introduced by this documentation PR. Its
 domain glossary is `GLOSSARY.md`; the committed base still keeps
-the glossary in `GLOSSARY.md`. This note introduces no new domain
+the glossary in `CONTEXT.md`. This note introduces no new domain
 terms, Entities, or Value Objects.
 
 Actual dependency resolution gave Astro **7.1.6**, Vite

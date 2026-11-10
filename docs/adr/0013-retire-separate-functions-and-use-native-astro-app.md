@@ -65,13 +65,14 @@ native Astro build -> complete App + all emitted runtime files
 ```
 
 - A [_Static-only Build_](../../GLOSSARY.md#static-only-build)
-  still emits no function. All required on-demand routes of a
+  still emits no function. All required
+  [_On-demand Routes_](../../GLOSSARY.md#on-demand-route) of a
   _Runtime Build_ reference the same artifact.
 - `functions: "shared"` remains an optional compatibility
   spelling; `functions: "separate"` is rejected by configuration
   and the draft
   [_Deployment Manifest_](../../GLOSSARY.md#deployment-manifest)
-  schema. Multiple function artifacts are rejected. The
+  schema. Multiple _Function Artifacts_ are rejected. The
   unpublished v1 contract is narrowed before publication, not
   reinterpreted as accepting legacy separate builds.
 - No route-loader pruning, per-route handler allowlist or preview

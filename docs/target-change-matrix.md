@@ -226,9 +226,9 @@ helpers. `Errors.ts` remains the conventional error collection.
 implementation checks route compatibility, then calls
 `FunctionArtifact.planPreparation` and `applyPreparation`. The
 preparation module owns complete output reading, cleanup, 404
-preparation, policy application, and preview-dispatcher creation.
-Its planner reads existing output and computes an inspectable
-mutation queue; its executor applies that queue in order.
+preparation and policy application. Its planner reads existing
+output and computes an inspectable mutation queue; its executor
+applies that queue in order.
 `mandatory/ArtifactGeneration.completeBuild` coordinates output
 inspection, route inspection, selected preparation, and writing
 the completed manifest/template. These are several levels of

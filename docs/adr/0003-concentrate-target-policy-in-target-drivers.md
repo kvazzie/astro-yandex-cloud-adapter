@@ -56,7 +56,7 @@ callers' common parent instead of being exposed through
 re-exports. `ArtifactGeneration` owns the completed build, route
 requirements and size reporting. `FunctionArtifact` owns
 [_dependency_](../../GLOSSARY.md#dependency) resolution,
-packaging, and partitioning.
+packaging and complete native output preparation.
 `conditional/FunctionArtifact/Prepare.ts` also plans copies of
 completed custom 404 pages into page-serving
 [_Function Artifacts_](../../GLOSSARY.md#function-artifact) and
@@ -128,7 +128,6 @@ Effect.gen(function* () {
     build,
     routePlan,
     {
-      functions: options.functions,
       dependencyStrategy: options.dependencyStrategy,
       recursive404: options.recursive404,
     },
@@ -142,9 +141,9 @@ The plan contains an ordered `mutations` queue and
 assignments. Mutations are `writeFile`, `copyFile`, `mkdir`, or
 `removeDirectory`. JS transformations and import analysis operate
 on computed contents in memory, so writes contain final contents.
-Copy mutations refer to unchanged source files. For separate
-functions, all copies precede removal of the original server
-directory, followed by preview-dispatcher creation.
+Copy mutations refer to unchanged source files. The complete
+native App stays in its server directory; no per-route copies or
+preview dispatcher are planned.
 
 `applyPreparation` executes those mutations in order and returns
 `plannedOutput` only after success. It does not choose policies
