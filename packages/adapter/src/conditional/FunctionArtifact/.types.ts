@@ -1,8 +1,6 @@
-import type { IntegrationResolvedRoute } from "astro";
 import type { RoutePlan } from "../../mandatory/ArtifactGeneration/RouteRequirements";
 
 export interface FunctionArtifactBuild {
-	readonly routeComponents: ReadonlyMap<string, string>;
 	readonly config: {
 		readonly root: URL;
 		readonly outDir: URL;
@@ -12,13 +10,8 @@ export interface FunctionArtifactBuild {
 			readonly client: URL;
 		};
 	};
-	readonly resolvedRoutes: readonly Pick<
-		IntegrationResolvedRoute,
-		"pattern" | "entrypoint"
-	>[];
 }
 export interface PreparationSettings {
-	readonly functions: "shared" | "separate";
 	readonly dependencyStrategy: "bundle" | "install";
 	readonly recursive404: boolean;
 }
@@ -28,7 +21,6 @@ export interface FunctionArtifactDescriptor {
 	readonly directory: URL;
 	readonly runtime: "nodejs22";
 	readonly entrypoint: "index.handler";
-	readonly allowedRoutes?: readonly string[];
 }
 export interface PreparationOutput {
 	readonly routePlan: RoutePlan;
@@ -59,7 +51,6 @@ export type PlannedFile = { readonly path: string } & (
 
 /** Completed-build routing and static error assets owned by one Function. */
 export interface FunctionArtifactPolicy {
-	allowedRoutes?: readonly string[];
 	notFound?: Array<{ scope: string; url: string; file: string }>;
 	artifactDirectory?: URL;
 }

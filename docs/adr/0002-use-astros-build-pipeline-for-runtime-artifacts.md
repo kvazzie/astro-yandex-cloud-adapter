@@ -12,3 +12,8 @@ Test Artifact Generation through the public adapter with
 application fixture builds and generated handlers. These tests
 exercise the output that a user deploys and can detect failures
 that tests of individual helpers would miss.
+
+[ADR 0013](0013-retire-separate-functions-and-use-native-astro-app.md)
+records why separate functions / `functionPerRoute` were retired
+after an implemented attempt. Runtime output keeps the complete
+native App.

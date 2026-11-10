@@ -8,7 +8,6 @@ export default defineConfig({
 		target: "object-storage-functions",
 		apiGateway: true,
 		recursive404: true,
-		functions: "separate",
 	}),
 	base: "/docs",
 	image: { service: passthroughImageService() },

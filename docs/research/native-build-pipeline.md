@@ -1,5 +1,12 @@
 # Native build pipeline and emitted-output processing
 
+Historical evidence:
+[ADR 0013](../adr/0013-retire-separate-functions-and-use-native-astro-app.md)
+retires separate functions / `functionPerRoute` after this
+investigation. The observations below remain evidence for their
+recorded source versions; they are not a current promise to
+support `functions: "separate"`.
+
 Researched on 2026-11-07 and verified on 2026-11-08. Three
 parallel investigations covered route evidence, function
 partitioning, and build completion. This note records findings,
@@ -12,7 +19,7 @@ The inspected checkout was `feat/complete-beta-routing` at
 uncommitted module reorganization. Adapter paths below name that
 working tree, not files introduced by this documentation PR. Its
 domain glossary is `GLOSSARY.md`; the committed base still keeps
-the glossary in `CONTEXT.md`. This note introduces no new domain
+the glossary in `GLOSSARY.md`. This note introduces no new domain
 terms, Entities, or Value Objects.
 
 Actual dependency resolution gave Astro **7.1.6**, Vite
@@ -170,13 +177,13 @@ tests. Early-known settings may use a virtual module; completed
 
 ## What remains in Artifact Generation
 
-[_Artifact Generation_](../../CONTEXT.md#responsibility-boundary)
+[_Artifact Generation_](../../GLOSSARY.md#artifact-generation)
 names the adapter-owned process. It does not require a separately
 materialized server output Value Object. The current
 `completeBuild` module coordinates evidence collection, route
 reconciliation, selected preparation, and final
-[_Deployment Manifest_](../../CONTEXT.md#deployment-model) and
-Gateway output. Extracting compiler interpretation does not
+[_Deployment Manifest_](../../GLOSSARY.md#deployment-manifest)
+and Gateway output. Extracting compiler interpretation does not
 remove that coordination.
 
 Final HTML still contributes runtime URL evidence. Concrete 404

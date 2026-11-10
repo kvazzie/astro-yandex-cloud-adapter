@@ -43,25 +43,15 @@ function checkReferences(manifest: DeploymentManifestV1): void {
 			"recursive 404 requires the API Gateway modifier.",
 		);
 	if (
-		manifest.modifiers.functions === "separate" &&
-		manifest.target !== Targets.ObjectStorageCloudFunctionsTarget
-	)
-		invalidManifest(
-			"separate partitioning requires the Object Storage + Cloud Functions Target.",
-		);
-	if (
 		manifest.modifiers.dependencyStrategy === "install" &&
 		manifest.target !== Targets.ObjectStorageCloudFunctionsTarget
 	)
 		invalidManifest(
 			"install dependencies require the Object Storage + Cloud Functions Target.",
 		);
-	if (
-		manifest.modifiers.functions === "shared" &&
-		manifest.artifacts.functions.length > 1
-	)
+	if (manifest.artifacts.functions.length > 1)
 		invalidManifest(
-			"shared partitioning cannot describe multiple Functions.",
+			"only one shared Function Artifact is supported; separate functions were retired (ADR 0013).",
 		);
 	if (
 		!isCanonicalUrlPath(manifest.base) ||

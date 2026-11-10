@@ -136,6 +136,16 @@ and
 
 ### Routing options
 
+Runtime builds use one complete native Astro App in one Function.
+Separate functions, per-route functions and `functionPerRoute`
+were retired to preserve rewrites and error rendering without
+maintaining Astro's removed splitting mechanism.
+[ADR 0013](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/docs/adr/0013-retire-separate-functions-and-use-native-astro-app.md)
+records the implemented attempt, upstream rationale and
+conditions for reconsideration. Existing `functions: "shared"`
+configuration remains accepted; remove `functions: "separate"`
+when upgrading.
+
 The
 [Manifest and routing decision](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/63#issuecomment-5900071837)
 defines the API Gateway Modifier for both Targets. It prepares
@@ -149,21 +159,21 @@ and integration-injected routes in the route map.
 | -------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `apiGateway`   | `false`    | Both Targets accept `true` to generate `yandex-api-gateway.json` for page and endpoint routing with payload format `0.1`. |
 | `recursive404` | `false`    | Requires `apiGateway: true`. Routes missing pages to the nearest explicit static 404 scope.                               |
-| `functions`    | `"shared"` | The Functions Target accepts `"separate"` to emit one Function Artifact per On-demand Route.                              |
+| `functions`    | `"shared"` | Optional compatibility spelling for the sole shared App. `"separate"` is rejected; see ADR 0013 above.                    |
 | `directOrigin` | unset      | The Functions Target accepts an explicit HTTP or HTTPS origin for direct endpoint forms. Available only without Gateway.  |
 
 `directOrigin` must contain only an origin, without credentials,
 a path, query, or fragment. Astro `site` does not substitute for
 this option. Keep Astro's `security.checkOrigin` enabled. A
 Static-only Build emits no Function Artifact, even when the
-Functions Target or `functions: "separate"` is selected.
+Functions Target is selected.
 
 See
 [routing configuration examples](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/docs/beta-routing.md)
-for static Gateway builds, direct forms, Function partitioning,
-and a template consumer for an existing Pulumi or SST program.
-These options have local verification; the cloud procedures
-remain unverified in Yandex Cloud.
+for static Gateway builds, direct forms, complete Function
+output, and a template consumer for an existing Pulumi or SST
+program. These options have local verification; the cloud
+procedures remain unverified in Yandex Cloud.
 
 ### Function dependencies
 
@@ -228,15 +238,9 @@ dist/
     package-lock.json      present with the install strategy
 ```
 
-That is the default `functions: "shared"` layout. With
-`functions: "separate"`, deployable Functions live in
-`dist/functions/<stable-route-hash>/`, each with its own
-`index.js`, runtime chunks, package metadata, and optional
-lockfile. `dist/function/index.js` then dispatches local preview
-requests and is not a deployable Function Artifact. Upload only
-entries in `artifacts.functions`. With `apiGateway: true`, either
-build class also emits `dist/yandex-api-gateway.json`. A
-Static-only Build still has no Function Artifact.
+Runtime builds emit one deployable Function at `dist/function`.
+Its `index.handler` is also used by local preview; no per-route
+dispatcher or `dist/functions/*` output is generated.
 
 Read paths from the Manifest if you customize `outDir`. Keep
 every file in a Function Artifact, including all chunks. Do not
@@ -488,10 +492,9 @@ This procedure is **unverified in Yandex Cloud**. Skip it when
 `artifacts.functions` is empty. Use an existing Function per
 emitted Function Artifact and
 [an authenticated Yandex CLI profile](https://yandex.cloud/en/docs/cli/quickstart).
-The default build emits one shared Function. With
-`functions: "separate"`, deploy each listed artifact to its own
-existing Function and preserve the route-to-artifact references.
-Resource IDs and permissions are supplied by you.
+Deploy the single listed Function Artifact to one existing
+Function. Use the Manifest's artifact path and entrypoint instead
+of guessing a per-route resource mapping.
 
 ### Package and create a version
 
@@ -668,8 +671,8 @@ Function with `x-yc-apigateway-any-method` and
 Astro. Parameters and optional rest paths come from the actual
 route map. Compound parameter segments or overlaps whose Astro
 priority cannot be represented by Gateway fail the build with
-guidance. A shared Function can resolve overlaps internally when
-separate Functions cannot preserve the winner.
+guidance. All runtime routes use the same Function, where Astro
+preserves their priority.
 
 The template sets `ignoreTrailingSlashes: false`. Static pages
 use their canonical URL under `trailingSlash: "always"` or

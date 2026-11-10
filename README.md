@@ -1,5 +1,12 @@
 # Astro adapter for Yandex Cloud
 
+Runtime builds use one complete native Astro App. Separate
+functions (`functionPerRoute`, per-route packaging) were
+deliberately retired;
+[ADR 0013](docs/adr/0013-retire-separate-functions-and-use-native-astro-app.md)
+records the previous attempt, reasons and conditions for
+reconsideration.
+
 Both the Object Storage Target and Object Storage + Cloud
 Functions Target are beta. Cloud Functions compatibility has not
 yet been verified in Yandex Cloud. The supported application

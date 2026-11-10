@@ -106,21 +106,21 @@ Effects. Configuration setup resets both fields before a new
 build; build completion reports missing configuration through the
 Effect error channel.
 
-`FunctionArtifact.planPreparation` computes partitioning, package
-metadata, validated imports, final handler policies, required 404
-copies, cleanup of unused server output, and the preview
-dispatcher for separate functions. It reads completed output and
-dependency metadata without modifying artifact output. The
-dispatcher remains local-preview support and is excluded from
-deployable artifact records. Build compatibility stays in
-`TargetBuild`; manifest and Gateway-template construction stay in
-common completion.
+`FunctionArtifact.planPreparation` reads the complete native App
+and computes package metadata, validated imports, final handler
+policies, required 404 copies and cleanup of unused server
+output. It reads completed output and dependency metadata without
+modifying artifact output.
+[ADR 0013](0013-retire-separate-functions-and-use-native-astro-app.md)
+retires per-route partitioning and its preview dispatcher. Build
+compatibility stays in `TargetBuild`; manifest and
+Gateway-template construction stay in common completion.
 
 The preparation seam receives narrow completed-build and route
-evidence plus the function partition, dependency strategy, and
-recursive-404 setting. It receives neither the whole integration
-`Options` value nor target identity. The selected build strategy
-currently plans and immediately applies the result:
+evidence plus the dependency strategy and recursive-404 setting.
+It receives neither the whole integration `Options` value nor
+target identity. The selected build strategy currently plans and
+immediately applies the result:
 
 ```ts
 Effect.gen(function* () {

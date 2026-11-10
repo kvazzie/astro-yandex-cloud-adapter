@@ -57,19 +57,6 @@ export async function handler(
 						);
 						if (fallback) return fallback;
 					}
-					if (
-						routeData &&
-						artifactPolicy.allowedRoutes &&
-						!artifactPolicy.allowedRoutes.includes(
-							routeData.route,
-						)
-					)
-						return (
-							(await staticNotFoundResponse(
-								astroRequest,
-								artifactPolicy,
-							)) ?? new Response("Not Found", { status: 404 })
-						);
 					return app.render(astroRequest, {
 						addCookieHeader: true,
 						clientAddress,

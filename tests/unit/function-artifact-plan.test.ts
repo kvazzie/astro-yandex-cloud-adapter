@@ -86,17 +86,12 @@ export { handler };
 		"<h1>Missing</h1>",
 	);
 	const build: FunctionArtifact.FunctionArtifactBuild = {
-		routeComponents: new Map([["/foo", "page:foo"]]),
 		config: {
 			root,
 			outDir,
 			base: "/",
 			build: { server, client },
 		},
-		resolvedRoutes: [
-			{ pattern: "/foo", entrypoint: "package/foo" },
-			{ pattern: "/bar", entrypoint: "page:bar" },
-		],
 	};
 	const routes: RoutePlan["routes"] = ["foo", "bar"].map(
 		(name, priority) => ({
@@ -146,116 +141,72 @@ export { handler };
 }
 
 const settings = {
-	functions: "shared",
 	dependencyStrategy: "bundle",
 	recursive404: true,
 } as const;
 
 describe("Function Artifact mutation plans", () => {
-	it.each(["shared", "separate"] as const)(
-		"plans %s artifacts without mutations, then applies final handlers, 404 and metadata",
-		async (functions) => {
-			const f = await fixture();
-			const before = await snapshot(f.directory);
-			const routesBefore = JSON.stringify(f.routePlan);
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					functions,
-				}),
+	it("plans the complete artifact without mutations, then applies handlers, 404 and metadata", async () => {
+		const f = await fixture();
+		const before = await snapshot(f.directory);
+		const routesBefore = JSON.stringify(f.routePlan);
+		const plan = await Effect.runPromise(
+			FunctionArtifact.planPreparation(f.build, f.routePlan, {
+				...settings,
+			}),
+		);
+		expect(await snapshot(f.directory)).toEqual(before);
+		expect(JSON.stringify(f.routePlan)).toBe(routesBefore);
+		expect(plan.plannedOutput.functions).toHaveLength(1);
+		for (const artifact of plan.plannedOutput.functions) {
+			const writes = plan.mutations.filter(
+				(mutation) =>
+					mutation.kind === "writeFile" &&
+					mutation.path.href ===
+						new URL("index.js", artifact.directory).href,
 			);
-			expect(await snapshot(f.directory)).toEqual(before);
-			expect(JSON.stringify(f.routePlan)).toBe(routesBefore);
-			expect(plan.plannedOutput.functions).toHaveLength(
-				functions === "shared" ? 1 : 2,
+			expect(writes).toHaveLength(1);
+		}
+		const output = await Effect.runPromise(
+			FunctionArtifact.applyPreparation(plan),
+		);
+		expect(output).toBe(plan.plannedOutput);
+		for (const artifact of output.functions) {
+			const source = await readFile(
+				new URL("index.js", artifact.directory),
+				"utf8",
 			);
-			for (const artifact of plan.plannedOutput.functions) {
-				const writes = plan.mutations.filter(
-					(mutation) =>
-						mutation.kind === "writeFile" &&
-						mutation.path.href ===
-							new URL("index.js", artifact.directory).href,
-				);
-				expect(writes).toHaveLength(1);
-				if (functions === "separate")
-					await expect(
-						access(artifact.directory),
-					).rejects.toMatchObject({ code: "ENOENT" });
-			}
-			const output = await Effect.runPromise(
-				FunctionArtifact.applyPreparation(plan),
+			expect(source).toContain("const __yandexArtifactHandler");
+			expect(source).toContain(".yandex/404/");
+			const pages = await readdir(
+				new URL(".yandex/404/", artifact.directory),
 			);
-			expect(output).toBe(plan.plannedOutput);
-			for (const artifact of output.functions) {
-				const source = await readFile(
-					new URL("index.js", artifact.directory),
+			expect(pages).toHaveLength(1);
+			expect(
+				await readFile(
+					new URL(
+						`.yandex/404/${pages[0]!}`,
+						artifact.directory,
+					),
 					"utf8",
-				);
-				expect(source).toContain(
-					"const __yandexArtifactHandler",
-				);
-				expect(source).toContain(".yandex/404/");
-				const pages = await readdir(
-					new URL(".yandex/404/", artifact.directory),
-				);
-				expect(pages).toHaveLength(1);
-				expect(
+				),
+			).toBe("<h1>Missing</h1>");
+			expect(
+				JSON.parse(
 					await readFile(
-						new URL(
-							`.yandex/404/${pages[0]!}`,
-							artifact.directory,
-						),
+						new URL("package.json", artifact.directory),
 						"utf8",
 					),
-				).toBe("<h1>Missing</h1>");
-				expect(
-					JSON.parse(
-						await readFile(
-							new URL("package.json", artifact.directory),
-							"utf8",
-						),
-					),
-				).toMatchObject({ type: "module", dependencies: {} });
-			}
-			if (functions === "separate") {
-				const foo = output.functions.find((artifact) =>
-					artifact.allowedRoutes?.includes("/foo"),
-				)!;
-				expect(
-					await readFile(new URL("asset.bin", foo.directory)),
-				).toEqual(Buffer.from([0, 1, 127, 255]));
-				const dispatcher = await readFile(
-					new URL("index.js", f.server),
-					"utf8",
-				);
-				expect(dispatcher).toContain(
-					"Local Astro preview dispatcher",
-				);
-				const copies = plan.mutations.map((mutation, i) =>
-					mutation.kind === "copyFile" &&
-					mutation.from.href.startsWith(f.server.href)
-						? i
-						: -1,
-				);
-				const removal = plan.mutations.findIndex(
-					(mutation) =>
-						mutation.kind === "removeDirectory" &&
-						mutation.path.href === f.server.href,
-				);
-				expect(removal).toBeGreaterThan(Math.max(...copies));
-				expect(
-					plan.mutations
-						.slice(removal + 1)
-						.some(
-							(mutation) =>
-								mutation.kind === "writeFile" &&
-								mutation.path.href ===
-									new URL("index.js", f.server).href,
-						),
-				).toBe(true);
-			}
-		},
-	);
+				),
+			).toMatchObject({ type: "module", dependencies: {} });
+		}
+		expect(
+			await readFile(new URL("asset.bin", f.server)),
+		).toEqual(Buffer.from([0, 1, 127, 255]));
+		expect(
+			await readFile(new URL("bar.js", f.server), "utf8"),
+		).toContain("export const bar");
+	});
 
 	it("plans empty runtime output without deleting it until application", async () => {
 		const f = await fixture();

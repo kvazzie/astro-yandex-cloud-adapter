@@ -50,7 +50,7 @@ export const ObjectStorageCloudFunctionsTargetOptions = S.extend(
 			objectStorageCloudFunctionsTargetOptionsDefaultValues.dependencyStrategy,
 		),
 		functions: optionalWithDefault(
-			S.Literal("shared", "separate"),
+			S.Literal("shared"),
 			objectStorageCloudFunctionsTargetOptionsDefaultValues.functions,
 		),
 	}),

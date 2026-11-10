@@ -216,16 +216,19 @@ describe.sequential("API Gateway artifacts", () => {
 		);
 	});
 
-	it("fails when Yandex precedence would select another Function than Astro", async () => {
-		const root = await fixtureRoot("gateway-rejected-priority");
-		await expect(
-			build({ root: `${root}/`, logLevel: "silent" }),
-		).rejects.toHaveProperty(
-			"cause.message",
-			expect.stringMatching(
-				/cannot preserve Astro route priority/,
-			),
+	it("keeps overlapping runtime routes in one Function so Astro owns precedence", async () => {
+		const { manifest, template } = await gatewayBuild(
+			"gateway-rejected-priority",
 		);
+		expect(manifest.artifacts.functions).toHaveLength(1);
+		expect(
+			new Set(
+				manifest.routes.onDemand.map(
+					(route) => route.artifactId,
+				),
+			).size,
+		).toBe(1);
+		expect(template.paths).toHaveProperty("/a/{param}/d");
 	});
 
 	it("rejects a generated specification above Yandex's 3.5 MB limit", async () => {

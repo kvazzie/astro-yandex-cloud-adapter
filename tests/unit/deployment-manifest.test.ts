@@ -150,11 +150,23 @@ describe("Deployment Manifest consumers", () => {
 		);
 	});
 
-	it("rejects separate Function partitioning on Object Storage", () => {
-		const value = staticManifest();
+	it("rejects multiple Function Artifacts even without a partition modifier", () => {
+		const value = functionManifest();
+		value.artifacts.functions.push({
+			id: "function:other",
+			path: "functions/other",
+			runtime: "nodejs22",
+			entrypoint: "index.handler",
+		});
+		expect(() => parseDeploymentManifest(value)).toThrow();
+		expect(validateSchema(value)).toBe(false);
+	});
+
+	it("rejects retired separate Function partitioning", () => {
+		const value = functionManifest();
 		Object.assign(value.modifiers, { functions: "separate" });
 		expect(() => parseDeploymentManifest(value)).toThrow(
-			/partition.*Functions/i,
+			/shared/,
 		);
 	});
 

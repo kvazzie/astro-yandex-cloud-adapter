@@ -72,8 +72,10 @@ application dependencies; install handlers first run `npm ci`
 from their generated lockfile. Preview checks serve Client
 Artifacts and run Actions and endpoints through the Function
 Artifact, then stop the listener. Preview checks also cover
-direct endpoint forms and separate Functions. The separate
-build's preview dispatcher is not a deployable Function Artifact.
+direct endpoint forms and a complete shared Function with
+recursive 404 fallback. Separate functions and their preview
+dispatcher were retired in
+[ADR 0013](adr/0013-retire-separate-functions-and-use-native-astro-app.md).
 
 The report records the package name, version, candidate filename,
 original tarball path, byte size, SHA-512 and SHA-256 digests,

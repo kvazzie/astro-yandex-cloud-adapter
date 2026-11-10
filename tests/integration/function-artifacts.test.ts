@@ -101,10 +101,9 @@ async function isolatedHandler(
 }
 
 /** Builds public adapter configuration with a unique output for each comparison. */
-async function partitionBuild(
+async function functionBuild(
 	fixture: string,
 	options: {
-		functions: "shared" | "separate";
 		apiGateway: boolean;
 		dependencyStrategy?: "bundle" | "install";
 		base?: string;
@@ -182,7 +181,7 @@ async function routeHandler(
 	};
 }
 
-describe.sequential("Function Artifact partitioning", () => {
+describe.sequential("Complete native Function Artifact", () => {
 	afterAll(async () => {
 		await Promise.all(
 			[...temporaryDirectories].map((directory) =>
@@ -190,7 +189,7 @@ describe.sequential("Function Artifact partitioning", () => {
 			),
 		);
 	});
-	it("emits independently deployable route Functions with distinct runtime code", async () => {
+	it("emits one deployable Function containing every runtime route", async () => {
 		const root = join(fixtures, "partition-basic");
 		await rm(join(root, "dist"), {
 			recursive: true,
@@ -198,14 +197,14 @@ describe.sequential("Function Artifact partitioning", () => {
 		});
 		await build({ root, logLevel: "silent" });
 		const output = await manifest("partition-basic");
-		expect(output.artifacts.functions).toHaveLength(2);
+		expect(output.artifacts.functions).toHaveLength(1);
 		const fixed = output.routes.onDemand.find(
 			(route) => route.pattern === "/api/fixed",
 		);
 		const rest = output.routes.onDemand.find(
 			(route) => route.pattern === "/api/[...path]",
 		);
-		expect(fixed?.artifactId).not.toBe(rest?.artifactId);
+		expect(fixed?.artifactId).toBe(rest?.artifactId);
 		const fixedArtifact = output.artifacts.functions.find(
 			(artifact) => artifact.id === fixed?.artifactId,
 		)!;
@@ -243,13 +242,13 @@ describe.sequential("Function Artifact partitioning", () => {
 				gatewayEvent("/api/fixed"),
 				context,
 			),
-		).toMatchObject({ statusCode: 404 });
+		).toMatchObject({ statusCode: 200 });
 		expect(
 			await fixedHandler.module.handler(
 				gatewayEvent("/api/a/b"),
 				context,
 			),
-		).toMatchObject({ statusCode: 404 });
+		).toMatchObject({ statusCode: 200 });
 		const source = (
 			await Promise.all(
 				(
@@ -263,29 +262,29 @@ describe.sequential("Function Artifact partitioning", () => {
 					),
 			)
 		).join("\n");
-		expect(source).not.toContain("rest-route-only-marker");
+		expect(source).toContain("rest-route-only-marker");
 	});
-	it("keeps Astro preview working for separate direct Functions under a non-root base", async () => {
-		const { root, output, manifest } = await partitionBuild(
+	it("keeps Astro preview working for direct endpoints under a non-root base", async () => {
+		const { root, output, manifest } = await functionBuild(
 			"partition-basic",
 			{
-				functions: "separate",
 				apiGateway: false,
 				base: "/docs",
 			},
 		);
-		expect(manifest.artifacts.functions).toHaveLength(2);
+		expect(manifest.artifacts.functions).toHaveLength(1);
 		expect(
 			manifest.artifacts.functions.every(
-				(artifact) => artifact.path !== "function",
+				(artifact) => artifact.path === "function",
 			),
 		).toBe(true);
 		const dispatcher = await readFile(
 			join(output, "function/index.js"),
 			"utf8",
 		);
-		expect(dispatcher).not.toContain(output);
-		expect(dispatcher).toContain("../functions/");
+		expect(dispatcher).not.toContain(
+			"Local Astro preview dispatcher",
+		);
 		const server = await preview({
 			root: `${root}/`,
 			outDir: `${output}/`,
@@ -314,59 +313,38 @@ describe.sequential("Function Artifact partitioning", () => {
 		}
 	});
 
-	it("preserves Gateway dynamic, rest, and injected responses while assigning deterministic resources", async () => {
-		const shared = await partitionBuild("partition-mixed", {
-			functions: "shared",
+	it("preserves Gateway dynamic, rest, and injected routes in one deterministic resource", async () => {
+		const built = await functionBuild("partition-mixed", {
 			apiGateway: true,
 		});
-		const separate = await partitionBuild("partition-mixed", {
-			functions: "separate",
+		const repeated = await functionBuild("partition-mixed", {
 			apiGateway: true,
 		});
-		const repeated = await partitionBuild("partition-mixed", {
-			functions: "separate",
-			apiGateway: true,
-		});
-		expect(separate.manifest.artifacts.functions).toEqual(
+		expect(built.manifest.artifacts.functions).toEqual(
 			repeated.manifest.artifacts.functions,
 		);
-		expect(separate.manifest.routes.onDemand).toEqual(
+		expect(built.manifest.routes.onDemand).toEqual(
 			repeated.manifest.routes.onDemand,
 		);
-		expect(separate.manifest.artifacts.functions).toHaveLength(
-			3,
-		);
+		expect(built.manifest.artifacts.functions).toHaveLength(1);
 		for (const [pattern, path, expected] of [
 			["/docs/posts/[slug]", "/docs/posts/ada", "<p>ada</p>"],
 			["/docs/archive/[...path]", "/docs/archive/a/b", "a/b"],
 			["/docs/injected/[name]", "/docs/injected/Ada", "Ada"],
 		]) {
-			const sharedHandler = await routeHandler(
-				shared.output,
-				shared.manifest,
-				pattern!,
-			);
-			const separateHandler = await routeHandler(
-				separate.output,
-				separate.manifest,
+			const handler = await routeHandler(
+				built.output,
+				built.manifest,
 				pattern!,
 			);
 			const event = gatewayEvent(path!);
-			const before = await sharedHandler.module.handler(
-				event,
-				context,
-			);
-			const after = await separateHandler.module.handler(
-				event,
-				context,
-			);
+			const after = await handler.module.handler(event, context);
 			expect(after).toMatchObject({ statusCode: 200 });
 			expect(after.body).toContain(expected);
-			expect(after.body).toBe(before.body);
 		}
 		const template = JSON.parse(
 			await readFile(
-				join(separate.output, "yandex-api-gateway.json"),
+				join(built.output, "yandex-api-gateway.json"),
 				"utf8",
 			),
 		) as {
@@ -393,7 +371,7 @@ describe.sequential("Function Artifact partitioning", () => {
 			(variable) =>
 				variable.default === "REPLACE_ME_INVALID_FUNCTION_ID",
 		);
-		expect(variables).toHaveLength(3);
+		expect(variables).toHaveLength(1);
 		const references = [
 			"/docs/posts/{slug}",
 			"/docs/archive/{path+}",
@@ -404,49 +382,76 @@ describe.sequential("Function Artifact partitioning", () => {
 					"x-yc-apigateway-integration"
 				].function_id,
 		);
-		expect(new Set(references).size).toBe(3);
+		expect(new Set(references).size).toBe(1);
 	});
 
-	it("restores the same direct request target in shared and separate endpoint Functions", async () => {
-		for (const functions of ["shared", "separate"] as const) {
-			const { output, manifest } = await partitionBuild(
-				"partition-basic",
-				{
-					functions,
-					apiGateway: false,
-					base: "/docs",
-				},
-			);
-			expect(manifest.directInvocation).toBeDefined();
-			const handler = await routeHandler(
-				output,
-				manifest,
-				"/docs/api/[...path]",
-			);
-			const parameter =
-				manifest.directInvocation!.requestTargetParameter;
-			const response = await handler.module.handler(
-				{
-					...gatewayEvent("/provider-function-id"),
-					queryStringParameters: {
-						[parameter]: "/docs/api/a/b?value=one&value=two",
-					},
-				},
+	it("retains cross-route page, endpoint, middleware and custom error loaders", async () => {
+		const { output, manifest } = await functionBuild(
+			"partition-mixed",
+			{ apiGateway: true },
+		);
+		expect(manifest.artifacts.functions).toHaveLength(1);
+		const { module } = await routeHandler(
+			output,
+			manifest,
+			"/docs/rewrite",
+		);
+		for (const [path, status, body] of [
+			["/docs/rewrite", 200, "<p>from-page</p>"],
+			["/docs/api/rewrite", 200, "from-endpoint"],
+			[
+				"/docs/middleware-rewrite",
+				200,
+				"<p>from-middleware</p>",
+			],
+			["/docs/throw", 500, "Custom error page"],
+			["/docs/api/throw", 500, "Custom error page"],
+		] as const) {
+			const response = await module.handler(
+				gatewayEvent(path),
 				context,
 			);
-			expect(response).toMatchObject({
-				statusCode: 200,
-				body: "rest-route-only-marker:a/b:?value=one&value=two",
-			});
-			expect(response.body).not.toContain(parameter);
+			expect(response.statusCode, path).toBe(status);
+			expect(response.body, path).toContain(body);
 		}
 	});
 
-	it("keeps Actions and deferred server islands executable in separate Gateway Functions", async () => {
-		const { output, manifest } = await partitionBuild(
+	it("restores the direct request target in the complete Function", async () => {
+		const { output, manifest } = await functionBuild(
+			"partition-basic",
+			{
+				apiGateway: false,
+				base: "/docs",
+			},
+		);
+		expect(manifest.directInvocation).toBeDefined();
+		const handler = await routeHandler(
+			output,
+			manifest,
+			"/docs/api/[...path]",
+		);
+		const parameter =
+			manifest.directInvocation!.requestTargetParameter;
+		const response = await handler.module.handler(
+			{
+				...gatewayEvent("/provider-function-id"),
+				queryStringParameters: {
+					[parameter]: "/docs/api/a/b?value=one&value=two",
+				},
+			},
+			context,
+		);
+		expect(response).toMatchObject({
+			statusCode: 200,
+			body: "rest-route-only-marker:a/b:?value=one&value=two",
+		});
+		expect(response.body).not.toContain(parameter);
+	});
+
+	it("keeps Actions and deferred server islands executable in the same Gateway Function", async () => {
+		const { output, manifest } = await functionBuild(
 			"partition-internal",
 			{
-				functions: "separate",
 				apiGateway: true,
 			},
 		);
@@ -481,7 +486,7 @@ describe.sequential("Function Artifact partitioning", () => {
 		).join("\n");
 		expect(
 			actionSources.includes("server-island-only-marker"),
-		).toBe(false);
+		).toBe(true);
 		const page = await readFile(
 			join(output, "client/index.html"),
 			"utf8",
@@ -517,11 +522,10 @@ describe.sequential("Function Artifact partitioning", () => {
 		expect(fragment.body).toContain("server-island-only-marker");
 	});
 
-	it("pins and installs only the runtime dependencies needed by a separate Function", async () => {
-		const { output, manifest } = await partitionBuild(
+	it("pins and installs the runtime dependencies for all routes in the Function", async () => {
+		const { output, manifest } = await functionBuild(
 			"partition-install",
 			{
-				functions: "separate",
 				apiGateway: true,
 				dependencyStrategy: "install",
 			},
@@ -559,19 +563,16 @@ describe.sequential("Function Artifact partitioning", () => {
 				"utf8",
 			),
 		) as { dependencies: Record<string, string> };
-		expect(pagePackage.dependencies).not.toHaveProperty(
-			"nanoid",
-		);
+		expect(pagePackage.dependencies).toHaveProperty("nanoid");
 		expect(
 			(await page.module.handler(gatewayEvent("/"), context))
 				.body,
 		).toContain("<h1>Install basic</h1>");
 	});
 	it("discovers and serves an island used only by an on-demand page", async () => {
-		const { output, manifest } = await partitionBuild(
+		const { output, manifest } = await functionBuild(
 			"partition-server-island",
 			{
-				functions: "separate",
 				apiGateway: true,
 			},
 		);
@@ -607,11 +608,10 @@ describe.sequential("Function Artifact partitioning", () => {
 		expect(fragment.body).toContain("Hello, Ada.");
 		expect(fragment.body).toContain("server-island-only-marker");
 	});
-	it("emits no Function directories for a Static-only Build configured for separate Functions", async () => {
-		const { output, manifest } = await partitionBuild(
+	it("emits no Function directories for a Static-only Build", async () => {
+		const { output, manifest } = await functionBuild(
 			"static-functions",
 			{
-				functions: "separate",
 				apiGateway: true,
 			},
 		);

@@ -51,7 +51,7 @@ export interface BuildCompletionPolicy<E> {
 	dependencyStrategy?: "bundle" | "install";
 	apiGateway: boolean;
 	recursive404: boolean;
-	functionPartition?: "shared" | "separate";
+	functionPartition?: "shared";
 	prepareArtifacts(
 		build: CompletedBuild,
 		routePlan: RoutePlan,
@@ -136,7 +136,7 @@ interface WriteDeploymentManifestInput {
 	functions: FunctionArtifact.PreparationOutput["functions"];
 	apiGateway: boolean;
 	recursive404: boolean;
-	functionPartition?: "shared" | "separate";
+	functionPartition?: "shared";
 }
 
 async function inspectRoutes(
