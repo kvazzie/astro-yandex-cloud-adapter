@@ -137,14 +137,6 @@ and
 ### Routing options
 
 Runtime builds use one complete native Astro App in one Function.
-Separate functions, per-route functions and `functionPerRoute`
-were retired to preserve rewrites and error rendering without
-maintaining Astro's removed splitting mechanism.
-[ADR 0013](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/docs/adr/0013-retire-separate-functions-and-use-native-astro-app.md)
-records the implemented attempt, upstream rationale and
-conditions for reconsideration. Existing `functions: "shared"`
-configuration remains accepted; remove `functions: "separate"`
-when upgrading.
 
 The
 [Manifest and routing decision](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/63#issuecomment-5900071837)
@@ -159,7 +151,7 @@ and integration-injected routes in the route map.
 | -------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `apiGateway`   | `false`    | Both Targets accept `true` to generate `yandex-api-gateway.json` for page and endpoint routing with payload format `0.1`. |
 | `recursive404` | `false`    | Requires `apiGateway: true`. Routes missing pages to the nearest explicit static 404 scope.                               |
-| `functions`    | `"shared"` | Optional compatibility spelling for the sole shared App. `"separate"` is rejected; see ADR 0013 above.                    |
+| `functions`    | `"shared"` | Optional compatibility spelling for the sole shared App; only `"shared"` is accepted.                                     |
 | `directOrigin` | unset      | The Functions Target accepts an explicit HTTP or HTTPS origin for direct endpoint forms. Available only without Gateway.  |
 
 `directOrigin` must contain only an origin, without credentials,
