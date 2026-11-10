@@ -18,34 +18,40 @@ questions; the originating conversation must then record explicit
 user decisions on those questions. A report arriving is not
 policy acceptance.
 
-Gate checkpoint: **2026-11-10 08:02 UTC, open**. The contract
-thread is still researching; its intermediate messages
-distinguish production shared/separate behavior from #96, but no
-complete report/evidence/PR or accepted policy decision has been
-delivered to this design. The originating conversation was also
-checked: its latest instruction authorizes automatic transfer,
-not a new runtime policy. Consequently this is a reviewable
-conditional draft, not a final implementation handoff. On
-delivery, read the exact supplied artifacts, record their checked
-SHA, and revise the selection/error obligations below; do not
-merge the dependency branch merely to use its research.
+Gate checkpoint: **intermediate contract artifacts received and
+read; policy gate open**. The source supplied its report, JSON
+and extractable recipe from `research/rewrite-error-contract`,
+researched against the same base SHA. They were uncommitted on
+delivery, with no PR/head for the report yet; the artifact hashes
+below identify the actual evidence read. Final provenance will be
+attached when supplied, without merging the research branch
+merely to read it. The originating conversation's latest checked
+instruction authorizes automatic transfer, not a new runtime
+policy. This remains a reviewable conditional draft, not a final
+implementation handoff.
 
-Missing decisions for the originating conversation, to refine
-using the contract report rather than guess here:
+Decisions reserved for the originating conversation:
 
-1. Confirm which cross-route rewrite and error-fallback outcomes
-   the supported arrangement must preserve, separating existing
-   promises/defects from new policy choices. In particular, an
-   observed full-App 200 after a thrown route is not
-   automatically a desired 500 or an adapter defect.
-2. Resolve any conflict the contract evidence establishes between
-   retained code exclusion and required transition loaders. The
-   interpreter must not silently expand selected sets, redirect
-   requests or translate failures.
-3. Choose the design and authorize its first implementation slice
-   after those obligations are explicit. The recommendation below
-   supplies that concrete choice; production implementation
-   remains a separate handoff.
+1. Choose compatible transition closure/dispatch, an explicit
+   build restriction, or explicit runtime refusal for cross-route
+   rewrites in `separate`. The existing unannounced compatibility
+   gap is a confirmed defect; choosing its remedy is separate
+   from acknowledging that defect.
+2. Preserve Astro's actual error outcome or explicitly amend it
+   to a stricter status rule. Decide error-loader delivery
+   independently of ordinary rewrite permission. A reference
+   rest-owned 200 after a throw is not automatically an adapter
+   defect or an instruction to produce 500.
+3. If a transition is refused/unmatched, decide original versus
+   target pathname for 404 scope, body/status and middleware
+   effects. Keep rejected invocation Promises, returned HTTP
+   responses and preview's catch distinct unless a new mapping is
+   explicitly chosen.
+4. Agree the private compiler/runtime seam and supported-version
+   proof obligations, choose the design, then authorize an
+   implementation slice. The interpreter must not silently expand
+   selected sets, redirect requests, translate failures or reduce
+   compatibility to 7.1.6.
 
 The predecessor experiments are evidence, not the production
 contract:
@@ -78,6 +84,88 @@ contract. See
 The experiments already falsify the simple native-reconstruction
 migration; repeating their minimal cases would add no new
 evidence here.
+
+## Contract evidence incorporated
+
+The delivered artifacts are
+`docs/research/rewrite-error-contract.md`,
+`rewrite-error-contract-results.json` and
+`rewrite-error-contract-recipe.md` in the dependency branch. At
+intermediate delivery their SHA-256 values were:
+
+| Artifact        | SHA-256                                                            |
+| --------------- | ------------------------------------------------------------------ |
+| Report          | `aa6915412430fe30bd42cfd0eba4f19fa05ee23da94a690d07b78da9986510a5` |
+| JSON            | `002518722c01e982893bb0ca1be9d7b9663af8b5f28ade7c93b2c6434a4b825c` |
+| Recipe document | `badfec5f3ec572d701dd28e3c1303d627f2dec456ffd60357e199c68a8caa155` |
+
+A disposable read-only evidence check verified **36 successful
+native builds, 780 fresh-process observations and 168 preview
+HTTP requests**, and matched the extracted recipe source to
+recorded SHA-256
+`014cc11a4ed8ed905e535f2581408c41dc0df7cb7e0b1921e9ca214274302d64`.
+The study ran Astro 7.1.6 and 7.4.8 on Node 26.13.0, with real
+public-adapter shared/separate output and a full standard
+reference App. This design did not rerun those experiments. R1–R4
+below were checked directly in the delivered JSON for both
+versions, not inferred from #96.
+
+| Case                                                                  | Reference / production shared                                        | Production separate                                                                           |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| R1: endpoint rewrites to another endpoint, no rest/custom errors      | 200, target body                                                     | Empty HTTP 500; target does not execute                                                       |
+| R4: middleware rewrites to another endpoint with a rest route present | 200, target executes; initial endpoint may load but does not execute | Rejected Promise; missing rest error loader; neither endpoint executes                        |
+| R2: selected endpoint throws with a rest route present                | 200 `REST_ONLY`, original pathname                                   | Rejected Promise; missing `/[...rest]` loader                                                 |
+| R3: selected page throws with custom `/500`                           | 500 `CUSTOM500`, original pathname                                   | Rejected Promise; missing `/500` loader; directly invoking the separate `/500` artifact works |
+
+The study separately records working self-rewrites and initial
+foreign specific/rest guard 404. Preview converts a rejected
+handler Promise into HTTP 500 `Internal Server Error`; that is
+not a production handler response. An error-loader rejection can
+obscure the earlier missing rewrite target.
+
+[Issue #70](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/70)
+requires necessary code/dependencies and representative
+shared/separate Astro response equivalence. Its body was read
+directly. The
+[existing response contract](../domain-errors.md#application-and-response-errors)
+preserves the actual Astro/application response and original
+error ownership. Accordingly D1 (lost accepted rewrite target)
+and D2 (lost error dependency) are production compatibility
+defects, not new external-input restrictions. The full-App
+rest-owned 200 itself is not the defect. No universal
+throw-to-500 policy follows from the prior experiment.
+
+The inventories prove fixture-marker observations, not arbitrary
+file closure or deployed security. Original source/dependency
+paths remain available in these production experiments.
+Conversely #96's selected-App 7.4.8 closure rejection concerns a
+different graph; it does not establish failure of production
+marker exclusion. Neither result authorizes native
+reconstruction. The reference harness does not serve static
+client 404 bodies, so the adapter's retained custom 404 HTML is
+not a parity defect. Base-prefixed rewrites also differ between
+the two Astro versions; no slash-policy generalization follows.
+
+Consequences shared by A/B/C:
+
+```text
+initial selected route ≠ complete accepted execution dependency set
+ordinary rewrite target ≠ error fallback dependency
+file inventory / marker exclusion ≠ permitted-transition policy
+```
+
+| Conditional user choice                  | Required design consequence, not an adopted implementation                                                                                                                                                                                                                             |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Compatible execution closure or dispatch | Preparation must specify required transition/error loaders and files, or supply a separately designed runtime dispatch mechanism. A/B component sets can represent a chosen closure, but cannot infer arbitrary dynamic rewrites. C's single-component `ForRoute` would need revision. |
+| Explicit build restriction               | Compatibility/diagnostic owners must define and enforce the admitted arrangement before apply; compiler recognition cannot promote missing loaders to a domain rule. Dynamic targets prevent assuming static enumeration is complete.                                                  |
+| Explicit runtime refusal                 | Runtime transition handling must implement the agreed status/body/scope semantics. An output interpreter and the existing initial guard cannot enforce this by pruning files. Error-loader delivery is still a separate decision.                                                      |
+
+The first read-only refactor can preserve current observations
+without fixing D1/D2. It must explicitly retain those defects as
+separate work; no new selection or behavior guarantee is claimed.
+The full `selectFiles` interface remains a mechanical file
+operation until user-approved execution requirements give
+preparation a complete input contract.
 
 ## Current callers and knowledge
 
@@ -652,7 +740,7 @@ Keep those guarantees even if internal functions move.
 | Runtime image evidence                      | `runtime-image.test.ts`: build the on-demand page with default and custom endpoint under `/docs`, install copied functions independently, render page and transform an actual image. Retain registered-only endpoint exclusion in `gateway.test.ts`; import presence alone must not activate it. |
 | Function packaging                          | `build.test.ts`, `partitioning.test.ts`, `dependencies.test.ts` and `install-lockfile.test.ts`: only selected imports get pinned; install a clean copied artifact; native Sharp remains install-only; injected computed/unresolved imports retain their diagnostic provenance.                   |
 | Routing / static 404                        | `recursive-404.test.ts` and `gateway.test.ts`: completed dynamic scopes, retained HTML in page functions, static-only Markdown 404s, root/non-root paths, explicit endpoint 404 response, on-demand custom-404 compatibility.                                                                    |
-| Rewrite and error transitions               | Add only the accepted contract study's discriminating full-App versus generated-handler cases once user decisions exist. Until then keep observed differences as evidence; do not encode an invented 404/500 outcome as a passing specification.                                                 |
+| Rewrite and error transitions               | Use delivered R1–R4 to distinguish extraction equivalence from a later D1/D2 fix. Existing defects do not become allowed behavior; choose transition handling and error outcomes explicitly before implementing the fix. Keep rejected Promises separate from HTTP responses and preview 500s.   |
 | Malformed compiler representation           | Through the chosen interface, supply actual temporary emitted files with one broken convention and assert original output is untouched and a specific operation/cause survives. Do not infer a new input rejection from a failed recognizer.                                                     |
 
 A compiler convention change should first run the focused
@@ -673,6 +761,18 @@ range silently. Real cloud execution remains unverified by local
 build/handler tests.
 
 ## Documentation evidence
+
+Two further scoped Context7 queries covered rewrites/middleware
+and custom 500 pages separately. The official docs describe a new
+render phase and middleware re-execution for `context.rewrite`,
+and runtime custom 500 rendering. They do not establish this
+adapter's cross-artifact transport or the experiment's
+strict-status policy. See the
+[middleware reference](https://github.com/withastro/docs/blob/main/src/content/docs/en/guides/middleware.mdx)
+and
+[custom error-page documentation](https://github.com/withastro/docs/blob/main/src/content/docs/en/basics/astro-pages.mdx).
+Exact observed 7.1.6/7.4.8 differences remain versioned evidence,
+not an inference from current unversioned docs.
 
 Context7 resolved Astro to `/withastro/docs`; a scoped query
 covered `astro:build:ssr` data/timing versus `astro:build:done`.
