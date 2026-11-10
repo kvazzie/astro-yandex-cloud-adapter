@@ -1,12 +1,19 @@
 # Interpreting Astro compiler output
 
-Conditional design/research draft, 2026-11-10. Production source
-is unchanged. The inspected base is
+Conditional design/research proposal, 2026-11-10. Production
+source is unchanged. The inspected base is
 `84584c8d9afe5780a8c9fee23f44d13b5a5f1425`, the merge commit of
 [PR #96](https://github.com/kvazzie/astro-yandex-cloud-adapter/pull/96)
 into `feat/complete-beta-routing`. The research branch is
 `research/astro-output-interface`; its PR targets that working
-branch.
+branch. The PR branch has been rebased onto
+`30063ba63209a7edd85527f26e09cf9d34e77a28`, the merge of
+[contract PR #98](https://github.com/kvazzie/astro-yandex-cloud-adapter/pull/98).
+That base update adds only the three contract research documents;
+production source, dependencies, scripts and CI configuration are
+unchanged from the inspected base. The conditional proposal is
+ready for review; review readiness does not establish acceptance
+of its interface or policy.
 
 ## Dependency gate and authority
 
@@ -24,10 +31,12 @@ policy gate open**. The source is
 head `ca8aa36ebd100896efc01838917731fd50ca8473`, researched
 against the same production base SHA. Its report, JSON and recipe
 match that commit byte for byte; their hashes below identify the
-evidence read. The PR is open and was not merged or copied into
-this branch. The originating conversation's latest checked
-instruction authorizes automatic transfer, not a new runtime
-policy. This remains a reviewable conditional draft, not a final
+evidence read. PR #98 is merged into the working base and its
+artifacts are now available in this branch through that base
+update. Merging the research does not itself accept a new runtime
+policy. The originating conversation's latest checked instruction
+authorizes automatic transfer, not a new runtime policy. This
+remains a reviewable conditional proposal, not a final
 implementation handoff.
 
 Decisions reserved for the originating conversation:
