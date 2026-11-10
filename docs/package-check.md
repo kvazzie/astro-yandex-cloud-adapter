@@ -50,9 +50,8 @@ The applications cover:
 - Direct stateless endpoint forms at `/docs` with an explicit
   `directOrigin`, restored original paths and repeated query
   values, and untrusted-origin 403s.
-- Separate Gateway Functions at `/docs` with concrete recursive
-  404 scopes, endpoint-owned 404 responses and cross-artifact
-  request rejection.
+- A shared Function at `/docs` with Gateway, concrete recursive
+  404 scopes and endpoint-owned 404 responses.
 
 These are eight build scenarios. The routing cases inspect the
 generated Gateway template, named artifact references, and the

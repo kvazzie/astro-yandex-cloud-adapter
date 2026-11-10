@@ -106,7 +106,7 @@ export function wrapFunctionPolicy(
 	const serialized = JSON.stringify(policy);
 	const wrapper =
 		`\nconst __yandexArtifactHandler = (event, context, previewUrl) => ` +
-		`${handlerName}(event, context, previewUrl, {...${serialized}, artifactDirectory: new URL('./index.ts', import.meta.url)});\n`;
+		`${handlerName}(event, context, previewUrl, {...${serialized}, artifactDirectory: new URL('./', import.meta.url)});\n`;
 	return applyEdits(source, edits) + wrapper;
 }
 
