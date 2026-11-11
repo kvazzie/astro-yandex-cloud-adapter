@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import type {
 	FunctionInvocationOptions,
 	YandexCloudHttpEvent,
@@ -304,24 +305,24 @@ export async function fromWebResponse(
 	const cookies = responseCookies(response.headers);
 	if (cookies.length) multiValueHeaders["set-cookie"] = cookies;
 
-	const bytes = new Uint8Array(await response.arrayBuffer());
+	const bytes = Buffer.from(await response.arrayBuffer());
 	const empty =
 		response.status === 204 ||
 		response.status === 304 ||
 		bytes.byteLength === 0;
-	const textual = isTextual(
-		response.headers.get("content-type"),
-	);
+	const textual =
+		!response.headers.has("content-encoding") &&
+		isTextual(response.headers.get("content-type")) &&
+		isUtf8(bytes);
 
 	return {
 		statusCode: response.status,
 		headers,
 		multiValueHeaders,
+		// Buffer's UTF-8 conversion preserves a leading byte order mark.
 		body: empty
 			? ""
-			: textual
-				? new TextDecoder().decode(bytes)
-				: Buffer.from(bytes).toString("base64"),
+			: bytes.toString(textual ? "utf8" : "base64"),
 		isBase64Encoded: !empty && !textual,
 	};
 }
