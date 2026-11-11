@@ -23,7 +23,7 @@ import {
 	isSyntaxNode,
 	parseModule,
 	visitSyntax,
-} from "../../conditional/FunctionArtifact/.emittedModules.ts";
+} from "../../.emittedModules.ts";
 import { generateApiGatewaySpecificationTemplate } from "../../conditional/ApiGatewaySpecificationTemplate";
 import {
 	manifestRoutes,

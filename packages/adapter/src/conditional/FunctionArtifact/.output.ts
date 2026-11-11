@@ -13,7 +13,7 @@ import {
 	isSyntaxNode,
 	parseModule,
 	visitSyntax,
-} from "./.emittedModules.ts";
+} from "../../.emittedModules.ts";
 
 /** Keeps the complete native App; per-route pruning was retired in ADR 0013. */
 export async function readFunctionOutput(

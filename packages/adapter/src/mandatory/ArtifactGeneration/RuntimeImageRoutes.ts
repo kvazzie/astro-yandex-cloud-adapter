@@ -10,7 +10,7 @@ import {
 	parseModule,
 	visitSyntax,
 	type SyntaxNode,
-} from "../../conditional/FunctionArtifact/.emittedModules.ts";
+} from "../../.emittedModules.ts";
 
 /** Finds image calls reachable from runtime routes, excluding registered-only endpoints. */
 export async function hasRuntimeImageCalls(

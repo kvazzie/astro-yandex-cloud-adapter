@@ -53,7 +53,9 @@ runtime dependency on `Options`. `Hooks` implements lifecycle
 callbacks and owns their build state. Nested implementation files
 are private to their module; shared modules belong at their
 callers' common parent instead of being exposed through
-re-exports. `ArtifactGeneration` owns the completed build, route
+re-exports. The technical helper `.emittedModules.ts` lives at
+`src/`, shared by common route inspection and function output
+preparation. `ArtifactGeneration` owns the completed build, route
 requirements and size reporting. `FunctionArtifact` owns
 [_dependency_](../../GLOSSARY.md#dependency) resolution,
 packaging and complete native output preparation.
