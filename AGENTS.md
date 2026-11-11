@@ -1,5 +1,11 @@
 ## Agent skills
 
+### Source searches
+
+Include hidden files in your searches.
+
+> See [NAMING MAP](NAMING-MAP.md) for the reasons.
+
 ### Exports
 
 Prefer `export` on the declaration so visibility is clear where
