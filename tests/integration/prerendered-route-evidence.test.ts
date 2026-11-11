@@ -10,6 +10,7 @@ import type { EncodedDeploymentManifestV1 } from "../../packages/adapter/src/man
 const fixtures = resolve(import.meta.dirname, "../fixtures");
 const root = join(fixtures, "prerendered-overlap");
 
+/** Builds a public adapter fixture and reads its Manifest and Gateway artifacts. */
 async function buildFixture(
 	config: AstroInlineConfig = {},
 	fixture = "prerendered-overlap",
@@ -43,6 +44,7 @@ describe.sequential("prerendered page emitter evidence", () => {
 		for (const fixture of [
 			"prerendered-overlap",
 			"prerendered-conflict",
+			"prerendered-file-collision",
 		]) {
 			await symlink(
 				join(fixtures, "static/node_modules"),
@@ -50,6 +52,59 @@ describe.sequential("prerendered page emitter evidence", () => {
 			).catch((error: NodeJS.ErrnoException) => {
 				if (error.code !== "EEXIST") throw error;
 			});
+		}
+	});
+
+	it("keeps a directory page separate from an HTML endpoint when URLs have no trailing slash", async () => {
+		const { manifest, template } = await buildFixture(
+			{
+				trailingSlash: "never",
+				build: { format: "directory" },
+			},
+			"prerendered-file-collision",
+		);
+		expect(manifest.routes.prerendered).toEqual([
+			{
+				kind: "page",
+				url: "/about",
+				objectKey: "about/index.html",
+				artifactId: "client:primary",
+			},
+			{
+				kind: "endpoint",
+				url: "/about.html",
+				objectKey: "about.html",
+				artifactId: "client:primary",
+			},
+		]);
+		expect(template.paths["/about"]).toMatchObject({
+			get: {
+				"x-yc-apigateway-integration": {
+					object: "about/index.html",
+				},
+			},
+		});
+		expect(template.paths["/about.html"]).toMatchObject({
+			get: {
+				"x-yc-apigateway-integration": {
+					object: "about.html",
+				},
+			},
+		});
+		for (const [file, content] of [
+			["about/index.html", "About page"],
+			["about.html", "Unrelated HTML endpoint"],
+		] as const) {
+			expect(
+				await readFile(
+					join(
+						fixtures,
+						"prerendered-file-collision/dist/client",
+						file,
+					),
+					"utf8",
+				),
+			).toContain(content);
 		}
 	});
 

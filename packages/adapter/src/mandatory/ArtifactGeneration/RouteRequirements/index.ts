@@ -83,7 +83,15 @@ function objectKey(base: string, path: string): string {
 	return base === "/" ? path : `${base.slice(1)}/${path}`;
 }
 
-function pageFile(url: string, files: Set<string>): string {
+/** Prefers page-owned output; other files remain candidates only for diagnostics. */
+function pageFile(
+	url: string,
+	files: Set<string>,
+	pageEmitters: ReadonlyMap<
+		string,
+		ReadonlySet<IntegrationResolvedRoute>
+	>,
+): string {
 	const pathname = url.replace(/^\/+|\/+$/g, "");
 	const candidates =
 		url === "/"
@@ -91,9 +99,12 @@ function pageFile(url: string, files: Set<string>): string {
 			: url.endsWith("/")
 				? [`${pathname}/index.html`, `${pathname}.html`]
 				: [`${pathname}.html`, `${pathname}/index.html`];
-	const file = candidates.find((candidate) =>
+	const existing = candidates.filter((candidate) =>
 		files.has(candidate),
 	);
+	const file =
+		existing.find((candidate) => pageEmitters.has(candidate)) ??
+		existing[0];
 	if (!file)
 		throw new Error(
 			`Could not match the Prerendered Route ${url} to a Client Artifact file.`,
@@ -203,7 +214,7 @@ export function reconcileRoutes(
 		const url = pathname
 			? `/${pathname.replace(/^\/+/, "")}`
 			: "/";
-		const file = pageFile(url, files);
+		const file = pageFile(url, files, pageEmitters);
 		const emitters = [...(pageEmitters.get(file) ?? [])];
 		const route =
 			emitters.length === 1 ? emitters[0] : undefined;
