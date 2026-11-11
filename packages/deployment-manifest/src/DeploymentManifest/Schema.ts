@@ -16,7 +16,7 @@ const nonEmpty = Schema.String.pipe(Schema.minLength(1));
 const relativePath = nonEmpty.pipe(
 	Schema.pattern(
 		// eslint-disable-next-line no-control-regex -- Filesystem paths cannot contain NUL.
-		/^(?![\s\S]*[\\:\u0000\r\n])(?!.*(?:^|\/)\.\.?(?:\/|$))[^/]+(?:\/[^/]+)*$/,
+		/^(?![\s\S]*[\\:\u0000\r\n])(?![\s\S]*(?:^|\/)\.\.?(?:\/|$))[^/]+(?:\/[^/]+)*$/,
 	),
 );
 const urlPath = Schema.String.pipe(

@@ -141,6 +141,8 @@ describe.each([
 		"..",
 		"../secret",
 		"client/../secret",
+		"x\u2028/../../secret",
+		"x\u2029/../../secret",
 		"./client",
 		"client/./file",
 		"/secret",
@@ -189,6 +191,8 @@ describe.each([
 		"functions/shared",
 		".well-known/site.json",
 		"資料/site 1/index.html",
+		"line\u2028name/file.html",
+		"line\u2029name/file.html",
 		"release..name/file.html",
 		"folder%20name/file.html",
 	])(
@@ -221,6 +225,17 @@ describe.each([
 });
 
 describe("Deployment Manifest consumers", () => {
+	it("preserves colons in URLs and identifiers outside path fields", () => {
+		const value = {
+			...staticManifest(),
+			assetsPrefix: "https://cdn.example/assets",
+		};
+		value.routes.prerendered[0]!.url = "/docs/name:part/";
+		expect(
+			encodeDeploymentManifest(parseDeploymentManifest(value)),
+		).toEqual(value);
+		expect(validateSchema(value)).toBe(true);
+	});
 	it.each(["/%ZZ", "/%E0%A4%A"])(
 		"rejects malformed URI escapes in base %s",
 		(base) => {
