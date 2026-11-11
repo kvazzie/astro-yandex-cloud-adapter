@@ -190,7 +190,7 @@ import { Targets } from "${name}";
 const target: Target = parseDeploymentManifest(${JSON.stringify(minimalFunctionManifest)}).target;
 const encodedTarget = "object-storage-functions" as const;
 const strategy: DependencyStrategy = "install";
-const partition: FunctionPartition = "separate";
+const partition: FunctionPartition = "shared";
 const options: EncodedOptions = { target: encodedTarget, dependencyStrategy: strategy, apiGateway: true, recursive404: true, functions: partition };
 const direct: EncodedOptions = { target: encodedTarget, directOrigin: "https://static.example" };
 adapter();
@@ -205,6 +205,8 @@ adapter({ dependencyStrategy: "bundle" });
 adapter({ target: "object-storage", dependencyStrategy: "bundle" });
 // @ts-expect-error Function partition options require the Function Target.
 adapter({ functions: "shared" });
+// @ts-expect-error Per-route Functions were retired; only the native shared App is supported.
+adapter({ target: "object-storage-functions", functions: "separate" });
 // @ts-expect-error Object Storage cannot configure Function partitioning.
 adapter({ target: "object-storage", functions: "shared" });
 // @ts-expect-error Object Storage recursive 404 requires Gateway.
@@ -530,7 +532,7 @@ export const GET = ({ params, url }) => Response.json({ slug: params.slug, value
  * Builds an installed-candidate scenario, validates placement and routing, then
  * invokes isolated handlers and starts Astro's actual preview entrypoint.
  * @param {{ id: string, target: string, base: string, strategy?: string,
- *   direct?: boolean, recursive404?: boolean, functions?: "shared" | "separate",
+ *   direct?: boolean, recursive404?: boolean, functions?: "shared",
  *   apiGateway?: boolean }} scenario Candidate matrix scenario.
  */
 async function checkApplication({
@@ -628,23 +630,7 @@ site: "https://static.example", image: { service: passthroughImageService() } })
 		assert.equal(manifest.modifiers.functions, functions);
 	if (!runtime)
 		assert.equal(manifest.artifacts.functions.length, 0);
-	else if (functions === "shared")
-		assert.equal(manifest.artifacts.functions.length, 1);
-	else {
-		assert.equal(
-			manifest.artifacts.functions.length,
-			manifest.routes.onDemand.length,
-		);
-		assert(manifest.artifacts.functions.length > 1);
-		assert.equal(
-			new Set(
-				manifest.routes.onDemand.map(
-					({ artifactId }) => artifactId,
-				),
-			).size,
-			manifest.artifacts.functions.length,
-		);
-	}
+	else assert.equal(manifest.artifacts.functions.length, 1);
 	for (const artifact of manifest.artifacts.functions) {
 		assert(
 			!Object.hasOwn(artifact, "support"),
@@ -842,20 +828,6 @@ site: "https://static.example", image: { service: passthroughImageService() } })
 						missing.headers["x-endpoint"],
 						"preserved",
 					);
-					if (functions === "separate") {
-						const crossRoute = await handlerFor("/docs/api/id")(
-							event("/docs/_actions/greet", {
-								httpMethod: request.method,
-								headers: {
-									...request.headers,
-									host: "packed.example",
-								},
-								body: request.body,
-							}),
-							context,
-						);
-						assert.equal(crossRoute.statusCode, 404);
-					}
 					if (recursive404) {
 						const page = handlerFor("/docs/");
 						for (const [path, title] of [
@@ -997,11 +969,10 @@ for (const scenario of [
 		direct: true,
 	},
 	{
-		id: "object-storage-functions:separate-gateway-404:/docs",
+		id: "object-storage-functions:gateway-404:/docs",
 		target: "object-storage-functions",
 		base: "/docs",
 		strategy: "bundle",
-		functions: "separate",
 		recursive404: true,
 	},
 ])

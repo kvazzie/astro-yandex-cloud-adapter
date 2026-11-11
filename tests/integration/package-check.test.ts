@@ -283,7 +283,7 @@ if (args[0] === "install") {
 					"object-storage-functions:install:/docs",
 					"object-storage:gateway-404:/docs",
 					"object-storage-functions:direct-form:/docs",
-					"object-storage-functions:separate-gateway-404:/docs",
+					"object-storage-functions:gateway-404:/docs",
 				],
 			});
 		} else {
@@ -342,7 +342,7 @@ it.each(["minimum", "workspace"])(
 				"object-storage-functions:install:/docs",
 				"object-storage:gateway-404:/docs",
 				"object-storage-functions:direct-form:/docs",
-				"object-storage-functions:separate-gateway-404:/docs",
+				"object-storage-functions:gateway-404:/docs",
 			],
 		});
 	},

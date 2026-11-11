@@ -1,11 +1,17 @@
 import { readFile, readdir, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { build, type AstroConfig } from "astro";
 import { describe, expect, it } from "vitest";
 import yandexCloud from "./helpers/built-adapter.ts";
 
 import type { EncodedDeploymentManifestV1 } from "../../packages/adapter/src/mandatory/DeploymentManifest/Schema.ts";
+import type {
+	YandexCloudHttpEvent,
+	YandexCloudHttpResult,
+	YandexCloudInvocationContext,
+} from "@astro-yandex-cloud/function-runtime-bridge";
 
 const fixtures = resolve(import.meta.dirname, "../fixtures");
 
@@ -216,16 +222,77 @@ describe.sequential("API Gateway artifacts", () => {
 		);
 	});
 
-	it("fails when Yandex precedence would select another Function than Astro", async () => {
-		const root = await fixtureRoot("gateway-rejected-priority");
-		await expect(
-			build({ root: `${root}/`, logLevel: "silent" }),
-		).rejects.toHaveProperty(
-			"cause.message",
-			expect.stringMatching(
-				/cannot preserve Astro route priority/,
-			),
+	it("keeps overlapping runtime routes in one Function so Astro owns precedence", async () => {
+		const { manifest, template } = await gatewayBuild(
+			"gateway-rejected-priority",
 		);
+		expect(manifest.artifacts.functions).toHaveLength(1);
+		expect(
+			new Set(
+				manifest.routes.onDemand.map(
+					(route) => route.artifactId,
+				),
+			).size,
+		).toBe(1);
+		const artifact = manifest.artifacts.functions[0]!;
+		const functionVariable = Object.entries(
+			template["x-yc-apigateway"].variables,
+		).find(
+			([, variable]) =>
+				variable.default === "REPLACE_ME_INVALID_FUNCTION_ID" &&
+				variable.description.includes(artifact.id),
+		)?.[0];
+		expect(functionVariable).toBeDefined();
+		for (const path of ["/a/{param}/d", "/a/b/{rest+}"]) {
+			expect(template.paths[path], path).toMatchObject({
+				"x-yc-apigateway-any-method": {
+					"x-yc-apigateway-integration": {
+						type: "cloud_functions",
+						function_id: `\${var.${functionVariable}}`,
+						payload_format_version: "0.1",
+					},
+				},
+			});
+		}
+		const generated = (await import(
+			pathToFileURL(
+				join(
+					fixtures,
+					"gateway-rejected-priority/dist",
+					artifact.path,
+					"index.js",
+				),
+			).href
+		)) as {
+			handler(
+				event: YandexCloudHttpEvent,
+				context: YandexCloudInvocationContext,
+			): Promise<YandexCloudHttpResult>;
+		};
+		for (const [url, body] of [
+			["/a/b/d", "specific rest"],
+			["/a/c/d", "less specific dynamic"],
+		] as const) {
+			const response = await generated.handler(
+				{
+					url,
+					httpMethod: "GET",
+					headers: { host: "example.test" },
+					body: "",
+					isBase64Encoded: false,
+				},
+				{
+					functionFolderId: "folder",
+					functionName: "function",
+					functionVersion: "version",
+					memoryLimitInMB: "128",
+					requestId: "gateway-priority-test",
+					getPayload: () => undefined,
+					getRemainingTimeInMillis: () => 30_000,
+				},
+			);
+			expect(response).toMatchObject({ statusCode: 200, body });
+		}
 	});
 
 	it("rejects a generated specification above Yandex's 3.5 MB limit", async () => {

@@ -1,5 +1,12 @@
 # Native App isolation with selected loaders
 
+Historical evidence:
+[ADR 0013](../adr/0013-retire-separate-functions-and-use-native-astro-app.md)
+retires separate functions / `functionPerRoute` after this
+investigation. The observations below remain evidence for their
+recorded source versions; they are not a current promise to
+support `functions: "separate"`.
+
 Researched and executed on 2026-11-09 from
 `973011de19485903044ffe3878e8d3a1e20a0664`, the head of
 `feat/complete-beta-routing` after #91, #92, #93 and #94 merged.

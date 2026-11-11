@@ -10,7 +10,6 @@ export default defineConfig({
 		apiGateway: true,
 		dependencyStrategy: "install",
 		apiGateway: true,
-		functions: "separate",
 	}),
 	image: { service: passthroughImageService() },
 	output: "server",

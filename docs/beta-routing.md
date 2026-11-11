@@ -60,11 +60,14 @@ and returns 404 keeps its own response; an unmatched `/api/...`
 URL can use the page fallback. The build rejects on-demand custom
 404 pages and creates no synthetic custom 404 when none exists.
 
-## Runtime pages with separate Functions
+## Runtime pages with one native Function
 
 Use Gateway for on-demand pages, Actions, server islands, and
-active internal routes. A Runtime Build can emit one shared
-Function or one per route:
+active internal routes. A Runtime Build emits one complete Astro
+App in a shared Function. Separate functions / `functionPerRoute`
+were retired; see
+[ADR 0013](adr/0013-retire-separate-functions-and-use-native-astro-app.md)
+for the attempt, upstream reasons and reconsideration criteria:
 
 ```js
 // astro.config.mjs
@@ -82,7 +85,6 @@ export default defineConfig({
     target: "object-storage-functions",
     apiGateway: true,
     recursive404: true,
-    functions: "separate",
     dependencyStrategy: "bundle",
   }),
   image: { service: passthroughImageService() },
@@ -94,17 +96,16 @@ Prerender custom 404 pages explicitly in a server-output
 application. The Manifest lists actual Function Artifacts under
 `artifacts.functions`, with stable IDs, portable directories,
 `nodejs22`, and `index.handler`. Route references identify which
-artifact serves each route. Each separate artifact contains its
-reachable runtime modules and its own generated package metadata.
-With `install`, each has exact dependencies and a deterministic
-npm lockfile.
+artifact serves each route: all on-demand routes reference the
+same Function. The artifact contains the complete native output
+and generated package metadata; `install` pins its dependencies
+with a deterministic npm lockfile. `functions: "shared"` remains
+accepted, while `functions: "separate"` is rejected.
 
-Upload each listed Function Artifact to a separate existing
-Function. The `dist/function/index.js` dispatcher in a
-separate-functions build exists only for local preview and is
-absent from `artifacts.functions`. It is not a deployment
-entrypoint. Static-only Builds have an empty Functions array
-under either partition choice.
+Upload the listed artifact from `dist/function` to one existing
+Function. Its `index.handler` serves deployment and local
+preview; there is no separate preview dispatcher. Static-only
+Builds have an empty Functions array.
 
 Page Functions contain rendered custom-404 HTML copies. The
 corresponding `routes.notFound[].functionArtifactIds` references
@@ -118,10 +119,10 @@ selects methods and produces the runtime response. Whole-segment
 dynamic parameters and optional rest parameters are supported.
 Compound segments such as `[id].json` fail with guidance. A
 Gateway overlap that would select a different Serving Artifact
-than Astro also fails. Prefer a shared Function for overlapping
-runtime routes, adjust the routes, or supply a compatible
-user-owned router. Preserve generated parameter names because
-greedy-route names may encode priority over 404 fallbacks.
+than Astro also fails. Overlapping runtime routes use the same
+Function, where Astro preserves their priority. Preserve
+generated parameter names because greedy-route names may encode
+priority over 404 fallbacks.
 
 ## Direct stateless endpoints and forms
 

@@ -63,9 +63,7 @@ export const ManifestV1Schema = extensible({
 	modifiers: extensible({
 		apiGateway: Schema.Boolean,
 		recursive404: Schema.optional(Schema.Boolean),
-		functions: Schema.optional(
-			Schema.Literal("shared", "separate"),
-		),
+		functions: Schema.optional(Schema.Literal("shared")),
 		dependencyStrategy: Schema.optional(
 			Schema.Literal("bundle", "install"),
 		),
@@ -82,7 +80,9 @@ export const ManifestV1Schema = extensible({
 	),
 	artifacts: extensible({
 		client: clientArtifact,
-		functions: Schema.Array(functionArtifact),
+		functions: Schema.Array(functionArtifact).pipe(
+			Schema.maxItems(1),
+		),
 	}),
 	routes: extensible({
 		prerendered: Schema.Array(prerenderedRoute),

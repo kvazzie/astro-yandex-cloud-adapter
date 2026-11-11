@@ -1,5 +1,12 @@
 # Compiled middleware and renderer acquisition for selected Apps
 
+Historical evidence:
+[ADR 0013](../adr/0013-retire-separate-functions-and-use-native-astro-app.md)
+retires separate functions / `functionPerRoute` after this
+investigation. The observations below remain evidence for their
+recorded source versions; they are not a current promise to
+support `functions: "separate"`.
+
 Executed on 2026-11-09 from
 `fa3f27ecb959f0266d89d1b8a49352185237bdb7`, the head of
 `feat/complete-beta-routing` after

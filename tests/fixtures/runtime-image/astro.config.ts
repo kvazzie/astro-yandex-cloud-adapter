@@ -5,7 +5,6 @@ export default defineConfig({
 	adapter: yandexCloud({
 		target: "object-storage-functions",
 		apiGateway: true,
-		functions: "separate",
 		dependencyStrategy: "install",
 	}),
 	output: "server",

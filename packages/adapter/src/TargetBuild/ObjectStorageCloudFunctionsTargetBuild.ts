@@ -93,7 +93,6 @@ export const make = (
 							build,
 							routePlan,
 							{
-								functions: options.functions,
 								dependencyStrategy: options.dependencyStrategy,
 								recursive404: options.recursive404,
 							},

@@ -1,5 +1,10 @@
 # Categories × [_Targets_](../GLOSSARY.md#target)
 
+[ADR 0013](adr/0013-retire-separate-functions-and-use-native-astro-app.md)
+retires per-route partitioning; Function preparation now keeps
+one complete native App. Historical partitioning observations
+below are not authorization to reintroduce separate functions.
+
 Categories here mean model families and module roles such as
 `Options` and `TargetBuild`. The columns are concrete _Targets_.
 The question is where each category has a distinct variant per
@@ -30,7 +35,7 @@ implementations.
 | `TargetBuild`                     | `make` in `TargetBuild/ObjectStorageTargetBuild.ts`, returning `TargetBuild.of(...)`. | `make` in `TargetBuild/ObjectStorageCloudFunctionsTargetBuild.ts`, returning `TargetBuild.of(...)`.            | **Yes, as implementations.** Two factories implementing the same contract. The two implementation files name their build role explicitly; the Effect Tag contract is private in `TargetBuild/.Tag.ts`. |
 | `ArtifactGeneration`              | Calls the common `completeBuild` with a policy rejecting required function output.    | Calls the same `completeBuild` with a policy preparing functions when required.                                | **No separate named variants.** Variant-specific policy is supplied by the two `TargetBuild` implementations.                                                                                          |
 | `ClientArtifact`                  | Static artifact described by the common manifest construction.                        | The same artifact kind, alongside any required functions.                                                      | **No.** No separate client-artifact type or preparation module per target.                                                                                                                             |
-| `FunctionArtifact`                | Not produced.                                                                         | Prepared when actual on-demand requirements need it; `shared` or `separate` partitioning.                      | **No target-indexed family.** One artifact kind with packaging and partitioning operations; absence in the first column is not another implementation.                                                 |
+| `FunctionArtifact`                | Not produced.                                                                         | Prepared when actual on-demand requirements need it; one complete native App.                                  | **No target-indexed family.** One artifact kind with packaging and output preparation operations; absence in the first column is not another implementation.                                           |
 | `ApiGatewaySpecificationTemplate` | Optional template describing static routing.                                          | Optional template also describing function routing where applicable.                                           | **No.** One generator consumes the manifest and route plan.                                                                                                                                            |
 | `Scope404`                        | Shared scope computation for static fallback handling.                                | The same scope computation; function preparation also copies fallback files and applies policies where needed. | **No.** Function-specific preparation is not a second target-specific scope type.                                                                                                                      |
 | `DeploymentManifest`              | Contains the selected target and actual static output.                                | The same schema also describes actual function output and applicable invocation requirements.                  | **No.** One schema and parser with consistency checks, including checks against the target value.                                                                                                      |
@@ -54,7 +59,8 @@ Source owners:
   completion and manifest construction][generation].
 - [_Function Artifact_](../GLOSSARY.md#function-artifact):
   [preparation contract][function-artifact], with internal
-  [partitioning][partition] and [package/404 planning][prepare].
+  [complete output reading][partition] and [package/404
+  planning][prepare].
 - [_API Gateway Specification Template_](../GLOSSARY.md#api-gateway-specification-template):
   [generator][gateway].
 - [_404 Scope_](../GLOSSARY.md#404-scope): [scope
@@ -135,7 +141,7 @@ commitment to the present structure.
 | Change how all input variants are decoded, defaulted, or diagnosed. | `Options` across target columns, without necessarily changing `TargetBuild`.                                                                                     | How frequently do input-contract changes cut across targets?                              |
 | Adapt all builds to an Astro lifecycle or compiler change.          | `Hooks`, `TargetBuild`, and shared build configuration; possibly `ArtifactGeneration`.                                                                           | Which changes affect the common contract, and which affect only concrete implementations? |
 | Extend Gateway or recursive 404 behaviour.                          | Relevant `Options` variants, `ApiGatewaySpecificationTemplate`, `Scope404`, and possibly `TargetBuild`, `FunctionArtifact`, or `DeploymentManifest`.             | Do these changes usually cross target columns or remain within one?                       |
-| Fix or extend function packaging or partitioning.                   | `FunctionArtifact`, with `Options` or `TargetBuild` only if their contracts change.                                                                              | How much function work stays local without modifying the paired target variants?          |
+| Fix or extend complete function packaging.                          | `FunctionArtifact`, with `Options` or `TargetBuild` only if their contracts change.                                                                              | How much function work stays local without modifying the paired target variants?          |
 | Evolve the manifest or add a consumer.                              | `DeploymentManifest` and its consumers; producers only if the required output changes.                                                                           | Which [roadmap](../ROADMAP.md) changes actually require new producer behaviour?           |
 
 Compare further ownership changes against these maintenance
@@ -153,7 +159,7 @@ require coordinated edits; they do not predict defect rates.
 | Maintenance case                       | Current locality                                                                                                                                                                                         | Changes that cross owners                                                                                                                                                                                                                          |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Astro lifecycle/compiler compatibility | [Hooks][hooks] handles callbacks; [adapter description][target-build] and [server build configuration][build-configuration] are shared.                                                                  | A changed `TargetBuild` operation contract reaches its concrete implementations. A callback-only correction need not do so.                                                                                                                        |
-| Function packaging                     | [Preparation][prepare] and [partitioning][partition] own dependency resolution, package/lockfile generation, and output preparation.                                                                     | A changed runtime support rule may affect both capability declarations in [build configuration][build-configuration] and actual-output checks in preparation. These use different evidence, so sharing policy does not mean deleting either check. |
+| Function packaging                     | [Preparation][prepare] and [complete output reading][partition] own dependency resolution, package/lockfile generation, and output preparation.                                                          | A changed runtime support rule may affect both capability declarations in [build configuration][build-configuration] and actual-output checks in preparation. These use different evidence, so sharing policy does not mean deleting either check. |
 | Shared routing/404 behaviour           | [Route requirements][routes] calculate scopes once. Manifest construction, function preparation, and Gateway generation consume that result. [Scope selection][scopes] is shared by handler and preview. | Recognition of custom 404 routes is repeated in route projection and the functions _Target_'s on-demand-404 check. A change to that convention requires reviewing both.                                                                            |
 | Input decoding and diagnostics         | [Integration entry][integration] owns common decoding and its diagnostic wrapper; [schema helpers][schema-helpers] own validated-default machinery.                                                      | Both options variants separately express the same rule that `recursive404: true` requires `apiGateway: true`, and repeat the corresponding defaults. A correction to this shared input rule must reach both variants today.                        |
 
@@ -219,10 +225,10 @@ helpers. `Errors.ts` remains the conventional error collection.
 `Hooks` coordinates lifecycle stages. The functions build
 implementation checks route compatibility, then calls
 `FunctionArtifact.planPreparation` and `applyPreparation`. The
-preparation module owns partitioning, cleanup, 404 preparation,
-policy application, and preview-dispatcher creation. Its planner
-reads existing output and computes an inspectable mutation queue;
-its executor applies that queue in order.
+preparation module owns complete output reading, cleanup, 404
+preparation and policy application. Its planner reads existing
+output and computes an inspectable mutation queue; its executor
+applies that queue in order.
 `mandatory/ArtifactGeneration.completeBuild` coordinates output
 inspection, route inspection, selected preparation, and writing
 the completed manifest/template. These are several levels of
@@ -263,9 +269,9 @@ from type-only references:
 | `conditional/FunctionArtifact/BuildConfiguration.ts`                                               | Type-only reference to `DependencyStrategy`.                                                                                                                           |
 
 The preparation seam now accepts narrow build facts and explicit
-settings. Neither partitioning nor the dependency scanner imports
-`Options`. `findRuntimePackageImports` analyses planned file
-contents and requires the chosen strategy; both bundle and
+settings. Neither output preparation nor the dependency scanner
+imports `Options`. `findRuntimePackageImports` analyses planned
+file contents and requires the chosen strategy; both bundle and
 install preparation pass it explicitly. Defaults remain private
 and schema-validated within `Options`, and are applied at input
 decoding. No default objects are exported. Ownership of the
@@ -305,7 +311,7 @@ configuration access.
 [generation]:
   ../packages/adapter/src/mandatory/ArtifactGeneration/index.ts
 [partition]:
-  ../packages/adapter/src/conditional/FunctionArtifact/Partition/index.ts
+  ../packages/adapter/src/conditional/FunctionArtifact/.output.ts
 [function-artifact]:
   ../packages/adapter/src/conditional/FunctionArtifact/index.ts
 [prepare]:

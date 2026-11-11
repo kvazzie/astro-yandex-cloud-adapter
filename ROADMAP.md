@@ -36,9 +36,12 @@ The beta covers:
   creating a Gateway.
 - Optional recursive static 404 pages for Object Storage builds
   with API Gateway, including concrete dynamic scopes.
-- Shared or separate
-  [_Function Artifacts_](GLOSSARY.md#function-artifact) with
-  stable route references.
+- One complete native Astro App in a shared
+  [_Function Artifact_](GLOSSARY.md#function-artifact), with
+  stable route references. Separate functions /
+  `functionPerRoute` are deliberately retired; see
+  [ADR 0013](docs/adr/0013-retire-separate-functions-and-use-native-astro-app.md)
+  before proposing per-route packaging again.
 - Working preview for both build classes.
 - Non-root base placement.
 - Bundle and install [_dependency_](GLOSSARY.md#dependency)

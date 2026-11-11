@@ -283,6 +283,10 @@ describe("adapter options and routes", () => {
 		{ target: "object-storage", functions: "shared" },
 		{ functions: "separate" },
 		{ target: "object-storage", functions: "separate" },
+		{
+			target: "object-storage-functions",
+			functions: "separate",
+		},
 		{ directOrigin: "https://static.example" },
 		{
 			target: "object-storage",
@@ -344,7 +348,7 @@ describe("adapter options and routes", () => {
 			apiGateway: true,
 			recursive404: true,
 			dependencyStrategy: "install",
-			functions: "separate",
+			functions: "shared",
 		},
 		{
 			target: "object-storage-functions",

@@ -125,11 +125,7 @@ export function planNotFoundArtifacts(
 		const policy: Omit<
 			FunctionArtifactPolicy,
 			"artifactDirectory"
-		> = {
-			...(artifact.allowedRoutes
-				? { allowedRoutes: artifact.allowedRoutes }
-				: {}),
-		};
+		> = {};
 		if (pageFunctions.has(artifact.id) && scopes.length) {
 			policy.notFound = [];
 			mutations.push({
