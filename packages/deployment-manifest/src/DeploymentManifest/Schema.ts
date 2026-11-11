@@ -11,8 +11,13 @@ const extensible = <Fields extends Schema.Struct.Fields>(
 	);
 
 const nonEmpty = Schema.String.pipe(Schema.minLength(1));
+// Artifact references and Object Storage keys share the same relative,
+// forward-slash spelling. Colons exclude Windows drives and data streams.
 const relativePath = nonEmpty.pipe(
-	Schema.pattern(/^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$)).+$/),
+	Schema.pattern(
+		// eslint-disable-next-line no-control-regex -- Filesystem paths cannot contain NUL.
+		/^(?![\s\S]*[\\:\u0000\r\n])(?!.*(?:^|\/)\.\.?(?:\/|$))[^/]+(?:\/[^/]+)*$/,
+	),
 );
 const urlPath = Schema.String.pipe(
 	Schema.pattern(
