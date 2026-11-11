@@ -75,6 +75,10 @@ function contentType(path: string): string {
 	}
 }
 
+/**
+ * Resolves a filename beneath the client root, or returns undefined for an escape.
+ * The containment check is lexical; it does not resolve filesystem symlinks.
+ */
 function resolveClientFile(
 	root: string,
 	path: string,
@@ -88,6 +92,10 @@ function resolveClientFile(
 		: file;
 }
 
+/**
+ * Serves GET/HEAD files under the configured URL base, including explicit 404 URLs.
+ * Returns false when the caller should continue to runtime or fallback handling.
+ */
 async function serveClient(
 	options: PreviewServerParams,
 	incoming: IncomingMessage,
