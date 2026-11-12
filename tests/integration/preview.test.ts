@@ -85,6 +85,11 @@ async function startPreview(
 		join(application, "public/preview.mjs"),
 		"export const preview = true;\n",
 	);
+	for (const name of ["hello#world.html", "100%.html"])
+		await writeFile(
+			join(application, "public", name),
+			`<p>${name}</p>`,
+		);
 	if (adapterOptions.recursive404) {
 		await mkdir(join(application, "src/pages/guide"), {
 			recursive: true,
@@ -170,6 +175,42 @@ describe.sequential(
 					"utf8",
 				),
 			) as { overrides: { unifont: string } };
+			for (const [name, exports] of [
+				[
+					"hidden-import-only",
+					{ ".": { import: "./index.js" } },
+				],
+				[
+					"hidden-subpath-only",
+					{ "./feature": { import: "./index.js" } },
+				],
+			] as const) {
+				const directory = join(root, name);
+				await mkdir(directory);
+				await writeFile(
+					join(directory, "package.json"),
+					JSON.stringify({
+						name,
+						version: "1.0.0",
+						type: "module",
+						exports,
+					}),
+				);
+				await writeFile(
+					join(directory, "index.js"),
+					`export default ${JSON.stringify(name)};`,
+				);
+				await runCommand(
+					"npm",
+					[
+						"pack",
+						"--ignore-scripts",
+						"--pack-destination",
+						root,
+					],
+					{ cwd: directory },
+				);
+			}
 			await writeFile(
 				join(root, "package.json"),
 				JSON.stringify({
@@ -179,6 +220,12 @@ describe.sequential(
 						"@astro-yandex-cloud/adapter": `file:./${tarball!}`,
 						astro: astroPackage.version,
 						nanoid: "3.3.17",
+						"react-dom": "19.2.0",
+						react: "19.2.0",
+						send: "0.19.0",
+						debug: "4.4.3",
+						"hidden-import-only": `file:${join(root, "hidden-import-only-1.0.0.tgz")}`,
+						"hidden-subpath-only": `file:${join(root, "hidden-subpath-only-1.0.0.tgz")}`,
 					},
 					// Match the workspace's Astro dependency pin on the supported Node minimum.
 					overrides: {
@@ -211,6 +258,215 @@ describe.sequential(
 
 		afterAll(async () => {
 			if (root) await rm(root, { recursive: true, force: true });
+		});
+
+		it("delivers peers, nested installed versions, createRequire loads and hidden ESM metadata in a clean install Artifact", async () => {
+			const application = join(root, "dependency-graph");
+			await mkdir(join(application, "src/pages"), {
+				recursive: true,
+			});
+			await writeFile(
+				join(application, "src/pages/graph.ts"),
+				`
+import {renderToStaticMarkup} from 'react-dom/server';
+import send from 'send';
+import debug from 'debug';
+import hidden from 'hidden-import-only';
+import feature from 'hidden-subpath-only/feature';
+import {createRequire as make} from 'node:module';
+const req = make(import.meta.url);
+export const GET = () => new Response(JSON.stringify({
+  peer: renderToStaticMarkup('peer-ok'), send: typeof send, debug: typeof debug,
+  id: req('nanoid').nanoid(), hidden, feature,
+}));
+`,
+			);
+			await writeFile(
+				join(application, "astro.config.mjs"),
+				`
+import yandexCloud from '@astro-yandex-cloud/adapter';
+import {passthroughImageService} from 'astro/config';
+export default {output:'server', adapter:yandexCloud({target:'object-storage-functions', apiGateway:true, dependencyStrategy:'install'}), image:{service:passthroughImageService()}};
+`,
+			);
+			await astro.build({
+				root: `${application}/`,
+				logLevel: "silent",
+			});
+			const isolated = await mkdtemp(
+				join(tmpdir(), "yandex-clean-graph-"),
+			);
+			try {
+				await cp(join(application, "dist/function"), isolated, {
+					recursive: true,
+				});
+				const lockBefore = await readFile(
+					join(isolated, "package-lock.json"),
+					"utf8",
+				);
+				await runCommand(
+					"npm",
+					[
+						"ci",
+						"--production",
+						"--ignore-scripts",
+						"--no-audit",
+						"--no-fund",
+					],
+					{ cwd: isolated },
+				);
+				expect(
+					await readFile(
+						join(isolated, "package-lock.json"),
+						"utf8",
+					),
+				).toBe(lockBefore);
+				const require = createRequire(
+					join(isolated, "index.js"),
+				);
+				expect(
+					(require("react/package.json") as { version: string })
+						.version,
+				).toBe("19.2.0");
+				expect(
+					(require("debug/package.json") as { version: string })
+						.version,
+				).toBe("4.4.3");
+				const sendRequire = createRequire(
+					require.resolve("send"),
+				);
+				expect(
+					(
+						sendRequire("debug/package.json") as {
+							version: string;
+						}
+					).version,
+				).toBe("2.6.9");
+				const lock = JSON.parse(lockBefore) as {
+					packages: Record<
+						string,
+						{
+							version: string;
+							peerDependencies?: Record<string, string>;
+						}
+					>;
+				};
+				expect(
+					lock.packages["node_modules/send/node_modules/debug"]
+						?.version,
+				).toBe("2.6.9");
+				expect(
+					lock.packages["node_modules/react-dom"]
+						?.peerDependencies,
+				).toEqual({ react: "19.2.0" });
+				const { stdout } = await runCommand(
+					process.execPath,
+					[
+						"--input-type=module",
+						"-e",
+						`
+import {handler} from './index.js';
+const result = await handler({url:'/graph', httpMethod:'GET', headers:{host:'fixture.example'}}, {getPayload:()=>undefined,getRemainingTimeInMillis:()=>30000});
+console.log(JSON.stringify(result));
+`,
+					],
+					{ cwd: isolated },
+				);
+				const result = JSON.parse(stdout.trim()) as {
+					statusCode: number;
+					body: string;
+				};
+				expect(result.statusCode).toBe(200);
+				const body = JSON.parse(result.body) as { id: string };
+				expect(body).toMatchObject({
+					peer: "peer-ok",
+					send: "function",
+					debug: "function",
+					hidden: "hidden-import-only",
+					feature: "hidden-subpath-only",
+				});
+				expect(body.id).toMatch(/^[\w-]{21}$/);
+			} finally {
+				await rm(isolated, { recursive: true, force: true });
+			}
+		});
+
+		it("rejects a createRequire package load left external by the bundle pipeline", async () => {
+			const application = join(root, "bundle-require");
+			await mkdir(join(application, "src/pages"), {
+				recursive: true,
+			});
+			await writeFile(
+				join(application, "src/pages/id.ts"),
+				"import {createRequire} from 'node:module'; const req=createRequire(import.meta.url); export const GET=()=>new Response(req('nanoid').nanoid());",
+			);
+			await writeFile(
+				join(application, "astro.config.mjs"),
+				"import adapter from '@astro-yandex-cloud/adapter'; import {passthroughImageService} from 'astro/config'; export default {output:'server',image:{service:passthroughImageService()},adapter:adapter({target:'object-storage-functions',apiGateway:true})};",
+			);
+			await expect(
+				astro.build({
+					root: `${application}/`,
+					logLevel: "silent",
+				}),
+			).rejects.toThrow(
+				/unresolved runtime package imports.*nanoid/,
+			);
+		});
+
+		it("builds and previews public HTML filenames containing URL punctuation", async () => {
+			const { server, origin, application } = await startPreview(
+				"static",
+				"object-storage",
+			);
+			try {
+				for (const name of ["hello#world.html", "100%.html"]) {
+					expect(
+						await readFile(
+							join(application, "dist/client", name),
+							"utf8",
+						),
+					).toBe(`<p>${name}</p>`);
+					const response = await fetch(
+						`${origin}/${encodeURIComponent(name)}`,
+					);
+					expect(response.status).toBe(200);
+					expect(await response.text()).toBe(`<p>${name}</p>`);
+				}
+			} finally {
+				await server.stop();
+				await server.closed();
+			}
+		});
+
+		it("falls through ENOTDIR candidates to the runtime handler for GET and HEAD", async () => {
+			const { server, origin, application } = await startPreview(
+				"mixed",
+				"object-storage-functions",
+			);
+			try {
+				await writeFile(
+					join(application, "dist/client/robots.txt"),
+					"User-agent: *",
+				);
+				for (const method of ["GET", "HEAD"]) {
+					for (const path of [
+						"/robots.txt/child",
+						"/robots.txt/",
+					]) {
+						const response = await fetch(`${origin}${path}`, {
+							method,
+						});
+						expect(response.status).toBe(404);
+						const body = await response.text();
+						if (method === "HEAD") expect(body).toBe("");
+						else expect(body).toContain("404");
+					}
+				}
+			} finally {
+				await server.stop();
+				await server.closed();
+			}
 		});
 
 		it.each([

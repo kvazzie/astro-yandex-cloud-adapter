@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { relative, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, relative, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { glob } from "tinyglobby";
 import type { RoutePlan } from "../../mandatory/ArtifactGeneration/RouteRequirements";
 import type {
@@ -37,7 +37,9 @@ export async function readFunctionOutput(
 		dot: true,
 		onlyFiles: true,
 	})) {
-		const from = new URL(path, directory);
+		const from = pathToFileURL(
+			join(fileURLToPath(directory), path),
+		);
 		files.push(
 			/\.m?js$/.test(path)
 				? { path, from, contents: await readFile(from, "utf8") }

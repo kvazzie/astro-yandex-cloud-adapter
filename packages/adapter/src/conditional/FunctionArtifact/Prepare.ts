@@ -1,5 +1,7 @@
 import { access } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { PackageJson } from "pkg-types";
 import {
 	manifestRoutes,
@@ -140,9 +142,11 @@ export function planNotFoundArtifacts(
 				const file = `.yandex/404/${name}.html`;
 				mutations.push({
 					kind: "copyFile",
-					from: new URL(
-						scope.objectKey.slice(prefix.length),
-						build.config.build.client,
+					from: pathToFileURL(
+						join(
+							fileURLToPath(build.config.build.client),
+							scope.objectKey.slice(prefix.length),
+						),
 					),
 					to: new URL(file, artifact.directory),
 				});

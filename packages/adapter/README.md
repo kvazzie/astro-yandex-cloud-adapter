@@ -185,6 +185,20 @@ procedures remain unverified in Yandex Cloud.
   locally, copy the Function Artifact to a disposable directory
   and run that same command there.
 
+Install metadata preserves installed versions, nested package
+contexts, and required peers. Installed optional peers are
+included; absent optional peers are not selected. Package
+metadata need not be exported or have a CommonJS entrypoint.
+
+The adapter and emitted Function entry/chunks are ESM;
+third-party packages installed in `node_modules` may use CommonJS
+internally. Fixed package loads through Node's
+`createRequire(import.meta.url)`, including local aliases, are
+pinned under `install`. If Astro leaves such a package load
+external under `bundle`, the build fails with instructions to use
+a fixed bundled import or `install`. Computed loads and loader
+bindings that escape analysis are rejected.
+
 Select `dependencyStrategy: "install"` for native dependencies
 such as Sharp. Their native binaries must work in Yandex's
 runtime, which has not been verified. The passthrough image

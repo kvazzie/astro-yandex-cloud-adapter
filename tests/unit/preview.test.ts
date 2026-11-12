@@ -34,6 +34,10 @@ it.each(["/", "/docs"])(
 			new URL("404.html", client),
 			"safe fallback",
 		);
+		await writeFile(
+			new URL("robots.txt", client),
+			"User-agent: *",
+		);
 		const prefix = base === "/" ? "" : `${base.slice(1)}/`;
 		const url = `${base === "/" ? "" : base}/404/`;
 		const manifest = parseManifest({
@@ -106,6 +110,21 @@ it.each(["/", "/docs"])(
 					);
 					expect(response.status).toBe(404);
 					expect(await response.text()).toBe(expected);
+					for (const method of ["GET", "HEAD"]) {
+						for (const path of [
+							"robots.txt/child",
+							"robots.txt/",
+						]) {
+							const miss = await fetch(
+								`http://127.0.0.1:${server.port}/${prefix}${path}`,
+								{ method },
+							);
+							expect(miss.status).toBe(404);
+							expect(await miss.text()).toBe(
+								method === "HEAD" ? "" : expected,
+							);
+						}
+					}
 				} finally {
 					await server.stop();
 					await server.closed();

@@ -16,9 +16,20 @@ describe("install registry metadata", () => {
 		const fetch = vi
 			.spyOn(globalThis, "fetch")
 			.mockResolvedValue(
-				new Response(JSON.stringify({ version: "1.0.0" })),
+				new Response(
+					JSON.stringify({
+						version: "1.0.0",
+						peerDependencies: { peer: "^1.0.0" },
+						peerDependenciesMeta: { peer: { optional: true } },
+					}),
+				),
 			);
-		await npmRegistry.resolve("@scope/pkg", "1.0.0");
+		expect(
+			await npmRegistry.resolve("@scope/pkg", "1.0.0"),
+		).toMatchObject({
+			peerDependencies: { peer: "^1.0.0" },
+			peerDependenciesMeta: { peer: { optional: true } },
+		});
 		expect(fetch).toHaveBeenCalledWith(
 			"https://mirror.example/npm/%40scope/pkg/1.0.0",
 			expect.objectContaining({

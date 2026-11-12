@@ -130,15 +130,24 @@ when using those tests as evidence for a category.
 
 ## Dependency graph representation
 
-`assertCompatibleVersion` rejects any second exact version for a
-package name. `ResolvedRuntimeDependency` and `formatNpmLockfile`
-currently address packages by name and a single
-`node_modules/<name>` location. The existing
-[version-conflict regression](../tests/unit/dependencies.test.ts)
-installs `shared@1.0.0` under one parent and `shared@2.0.0` under
-another; both parents declare `^1.0.0 || ^2.0.0`. This confirms
-rejection of a multi-version installed tree, not a proof that no
-common version can satisfy the requirements.
+The former `assertCompatibleVersion` guard rejected any second
+exact version for a package name. The
+[regression](../tests/unit/dependencies.test.ts) installs
+`shared@1.0.0` under one parent and `shared@2.0.0` under another;
+both parents declare `^1.0.0 || ^2.0.0`. That demonstrated a
+private representation limit, not an unsatisfiable graph.
+
+`ResolvedRuntimeDependency` now records a relative npm location.
+`formatNpmLockfile` writes nested entries at those locations.
+Discovery follows real installed directories, including symlinked
+peer contexts, without resolving CommonJS exports or executing
+application packages. Required peers and installed optional peers
+become exact delivery edges; absent optional peers remain absent.
+An absent platform variant uses its local npm lock selection when
+available, before registry fallback. The
+[packed-adapter regression](../tests/integration/preview.test.ts)
+performs a clean production install and executes a handler using
+React DOM, React, send and both installed debug versions.
 
 npm documents nested installs containing multiple versions of one
 package in its
@@ -156,12 +165,11 @@ and the
 promise exact dependency metadata and a deterministic lockfile;
 they do not establish one version per package name. Do not add a
 _Domain Error_ merely to preserve that private representation.
-The next decision is how the delivery contract preserves the
-resolved package graph; changing versions to solve requirements
-again is a separate operation with different guarantees. A
-supported tree that our promised delivery cannot preserve needs
-an implementation fix or an explicit, independently justified
-support decision.
+The implementation preserves installed selections rather than
+solving their ranges again. Changing versions remains a separate
+operation with different guarantees. A supported tree that our
+promised delivery cannot preserve needs an implementation fix or
+an explicit, independently justified support decision.
 
 ## Findings
 
@@ -178,7 +186,7 @@ has been reproduced by a supported application.
 | Partitioning cannot identify a resolved route, finds conflicting module identities, cannot recognise a route map/loader, or encounters an escaping emitted module.                                                                                          | Boundary unresolved for each emitted-code condition. A supported Astro build that the adapter fails to handle indicates a compatibility defect. A user transformation outside an explicit supported contract can be a domain restriction. The error message alone establishes neither case.  | Reproduce each relevant emitted shape and identify its producer. No blanket unsupported-transformation rule is established by this audit.                                                                                                                           |
 | Route reconciliation cannot match completed pages to files/routes, or finds ambiguous prerendered URLs.                                                                                                                                                     | Ownership depends on provenance. External file removal or unreadability is an environment problem; a contradiction in completed output the adapter claims to support requires a producer/compatibility investigation.                                                                        | Preserve the evidence from Astro and the filesystem; establish a fixture before assigning a narrower cause.                                                                                                                                                         |
 | `validateFunctionEntrypoint` catches every `access` error; `completeBuild` uses `ok` as `hasFunction`; `reconcileRoutes` includes [_On-demand Routes_](../GLOSSARY.md#on-demand-route) only when that flag is true.                                         | Confirmed control flow can erase the difference between absence and another OS error. It can suppress required runtime evidence, so the current implementation does not establish reliable artifact error reporting here. No permission-error reproduction was performed for this catalogue. | Distinguish expected absence in a [_Static-only Build_](../GLOSSARY.md#static-only-build) from access errors and a missing required runtime entrypoint. Verify that a [_Runtime Build_](../GLOSSARY.md#runtime-build) cannot silently become a _Static-only Build_. |
-| [_Dependency_](../GLOSSARY.md#dependency) lookup catches all module resolution, JSON read/parse, and access errors and returns absence.                                                                                                                     | Confirmed diagnostic gap. A missing package, unreadable metadata, and malformed metadata can become the same resolution error or cause registry fallback.                                                                                                                                    | Preserve the failed operation and cause; distinguish unusable local metadata from a genuinely unavailable _Dependency_.                                                                                                                                             |
+| [_Dependency_](../GLOSSARY.md#dependency) lookup uses package-directory search paths; only `ENOENT` and `ENOTDIR` mean an absent candidate.                                                                                                                 | The former broad catch suppressed metadata errors. Local reads now report the path and retain the original cause; hidden exports do not prevent metadata discovery.                                                                                                                          | Retain this distinction when adding metadata sources. Required installed packages must not be replaced with registry selections after a read failure.                                                                                                               |
 | `InvalidManifest` wraps all of `writeDeploymentManifest`; `InvalidArtifact` wraps I/O and emitted-code transformations; `UnresolvedDependency` wraps errors from `planPackageFiles`; `applyPreparation` reports failed mutations through `InvalidArtifact`. | These types combine ownership categories. Package-file writes are now separate from dependency planning, but import inspection, metadata lookup, and resolution still share one wrapper. [_Hook_](../GLOSSARY.md#hook) wrappers add presentation context only.                               | Classify the cause at its operation boundary before changing construction or exported error types.                                                                                                                                                                  |
 | `parseDeploymentManifest` checks external values and the adapter's freshly generated _Manifest_.                                                                                                                                                            | Invalid data supplied to the parser by an external caller is a _Rejection_. Broken IDs/references guaranteed by generation are defects. User-supplied configuration that produces a rejected field needs its own provenance check.                                                           | Keep input ownership visible in diagnostics and regression cases.                                                                                                                                                                                                   |
 | `invoke` has an `unknown` error channel around translation, `render`, and response conversion.                                                                                                                                                              | Direct-request input validation is bridge-owned. Application rendering and response-stream errors retain their original ownership. Malformed caller events need invocation diagnostics.                                                                                                      | Preserve causes and avoid relabelling every propagated error as a _Domain Error_.                                                                                                                                                                                   |

@@ -8,6 +8,7 @@ import type { ResolvedRuntimeDependency } from "../../packages/adapter/src/condi
 
 const nanoid: ResolvedRuntimeDependency = {
 	name: "nanoid",
+	location: "node_modules/nanoid",
 	version: "3.3.17",
 	resolved:
 		"https://registry.npmjs.org/nanoid/-/nanoid-3.3.17.tgz",
@@ -32,6 +33,7 @@ describe("install artifact metadata", () => {
 	it("orders dependencies alphabetically in package.json", () => {
 		const second: ResolvedRuntimeDependency = {
 			name: "aproject",
+			location: "node_modules/aproject",
 			version: "1.0.0",
 		};
 		const first = formatFunctionPackageJson([nanoid, second]);

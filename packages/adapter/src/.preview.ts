@@ -157,7 +157,11 @@ async function serveClient(
 			);
 			return true;
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+			if (
+				!["ENOENT", "ENOTDIR"].includes(
+					(error as NodeJS.ErrnoException).code ?? "",
+				)
+			)
 				throw error;
 		}
 	}
