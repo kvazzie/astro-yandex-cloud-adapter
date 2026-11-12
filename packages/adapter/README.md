@@ -304,6 +304,13 @@ clean-install tests do not establish Yandex compatibility.
   actual Serving Artifacts by stable ID. Paths are relative to
   the Manifest directory. Each Function entry declares its
   runtime and entrypoint.
+- Filesystem paths and `objectKey` values use relative,
+  forward-slash-separated names. Absolute paths, backslashes,
+  colons (including Windows drives), NUL, CR, LF, empty segments,
+  and `.` or `..` segments are rejected. Object keys use the
+  relative _Client Artifact_ filename plus the `base` prefix
+  described below; arbitrary Object Storage key syntax is not
+  supported. Preserve these strings without URL decoding.
 - `routes.prerendered[]` maps page and endpoint URLs to concrete
   Object Storage keys and Client Artifact IDs.
   `routes.onDemand[]` records Astro patterns, route kinds, and

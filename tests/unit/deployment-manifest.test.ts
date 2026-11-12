@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { posix, win32 } from "node:path";
 
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
@@ -74,7 +75,167 @@ function functionManifest() {
 	};
 }
 
+/** All five path-bearing fields, with valid references and root placement. */
+function pathManifest() {
+	const value = staticManifest();
+	value.base = "/";
+	value.target = "object-storage-functions";
+	value.modifiers.apiGateway = true;
+	value.artifacts.functions.push({
+		id: "function:shared",
+		path: "function",
+		runtime: "nodejs22",
+		entrypoint: "index.handler",
+	});
+	value.routes.onDemand.push({
+		kind: "page",
+		pattern: "/live",
+		artifactId: "function:shared",
+	});
+	value.routes.prerendered[0]!.url = "/404/";
+	value.routes.prerendered[0]!.objectKey = "404.html";
+	value.routes.notFound.push({
+		scope: "/",
+		url: "/404/",
+		objectKey: "404.html",
+		artifactId: "client:primary",
+	});
+	return { ...value, gatewayTemplate: { path: "gateway.yaml" } };
+}
+
+describe.each([
+	[
+		"artifacts.client.path",
+		(value: ReturnType<typeof pathManifest>, path: string) => {
+			value.artifacts.client.path = path;
+		},
+	],
+	[
+		"artifacts.functions[].path",
+		(value: ReturnType<typeof pathManifest>, path: string) => {
+			value.artifacts.functions[0]!.path = path;
+		},
+	],
+	[
+		"gatewayTemplate.path",
+		(value: ReturnType<typeof pathManifest>, path: string) => {
+			value.gatewayTemplate.path = path;
+		},
+	],
+	[
+		"routes.prerendered[].objectKey",
+		(value: ReturnType<typeof pathManifest>, path: string) => {
+			value.routes.prerendered[0]!.objectKey = path;
+		},
+	],
+	[
+		"routes.notFound[].objectKey",
+		(value: ReturnType<typeof pathManifest>, path: string) => {
+			value.routes.notFound[0]!.objectKey = path;
+		},
+	],
+] as const)("portable manifest path %s", (_field, change) => {
+	it.each([
+		"",
+		".",
+		"..",
+		"../secret",
+		"client/../secret",
+		"x\u2028/../../secret",
+		"x\u2029/../../secret",
+		"./client",
+		"client/./file",
+		"/secret",
+		"//server/share",
+		"\\secret",
+		"\\\\server\\share",
+		"..\\secret",
+		"client\\..\\secret",
+		"client/..\\secret",
+		"client\\../secret",
+		"client\\file",
+		"C:\\secret",
+		"C:/secret",
+		"C:secret",
+		"c:../secret",
+		"\\\\?\\C:\\secret",
+		"\\\\.\\C:\\secret",
+		"docs/C:/secret",
+		"file:stream",
+		"client//file",
+		"client/",
+		"client\0file",
+		"client\nfile",
+		"client\n",
+		"client\rfile",
+	])("rejects %j in parser, encoder and JSON Schema", (path) => {
+		const encoded = pathManifest();
+		const decoded = parseDeploymentManifest(encoded);
+		change(encoded, path);
+		change(
+			decoded as unknown as ReturnType<typeof pathManifest>,
+			path,
+		);
+		expect(() => parseDeploymentManifest(encoded)).toThrow(
+			TypeError,
+		);
+		expect(() =>
+			Schema.decodeUnknownSync(ManifestV1Schema)(encoded),
+		).toThrow();
+		expect(() => encodeDeploymentManifest(decoded)).toThrow();
+		expect(validateSchema(encoded)).toBe(false);
+	});
+
+	it.each([
+		"client",
+		"functions/shared",
+		".well-known/site.json",
+		"資料/site 1/index.html",
+		"line\u2028name/file.html",
+		"line\u2029name/file.html",
+		"release..name/file.html",
+		"folder%20name/file.html",
+	])(
+		"preserves %j and resolves beneath POSIX and Windows roots",
+		(path) => {
+			const value = pathManifest();
+			change(value, path);
+			// Keep the 404 reference valid when its key is the field under test.
+			if (_field.endsWith("objectKey")) {
+				value.routes.prerendered[0]!.objectKey = path;
+				value.routes.notFound[0]!.objectKey = path;
+			}
+			expect(
+				encodeDeploymentManifest(parseDeploymentManifest(value)),
+			).toEqual(value);
+			expect(validateSchema(value)).toBe(true);
+			for (const [paths, root] of [
+				[posix, "/artifacts"],
+				[win32, "D:\\artifacts"],
+			] as const) {
+				const relative = paths.relative(
+					root,
+					paths.resolve(root, path),
+				);
+				expect(paths.isAbsolute(relative)).toBe(false);
+				expect(relative.split(paths.sep)).not.toContain("..");
+			}
+		},
+	);
+});
+
 describe("Deployment Manifest consumers", () => {
+	it("preserves colons in URLs and identifiers outside path fields", () => {
+		const value = {
+			...staticManifest(),
+			assetsPrefix: "https://cdn.example/assets",
+		};
+		value.routes.prerendered[0]!.url = "/docs/name:part/";
+		expect(
+			encodeDeploymentManifest(parseDeploymentManifest(value)),
+		).toEqual(value);
+		expect(validateSchema(value)).toBe(true);
+	});
 	it.each(["/%ZZ", "/%E0%A4%A"])(
 		"rejects malformed URI escapes in base %s",
 		(base) => {

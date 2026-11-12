@@ -75,6 +75,27 @@ function contentType(path: string): string {
 	}
 }
 
+/**
+ * Resolves a filename beneath the client root, or returns undefined for an escape.
+ * The containment check is lexical; it does not resolve filesystem symlinks.
+ */
+function resolveClientFile(
+	root: string,
+	path: string,
+): string | undefined {
+	const file = resolve(root, path);
+	const fromRoot = relative(root, file);
+	return fromRoot === ".." ||
+		fromRoot.startsWith(`..${sep}`) ||
+		isAbsolute(fromRoot)
+		? undefined
+		: file;
+}
+
+/**
+ * Serves GET/HEAD files under the configured URL base, including explicit 404 URLs.
+ * Returns false when the caller should continue to runtime or fallback handling.
+ */
 async function serveClient(
 	options: PreviewServerParams,
 	incoming: IncomingMessage,
@@ -117,14 +138,8 @@ async function serveClient(
 				? [`${route}index.html`, `${route.slice(0, -1)}.html`]
 				: [route, `${route}/index.html`, `${route}.html`];
 	for (const candidate of candidates) {
-		const file = resolve(root, candidate);
-		const fromRoot = relative(root, file);
-		if (
-			fromRoot.startsWith(`..${sep}`) ||
-			fromRoot === ".." ||
-			isAbsolute(fromRoot)
-		)
-			continue;
+		const file = resolveClientFile(root, candidate);
+		if (!file) continue;
 		try {
 			if (!(await stat(file)).isFile()) continue;
 			const bytes = await readFile(file);
@@ -206,10 +221,17 @@ const preview: PreviewModule["default"] = async (
 						deployment.base === "/"
 							? ""
 							: `${deployment.base.slice(1)}/`;
-					const file = resolve(
-						fileURLToPath(options.client),
+					const root = fileURLToPath(options.client);
+					const file = resolveClientFile(
+						root,
 						scope.objectKey.slice(keyPrefix.length),
 					);
+					if (!file) {
+						outgoing
+							.writeHead(404, options.headers)
+							.end("Not Found");
+						return;
+					}
 					const bytes =
 						incoming.method === "HEAD"
 							? undefined
