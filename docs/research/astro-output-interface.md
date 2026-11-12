@@ -154,7 +154,7 @@ specific compiler conventions.
 | [`FunctionArtifact/.plan.ts`][planner] / [`Prepare.ts`][prepare]                                                      | Full output, exact package metadata/lock, retained 404 bodies/policy and ordered writes/copies/cleanup                                                                       | Preparation and package/404 policy; no per-route assignment or preview dispatcher.                               |
 
 The existing
-[generic AST helper](../../packages/adapter/src/conditional/FunctionArtifact/.emittedModules.ts)
+[generic AST helper](../../packages/adapter/src/.emittedModules.ts)
 is already shared. References to it or to one `RoutePlan` do not
 duplicate the rule that produced them. Island and image readers
 still repeat map recognition; the deleted partitioner no longer
