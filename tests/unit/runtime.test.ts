@@ -1,3 +1,4 @@
+import { gunzipSync, gzipSync } from "node:zlib";
 import * as Effect from "effect/Effect";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
@@ -373,6 +374,79 @@ describe("toWebRequest", () => {
 });
 
 describe("fromWebResponse", () => {
+	it("preserves gzip-compressed text bytes and their headers", async () => {
+		const bytes = gzipSync("compressed café");
+		const headers = {
+			"content-type": "text/plain; charset=utf-8",
+			"content-encoding": "gzip",
+			"content-length": String(bytes.byteLength),
+		};
+		const result = await fromWebResponse(
+			new Response(bytes, { headers }),
+		);
+
+		expect(result.isBase64Encoded).toBe(true);
+		expect(result.headers).toEqual(headers);
+		const restored = Buffer.from(result.body, "base64");
+		expect(restored).toEqual(bytes);
+		expect(gunzipSync(restored).toString("utf8")).toBe(
+			"compressed café",
+		);
+	});
+
+	it.each([
+		"text/plain; charset=iso-8859-1",
+		"text/plain; charset=utf-8",
+		"text/plain",
+		"application/json",
+	])("preserves non-UTF-8 bytes for %s", async (contentType) => {
+		const bytes = Uint8Array.from([0x63, 0x61, 0x66, 0xe9]);
+		const headers = {
+			"content-type": contentType,
+		};
+		const result = await fromWebResponse(
+			new Response(bytes, { headers }),
+		);
+
+		expect(result.isBase64Encoded).toBe(true);
+		expect(result.headers).toEqual(headers);
+		expect(Buffer.from(result.body, "base64")).toEqual(
+			Buffer.from(bytes),
+		);
+	});
+
+	it("uses base64 when Content-Encoding is present even for valid UTF-8 bytes", async () => {
+		const result = await fromWebResponse(
+			new Response("hello", {
+				headers: {
+					"content-type": "text/plain",
+					"content-encoding": "identity",
+				},
+			}),
+		);
+
+		expect(result.isBase64Encoded).toBe(true);
+		expect(
+			Buffer.from(result.body, "base64").toString("utf8"),
+		).toBe("hello");
+		expect(result.headers["content-encoding"]).toBe("identity");
+	});
+
+	it("preserves a UTF-8 byte order mark in an ordinary text result", async () => {
+		const bytes = Uint8Array.from([0xef, 0xbb, 0xbf, 0x61]);
+		const result = await fromWebResponse(
+			new Response(bytes, {
+				headers: { "content-type": "text/plain; charset=utf-8" },
+			}),
+		);
+
+		expect(result.isBase64Encoded).toBe(false);
+		expect(result.body).toBe("\uFEFFa");
+		expect(Buffer.from(result.body, "utf8")).toEqual(
+			Buffer.from(bytes),
+		);
+	});
+
 	it("returns text, status, redirects, and repeated cookies", async () => {
 		const headers = new Headers({
 			location: "/next",
@@ -397,7 +471,31 @@ describe("fromWebResponse", () => {
 			"first=1; Path=/",
 			"second=2; Path=/; HttpOnly",
 		]);
+		expect(result.headers).not.toHaveProperty("set-cookie");
 	});
+
+	it.each([
+		"text/plain",
+		"text/html; charset=utf-8",
+		"application/json",
+		"application/problem+json",
+	])(
+		"preserves ordinary UTF-8 text for %s",
+		async (contentType) => {
+			const body = '"café 🌍"';
+			const result = await fromWebResponse(
+				new Response(body, {
+					headers: { "content-type": contentType },
+				}),
+			);
+
+			expect(result.body).toBe(body);
+			expect(result.isBase64Encoded).toBe(false);
+			expect(Buffer.from(result.body, "utf8")).toEqual(
+				Buffer.from(body),
+			);
+		},
+	);
 
 	it("encodes binary responses as base64", async () => {
 		const result = await fromWebResponse(
@@ -409,16 +507,28 @@ describe("fromWebResponse", () => {
 		expect(result.isBase64Encoded).toBe(true);
 	});
 
-	it("handles empty responses without base64 encoding", async () => {
-		const result = await fromWebResponse(
-			new Response(null, { status: 204 }),
-		);
-		expect(result).toMatchObject({
-			statusCode: 204,
-			body: "",
-			isBase64Encoded: false,
-		});
-	});
+	it.each([
+		{ status: 200, body: null },
+		{ status: 200, body: "" },
+		{ status: 204, body: null },
+		{ status: 304, body: null },
+	])(
+		"handles empty responses without base64 encoding: $status, $body",
+		async ({ status, body }) => {
+			const result = await fromWebResponse(
+				new Response(body, {
+					status,
+					headers: { "content-encoding": "gzip" },
+				}),
+			);
+			expect(result).toMatchObject({
+				statusCode: status,
+				headers: { "content-encoding": "gzip" },
+				body: "",
+				isBase64Encoded: false,
+			});
+		},
+	);
 });
 
 describe("invoke", () => {

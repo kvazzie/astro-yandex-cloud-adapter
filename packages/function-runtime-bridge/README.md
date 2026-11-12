@@ -22,6 +22,25 @@ direct requests. The fallback origin does not grant that
 permission. With `apiGateway: true`, the incoming path and query
 remain the application request target.
 
+`fromWebResponse` preserves response body bytes. A nonempty
+textual body without a `Content-Encoding` header remains a plain
+string only when its bytes are valid UTF-8. The conversion keeps
+a leading UTF-8 byte order mark. Other nonempty bodies use base64
+with `isBase64Encoded: true`, including compressed text and
+non-UTF-8 text. The bridge does not decompress or transcode the
+body. Empty bodies remain `""` with `isBase64Encoded: false`.
+Status and headers are retained, with separate `Set-Cookie`
+values in `multiValueHeaders`.
+
+This follows the documented
+[Cloud Functions response contract](https://yandex.cloud/en/docs/functions/concepts/function-invoke#response)
+used with direct HTTPS invocation and the
+[API Gateway Cloud Functions integration](https://yandex.cloud/en/docs/api-gateway/concepts/extensions/cloud-functions).
+Base64 contributes to the provider's
+[3.5 MB JSON response limit](https://yandex.cloud/en/docs/functions/concepts/limits).
+Local byte round-trip tests do not establish real-cloud
+conformance.
+
 `invoke` returns an Effect and calls a supplied renderer with the
 `Request`, trusted client address, and original
 `{ event, context }`. It translates the renderer's `Response` to
