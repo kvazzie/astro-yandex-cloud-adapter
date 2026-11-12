@@ -186,12 +186,14 @@ procedures remain unverified in Yandex Cloud.
   and run that same command there.
 
 Install metadata preserves installed versions, nested package
-contexts, and required peers. Installed optional peers are
-included; absent optional peers are not selected. A missing
-required peer produces an actionable error instead of selecting
-an uninstalled version or removing its required declaration.
-Package metadata need not be exported or have a CommonJS
-entrypoint.
+contexts, and required peers. Shared packages can use one hoisted
+location when their actual peer instances match; equal versions
+at different installed paths are not interchangeable. Installed
+optional peers are included; absent optional peers are not
+selected. A missing required peer produces an actionable error
+instead of selecting an uninstalled version or removing its
+required declaration. Package metadata need not be exported or
+have a CommonJS entrypoint.
 
 The adapter and emitted Function entry/chunks are ESM;
 third-party packages installed in `node_modules` may use CommonJS

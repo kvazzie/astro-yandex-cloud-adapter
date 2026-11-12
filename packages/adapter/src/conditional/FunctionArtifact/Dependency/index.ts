@@ -20,7 +20,6 @@ interface DependencySource {
 	directory?: string;
 	lockLocation?: string;
 	metadata?: RegistryVersionMetadata;
-	hasPeers?: boolean;
 }
 
 interface InstalledPackage extends DependencySource {
@@ -47,73 +46,31 @@ export async function resolvePinnedRuntimeDependencies(
 	>();
 	const pending: string[] = [];
 	const roots: string[] = [];
-	const metadataCache = new Map<
+	type Child = {
+		name: string;
+		source: DependencySource;
+		optional: boolean;
+	};
+	// Peer checks must not depend on whether their child nodes have been queued yet.
+	const resolvedSources = new Map<
 		string,
-		Promise<RegistryVersionMetadata>
+		Promise<{
+			metadata: RegistryVersionMetadata;
+			children: Child[];
+		}>
 	>();
 	const identity = (name: string, source: DependencySource) =>
 		source.directory ??
 		source.lockLocation ??
 		`${name}@${source.version}`;
-	const place = (
-		name: string,
+	const resolveSource = (
+		packageName: string,
 		source: DependencySource,
-		parent = "",
-	): string => {
-		let ancestor = parent;
-		while (true) {
-			const location = `${ancestor ? `${ancestor}/` : ""}node_modules/${name}`;
-			const existing = nodes.get(location);
-			if (existing) {
-				if (
-					identity(name, existing.source) ===
-					identity(name, source)
-				)
-					return location;
-				break;
-			}
-			if (!ancestor) break;
-			ancestor = parentLocation(ancestor);
-		}
-		const key = identity(name, source);
-		const ancestry = nodes.get(parent)?.ancestry ?? [];
-		if (ancestry.includes(key))
-			throw new Error(
-				`The "install" dependency strategy cannot preserve the installed dependency cycle at ${name}@${source.version}: a different installed context shadows the earlier instance. Artifact generation stopped before expanding another copy. Use "bundle" where supported or change the installed layout; no dependency versions were reselected.`,
-			);
-		const root = `node_modules/${name}`;
-		// Peer-dependent packages must remain beside the requesting scope's peer instances.
-		const location =
-			nodes.has(root) || (parent && source.hasPeers)
-				? `${parent}/node_modules/${name}`
-				: root;
-		nodes.set(location, {
-			source,
-			dependency: { name, location, version: source.version },
-			edges: [],
-			ancestry: [...ancestry, key],
-		});
-		pending.push(location);
-		return location;
-	};
-	for (const name of [...directDependencyNames].sort(
-		compareNames,
-	)) {
-		const source = await findInstalledPackage(
-			appManifestPath,
-			name,
-		);
-		if (!source) throw unresolved(name);
-		roots.push(place(name, source));
-	}
-	while (pending.length) {
-		const location = pending.shift()!;
-		const node = nodes.get(location)!;
-		const { source, dependency } = node;
-		const key = identity(dependency.name, source);
-		let metadataPromise = metadataCache.get(key);
-		if (!metadataPromise) {
-			metadataPromise = (async () => {
+	) => {
+		const key = identity(packageName, source);
+		let result = resolvedSources.get(key);
+		if (!result) {
+			result = (async () => {
 				const local = source.directory
 					? await readJsonFile<PackageJson>(
 							join(source.directory, "package.json"),
@@ -127,16 +84,16 @@ export async function resolvePinnedRuntimeDependencies(
 									.join("/")
 							]
 						: undefined;
-				const metadata =
+				const selected =
 					source.metadata ??
 					(entry?.version === source.version
 						? entry
 						: await registry.resolve(
-								dependency.name,
+								packageName,
 								source.version,
 							));
-				return {
-					...metadata,
+				const metadata = {
+					...selected,
 					...Object.fromEntries(
 						[
 							"dependencies",
@@ -150,10 +107,255 @@ export async function resolvePinnedRuntimeDependencies(
 						),
 					),
 				};
+				const children: Child[] = [];
+				const ranges = new Map<
+					string,
+					{ range: string; optional: boolean; peer: boolean }
+				>();
+				for (const [name, range] of Object.entries(
+					metadata.peerDependencies ?? {},
+				))
+					ranges.set(name, {
+						range,
+						optional:
+							metadata.peerDependenciesMeta?.[name]?.optional ===
+							true,
+						peer: true,
+					});
+				for (const [name, range] of Object.entries(
+					metadata.dependencies ?? {},
+				))
+					ranges.set(name, {
+						range,
+						optional: false,
+						peer: false,
+					});
+				for (const [name, range] of Object.entries(
+					metadata.optionalDependencies ?? {},
+				))
+					ranges.set(name, {
+						range,
+						optional: true,
+						peer: false,
+					});
+				for (const [name, { range, optional, peer }] of [
+					...ranges,
+				].sort(([a], [b]) => compareNames(a, b))) {
+					let locked =
+						!source.directory && source.lockLocation && lock
+							? findLockedPackage(
+									lock,
+									source.lockLocation,
+									name,
+								)
+							: undefined;
+					let child: DependencySource | undefined = locked
+						? {
+								version: locked.metadata.version!,
+								metadata: locked.metadata,
+								lockLocation: locked.location,
+							}
+						: await findInstalledPackage(
+								join(
+									source.directory ??
+										source.lockLocation ??
+										appDirectory,
+									"package.json",
+								),
+								name,
+							);
+					if (child && !semver.satisfies(child.version, range))
+						throw unresolved(name, packageName, range);
+					if (!child) {
+						if (peer && optional) continue;
+						if (source.directory && !optional)
+							throw unresolved(name, packageName, range, peer);
+						locked = lock
+							? findLockedPackage(
+									lock,
+									source.directory ??
+										source.lockLocation ??
+										appDirectory,
+									name,
+								)
+							: undefined;
+						const childMetadata =
+							locked?.metadata ??
+							(await registry.resolve(name, range));
+						const version =
+							childMetadata.version ?? semver.valid(range);
+						if (!version)
+							throw new Error(
+								`The "install" dependency strategy cannot pin ${name}@${range} to an exact version.`,
+							);
+						if (!semver.satisfies(version, range))
+							throw unresolved(name, packageName, range);
+						child = {
+							version,
+							metadata: childMetadata,
+							...(locked
+								? { lockLocation: locked.location }
+								: {}),
+						};
+					}
+					children.push({ name, source: child, optional });
+				}
+				return { metadata, children };
 			})();
-			metadataCache.set(key, metadataPromise);
+			resolvedSources.set(key, result);
 		}
-		const metadata = await metadataPromise;
+		return result;
+	};
+	const packageLocation = (scope: string, name: string) =>
+		`${scope ? `${scope}/` : ""}node_modules/${name}`;
+	// Installed bindings constrain peers even before their output nodes are emitted.
+	const contexts = new Map<string, string | undefined>();
+	const installedSources = new Map<
+		string,
+		Promise<DependencySource | undefined>
+	>();
+	const sourceAt = (scope: string, name: string) => {
+		const location = packageLocation(scope, name);
+		let result = installedSources.get(location);
+		if (!result) {
+			result = (async () => {
+				const owner = nodes.get(scope)?.source;
+				const locked =
+					!owner?.directory && owner?.lockLocation && lock
+						? findLockedPackage(lock, owner.lockLocation, name)
+						: undefined;
+				if (locked)
+					return {
+						version: locked.metadata.version!,
+						metadata: locked.metadata,
+						lockLocation: locked.location,
+					};
+				return findInstalledPackage(
+					scope
+						? join(
+								owner?.directory ??
+									owner?.lockLocation ??
+									appDirectory,
+								"package.json",
+							)
+						: appManifestPath,
+					name,
+				);
+			})();
+			installedSources.set(location, result);
+		}
+		return result;
+	};
+	const contextIdentity = async (
+		scope: string,
+		name: string,
+	) => {
+		const location = packageLocation(scope, name);
+		if (!contexts.has(location)) {
+			const installed = await sourceAt(scope, name);
+			if (installed)
+				contexts.set(location, identity(name, installed));
+		}
+		return contexts.get(location);
+	};
+	const place = async (
+		name: string,
+		source: DependencySource,
+		parent = "",
+	): Promise<string> => {
+		let ancestor = parent;
+		const available: string[] = [];
+		while (true) {
+			const location = packageLocation(ancestor, name);
+			const existing = nodes.get(location);
+			if (existing) {
+				if (
+					identity(name, existing.source) ===
+					identity(name, source)
+				)
+					return location;
+				break;
+			}
+			available.push(ancestor);
+			if (!ancestor) break;
+			ancestor = parentLocation(ancestor);
+		}
+		const key = identity(name, source);
+		const ancestry = nodes.get(parent)?.ancestry ?? [];
+		if (ancestry.includes(key))
+			throw new Error(
+				`The "install" dependency strategy cannot preserve the installed dependency cycle at ${name}@${source.version}: a different installed context shadows the earlier instance. Artifact generation stopped before expanding another copy. Use "bundle" where supported or change the installed layout; no dependency versions were reselected.`,
+			);
+		const { metadata, children } = await resolveSource(
+			name,
+			source,
+		);
+		const peers = Object.keys(
+			metadata.peerDependencies ?? {},
+		).map((peer) => {
+			const child = children.find(({ name }) => name === peer);
+			return [
+				peer,
+				child ? identity(peer, child.source) : undefined,
+			] as const;
+		});
+		let scope = parent;
+		let compatible = false;
+		for (const candidate of available.toReversed()) {
+			const actual = await contextIdentity(candidate, name);
+			if (
+				contexts.has(packageLocation(candidate, name)) &&
+				actual !== key
+			)
+				continue;
+			let peersMatch = true;
+			for (const [peer, expected] of peers) {
+				const actual = await contextIdentity(candidate, peer);
+				if (
+					contexts.has(packageLocation(candidate, peer)) &&
+					actual !== expected
+				)
+					peersMatch = false;
+			}
+			if (peersMatch) {
+				scope = candidate;
+				compatible = true;
+				break;
+			}
+		}
+		const location = packageLocation(scope, name);
+		contexts.set(location, key);
+		// Children must not shadow this package's own peers, including optional absence.
+		for (const [peer, expected] of peers)
+			contexts.set(packageLocation(location, peer), expected);
+		// Reserve peer identities before their nodes are discovered, including optional absence.
+		if (compatible)
+			for (const [peer, expected] of peers)
+				contexts.set(packageLocation(scope, peer), expected);
+		nodes.set(location, {
+			source,
+			dependency: { name, location, version: source.version },
+			edges: [],
+			ancestry: [...ancestry, key],
+		});
+		pending.push(location);
+		return location;
+	};
+	for (const name of [...directDependencyNames].sort(
+		compareNames,
+	)) {
+		const source = await sourceAt("", name);
+		if (!source) throw unresolved(name);
+		roots.push(await place(name, source));
+	}
+	while (pending.length) {
+		const location = pending.shift()!;
+		const node = nodes.get(location)!;
+		const { source, dependency } = node;
+		const { metadata, children } = await resolveSource(
+			dependency.name,
+			source,
+		);
 		for (const field of [
 			"resolved",
 			"integrity",
@@ -170,89 +372,8 @@ export async function resolvePinnedRuntimeDependencies(
 		const dependencies: Record<string, string> = {};
 		const optionalDependencies: Record<string, string> = {};
 		const peerDependencies = { ...metadata.peerDependencies };
-		const ranges = new Map<
-			string,
-			{ range: string; optional: boolean; peer: boolean }
-		>();
-		for (const [name, range] of Object.entries(
-			metadata.peerDependencies ?? {},
-		))
-			ranges.set(name, {
-				range,
-				optional:
-					metadata.peerDependenciesMeta?.[name]?.optional ===
-					true,
-				peer: true,
-			});
-		for (const [name, range] of Object.entries(
-			metadata.dependencies ?? {},
-		))
-			ranges.set(name, { range, optional: false, peer: false });
-		for (const [name, range] of Object.entries(
-			metadata.optionalDependencies ?? {},
-		))
-			ranges.set(name, { range, optional: true, peer: false });
-		for (const [name, { range, optional, peer }] of [
-			...ranges,
-		].sort(([a], [b]) => compareNames(a, b))) {
-			let locked =
-				!source.directory && source.lockLocation && lock
-					? findLockedPackage(lock, source.lockLocation, name)
-					: undefined;
-			let child: DependencySource | undefined = locked
-				? {
-						version: locked.metadata.version!,
-						metadata: locked.metadata,
-						lockLocation: locked.location,
-						hasPeers:
-							Object.keys(locked.metadata.peerDependencies ?? {})
-								.length > 0,
-					}
-				: await findInstalledPackage(
-						join(
-							source.directory ??
-								source.lockLocation ??
-								appDirectory,
-							"package.json",
-						),
-						name,
-					);
-			if (child && !semver.satisfies(child.version, range))
-				throw unresolved(name, dependency.name, range);
-			if (!child) {
-				if (peer && optional) continue;
-				if (source.directory && !optional)
-					throw unresolved(name, dependency.name, range, peer);
-				locked = lock
-					? findLockedPackage(
-							lock,
-							source.directory ??
-								source.lockLocation ??
-								appDirectory,
-							name,
-						)
-					: undefined;
-				const childMetadata =
-					locked?.metadata ??
-					(await registry.resolve(name, range));
-				const version =
-					childMetadata.version ?? semver.valid(range);
-				if (!version)
-					throw new Error(
-						`The "install" dependency strategy cannot pin ${name}@${range} to an exact version.`,
-					);
-				if (!semver.satisfies(version, range))
-					throw unresolved(name, dependency.name, range);
-				child = {
-					version,
-					metadata: childMetadata,
-					hasPeers:
-						Object.keys(childMetadata.peerDependencies ?? {})
-							.length > 0,
-					...(locked ? { lockLocation: locked.location } : {}),
-				};
-			}
-			const childLocation = place(name, child, location);
+		for (const { name, source: child, optional } of children) {
+			const childLocation = await place(name, child, location);
 			node.edges.push({ location: childLocation, optional });
 			(optional ? optionalDependencies : dependencies)[name] =
 				child.version;
@@ -323,9 +444,6 @@ async function findInstalledPackage(
 			return {
 				version: manifest.version,
 				directory: await realpath(directory),
-				hasPeers:
-					Object.keys(manifest.peerDependencies ?? {}).length >
-					0,
 			};
 		}
 	}

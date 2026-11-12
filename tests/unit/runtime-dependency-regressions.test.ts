@@ -143,18 +143,276 @@ describe("runtime dependency regressions", () => {
 				packages: Record<string, RegistryVersionMetadata>;
 			};
 			expect(
-				lock.packages["node_modules/alpha/node_modules/renderer"]
-					?.peerDependencies,
+				lock.packages["node_modules/renderer"]?.peerDependencies,
 			).toEqual({ peer: "1.0.0" });
 			expect(
 				lock.packages["node_modules/beta/node_modules/renderer"]
 					?.peerDependencies,
 			).toEqual({ peer: "2.0.0" });
 			expect(
-				lock.packages[
-					"node_modules/beta/node_modules/renderer/node_modules/peer"
-				]?.version,
+				lock.packages["node_modules/beta/node_modules/peer"]
+					?.version,
 			).toBe("2.0.0");
+			expect(lock.packages["node_modules/peer"]?.version).toBe(
+				"1.0.0",
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it.each(
+		[
+			{
+				rootPeer: true,
+				matching: true,
+				directPeer: true,
+				nested: false,
+			},
+			{
+				rootPeer: false,
+				matching: true,
+				directPeer: false,
+				nested: false,
+			},
+			{
+				rootPeer: true,
+				matching: false,
+				directPeer: false,
+				nested: false,
+			},
+			{
+				rootPeer: true,
+				matching: true,
+				directPeer: false,
+				nested: true,
+			},
+		].flatMap((options) =>
+			["a-peer", "z-peer"].map((peerName) => ({
+				...options,
+				peerName,
+			})),
+		),
+	)(
+		"preserves actual sibling peer identities regardless of discovery order: %j",
+		async ({
+			rootPeer,
+			matching,
+			directPeer,
+			nested,
+			peerName,
+		}) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-sibling-peers-"),
+			);
+			try {
+				for (const [name, manifest] of Object.entries({
+					"peer-a": { name: peerName, version: "1.0.0" },
+					"peer-b": { name: peerName, version: "1.0.0" },
+					"shared-a": {
+						name: "a-shared",
+						version: "1.0.0",
+						peerDependencies: { [peerName]: "1.0.0" },
+					},
+					"shared-b": {
+						name: "a-shared",
+						version: "1.0.0",
+						peerDependencies: { [peerName]: "1.0.0" },
+					},
+				})) {
+					const directory = join(root, "installed", name);
+					await mkdir(join(directory, "node_modules"), {
+						recursive: true,
+					});
+					await writeFile(
+						join(directory, "package.json"),
+						JSON.stringify(manifest),
+					);
+				}
+				for (const context of ["a", "b"])
+					await symlink(
+						join(root, "installed", `peer-${context}`),
+						join(
+							root,
+							"installed",
+							`shared-${context}`,
+							"node_modules",
+							peerName,
+						),
+						"dir",
+					);
+				const parents = nested
+					? join(root, "node_modules/container/node_modules")
+					: join(root, "node_modules");
+				if (nested) {
+					await mkdir(parents, { recursive: true });
+					await writeFile(
+						join(root, "node_modules/container/package.json"),
+						JSON.stringify({
+							name: "container",
+							version: "1.0.0",
+							dependencies: {
+								alpha: "1.0.0",
+								beta: "1.0.0",
+								[peerName]: "1.0.0",
+							},
+						}),
+					);
+					await symlink(
+						join(root, "installed/peer-a"),
+						join(parents, peerName),
+						"dir",
+					);
+					for (const name of ["alpha", "beta"]) {
+						await mkdir(join(root, "node_modules", name));
+						await writeFile(
+							join(root, "node_modules", name, "package.json"),
+							JSON.stringify({ name, version: "1.0.0" }),
+						);
+					}
+				}
+				for (const parent of ["alpha", "beta"]) {
+					const context =
+						parent === "alpha" && !matching ? "b" : "a";
+					const directory = join(parents, parent);
+					await mkdir(join(directory, "node_modules"), {
+						recursive: true,
+					});
+					await writeFile(
+						join(directory, "package.json"),
+						JSON.stringify({
+							name: parent,
+							version: "1.0.0",
+							dependencies: {
+								"a-shared": "1.0.0",
+								[peerName]: "1.0.0",
+							},
+						}),
+					);
+					await symlink(
+						join(root, "installed", `shared-${context}`),
+						join(directory, "node_modules/a-shared"),
+						"dir",
+					);
+					await symlink(
+						join(root, "installed", `peer-${context}`),
+						join(directory, "node_modules", peerName),
+						"dir",
+					);
+				}
+				if (rootPeer)
+					await symlink(
+						join(
+							root,
+							nested ? "installed/peer-b" : "installed/peer-a",
+						),
+						join(root, "node_modules", peerName),
+						"dir",
+					);
+				let previous: string | undefined;
+				for (const names of nested
+					? [["container"]]
+					: [
+							["alpha", "beta"],
+							["beta", "alpha"],
+						]) {
+					if (directPeer) names.push(peerName);
+					const graph = await resolvePinnedRuntimeDependencies(
+						pathToFileURL(`${root}/`),
+						new Set(names),
+						{ resolve: () => Promise.resolve({}) },
+					);
+					expect(
+						graph.filter(({ name }) => name === "a-shared"),
+					).toHaveLength(matching ? 1 : 2);
+					expect(
+						graph.filter(({ name }) => name === peerName),
+					).toHaveLength(matching ? 1 : 2);
+					expect(
+						graph.find(
+							({ location }) =>
+								location ===
+								(nested
+									? "node_modules/container/node_modules/a-shared"
+									: "node_modules/a-shared"),
+						),
+					).toBeDefined();
+					if (!matching)
+						expect(
+							graph.find(
+								({ location }) =>
+									location ===
+									"node_modules/alpha/node_modules/a-shared",
+							),
+						).toBeDefined();
+					const lock = formatNpmLockfile(graph);
+					if (previous) expect(lock).toBe(previous);
+					previous = lock;
+				}
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
+	it("does not introduce an absent optional peer through a child's peer context", async () => {
+		const root = await mkdtemp(
+			join(tmpdir(), "yandex-optional-peer-context-"),
+		);
+		try {
+			for (const [directory, manifest] of [
+				[
+					"node_modules/host",
+					{
+						name: "host",
+						version: "1.0.0",
+						dependencies: { renderer: "1.0.0" },
+						peerDependencies: { peer: "*" },
+						peerDependenciesMeta: { peer: { optional: true } },
+					},
+				],
+				[
+					"installed/renderer",
+					{
+						name: "renderer",
+						version: "1.0.0",
+						peerDependencies: { peer: "1.0.0" },
+					},
+				],
+				["installed/peer", { name: "peer", version: "1.0.0" }],
+			] as const) {
+				await mkdir(join(root, directory, "node_modules"), {
+					recursive: true,
+				});
+				await writeFile(
+					join(root, directory, "package.json"),
+					JSON.stringify(manifest),
+				);
+			}
+			await symlink(
+				join(root, "installed/renderer"),
+				join(root, "node_modules/host/node_modules/renderer"),
+				"dir",
+			);
+			await symlink(
+				join(root, "installed/peer"),
+				join(root, "installed/renderer/node_modules/peer"),
+				"dir",
+			);
+			const graph = await resolvePinnedRuntimeDependencies(
+				pathToFileURL(`${root}/`),
+				new Set(["host"]),
+				{ resolve: () => Promise.resolve({}) },
+			);
+			expect(
+				graph.find(({ name }) => name === "peer")?.location,
+			).toBe(
+				"node_modules/host/node_modules/renderer/node_modules/peer",
+			);
+			expect(
+				graph.find(({ name }) => name === "host")
+					?.peerDependencies,
+			).toEqual({ peer: "*" });
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

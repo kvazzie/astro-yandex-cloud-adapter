@@ -151,8 +151,15 @@ React DOM, React, send and both installed debug versions. A
 second application retains root React 18 alongside a widget's
 React 19 and React DOM 19. It uses Hooks after a clean install
 and asserts the widget and renderer resolve the same React file,
-not merely equal versions. Peer-dependent packages stay in their
-requesting scope instead of hoisting into any free root slot.
+not merely equal versions. A free root name alone does not permit
+hoisting: placement compares the actual installed peer identities
+and reserves compatible bindings before their nodes are queued.
+Matching sibling requesters retain one shared package instance
+instead of receiving separate nested copies. The real
+npm-installed singleton regression executes the clean handler and
+checks both exported object identity and resolved paths;
+equal-version peers at different installed paths remain isolated
+in the focused regressions.
 
 Lock-only child lookup precedes installed ancestor lookup, so an
 absent platform variant retains its nested locked version. A

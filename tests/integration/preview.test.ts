@@ -391,8 +391,181 @@ console.log(JSON.stringify(result));
 			}
 		});
 
+		it("preserves one peer-dependent singleton shared by sibling requesters", async () => {
+			const application = join(root, "shared-peer-singleton");
+			const tarballs: Record<string, string> = {};
+			for (const name of ["shared-cache", "alpha", "beta"]) {
+				const directory = join(root, `${name}-source`);
+				await mkdir(directory);
+				await writeFile(
+					join(directory, "package.json"),
+					JSON.stringify({
+						name,
+						version: "1.0.0",
+						type: "module",
+						exports: "./index.js",
+						...(name === "shared-cache"
+							? { peerDependencies: { react: "19.2.0" } }
+							: {
+									dependencies: {
+										"shared-cache": "1.0.0",
+									},
+								}),
+					}),
+				);
+				await writeFile(
+					join(directory, "index.js"),
+					name === "shared-cache"
+						? "import React from 'react'; export const cache={}; export const peer=React;"
+						: "export {cache,peer} from 'shared-cache';",
+				);
+				await runCommand(
+					"npm",
+					[
+						"pack",
+						"--ignore-scripts",
+						"--pack-destination",
+						root,
+					],
+					{ cwd: directory },
+				);
+				tarballs[name] =
+					`file:${join(root, `${name}-1.0.0.tgz`)}`;
+			}
+			await mkdir(join(application, "src/pages"), {
+				recursive: true,
+			});
+			await writeFile(
+				join(application, "package.json"),
+				JSON.stringify({
+					private: true,
+					type: "module",
+					dependencies: {
+						alpha: tarballs.alpha,
+						beta: tarballs.beta,
+						"shared-cache": tarballs["shared-cache"],
+						react: "19.2.0",
+					},
+				}),
+			);
+			await runCommand(
+				"npm",
+				[
+					"install",
+					"--ignore-scripts",
+					"--no-audit",
+					"--no-fund",
+				],
+				{ cwd: application },
+			);
+			const source =
+				"import {cache as a,peer as ap} from 'alpha'; import {cache as b,peer as bp} from 'beta'; import React from 'react';";
+			const original = await runCommand(
+				process.execPath,
+				[
+					"--input-type=module",
+					"-e",
+					`${source} console.log(JSON.stringify({cache:a===b,peer:ap===bp && ap===React}));`,
+				],
+				{ cwd: application },
+			);
+			expect(
+				JSON.parse(original.stdout.trim()) as unknown,
+			).toEqual({ cache: true, peer: true });
+			const originalRequire = createRequire(
+				join(application, "package.json"),
+			);
+			expect(
+				createRequire(originalRequire.resolve("alpha")).resolve(
+					"shared-cache",
+				),
+			).toBe(
+				createRequire(originalRequire.resolve("beta")).resolve(
+					"shared-cache",
+				),
+			);
+			await writeFile(
+				join(application, "src/pages/shared.ts"),
+				`${source} export const GET=()=>new Response(JSON.stringify({cache:a===b,peer:ap===bp && ap===React}));`,
+			);
+			await writeFile(
+				join(application, "astro.config.mjs"),
+				"import adapter from '@astro-yandex-cloud/adapter'; import {passthroughImageService} from 'astro/config'; export default {output:'server',image:{service:passthroughImageService()},adapter:adapter({target:'object-storage-functions',apiGateway:true,dependencyStrategy:'install'})};",
+			);
+			await astro.build({
+				root: `${application}/`,
+				logLevel: "silent",
+			});
+			const isolated = await mkdtemp(
+				join(tmpdir(), "yandex-shared-singleton-"),
+			);
+			try {
+				await cp(join(application, "dist/function"), isolated, {
+					recursive: true,
+				});
+				const before = await readFile(
+					join(isolated, "package-lock.json"),
+					"utf8",
+				);
+				await runCommand(
+					"npm",
+					[
+						"ci",
+						"--production",
+						"--ignore-scripts",
+						"--no-audit",
+						"--no-fund",
+					],
+					{ cwd: isolated },
+				);
+				expect(
+					await readFile(
+						join(isolated, "package-lock.json"),
+						"utf8",
+					),
+				).toBe(before);
+				const { stdout } = await runCommand(
+					process.execPath,
+					[
+						"--input-type=module",
+						"-e",
+						`
+import {handler} from './index.js';
+const result=await handler({url:'/shared',httpMethod:'GET',headers:{host:'fixture.example'}},{getPayload:()=>undefined,getRemainingTimeInMillis:()=>30000});
+console.log(JSON.stringify(result));
+`,
+					],
+					{ cwd: isolated },
+				);
+				expect(
+					JSON.parse(stdout.trim()) as unknown,
+				).toMatchObject({
+					statusCode: 200,
+					body: '{"cache":true,"peer":true}',
+				});
+				const require = createRequire(
+					join(isolated, "index.js"),
+				);
+				expect(
+					createRequire(require.resolve("alpha")).resolve(
+						"shared-cache",
+					),
+				).toBe(
+					createRequire(require.resolve("beta")).resolve(
+						"shared-cache",
+					),
+				);
+			} finally {
+				await rm(isolated, { recursive: true, force: true });
+			}
+		});
+
 		it("preserves the React peer instance shared by a nested widget and React DOM", async () => {
-			const widget = join(root, "peer-widget-source");
+			const rootReact = "18.3.1";
+			const widget = join(
+				root,
+				`peer-widget-source-${rootReact}`,
+			);
 			await mkdir(widget);
 			await writeFile(
 				join(widget, "package.json"),
@@ -423,7 +596,10 @@ export const render = () => renderToStaticMarkup(React.createElement(function Wi
 				["pack", "--ignore-scripts", "--pack-destination", root],
 				{ cwd: widget },
 			);
-			const application = join(root, "peer-identity");
+			const application = join(
+				root,
+				`peer-identity-${rootReact}`,
+			);
 			await mkdir(join(application, "src/pages"), {
 				recursive: true,
 			});
@@ -433,7 +609,7 @@ export const render = () => renderToStaticMarkup(React.createElement(function Wi
 					private: true,
 					type: "module",
 					dependencies: {
-						react: "18.3.1",
+						react: rootReact,
 						"peer-widget": `file:${join(root, "peer-widget-1.0.0.tgz")}`,
 					},
 				}),
@@ -458,6 +634,20 @@ export const render = () => renderToStaticMarkup(React.createElement(function Wi
 				{ cwd: application },
 			);
 			expect(original.stdout.trim()).toBe("<p>shared-peer</p>");
+			const originalRequire = createRequire(
+				join(application, "package.json"),
+			);
+			const originalWidget = createRequire(
+				originalRequire.resolve("peer-widget"),
+			);
+			expect(
+				createRequire(
+					originalWidget.resolve("react-dom/server"),
+				).resolve("react"),
+			).toBe(originalWidget.resolve("react"));
+			expect(originalWidget.resolve("react")).not.toBe(
+				originalRequire.resolve("react"),
+			);
 			await writeFile(
 				join(application, "src/pages/identity.ts"),
 				"import React from 'react'; import {render} from 'peer-widget'; export const GET=()=>new Response(React.version+':'+render());",
@@ -515,7 +705,7 @@ console.log(JSON.stringify(result));
 					JSON.parse(stdout.trim()) as unknown,
 				).toMatchObject({
 					statusCode: 200,
-					body: "18.3.1:<p>shared-peer</p>",
+					body: `${rootReact}:<p>shared-peer</p>`,
 				});
 				const require = createRequire(
 					join(isolated, "index.js"),
@@ -528,6 +718,9 @@ console.log(JSON.stringify(result));
 				);
 				expect(rendererRequire.resolve("react")).toBe(
 					widgetRequire.resolve("react"),
+				);
+				expect(widgetRequire.resolve("react")).not.toBe(
+					require.resolve("react"),
 				);
 			} finally {
 				await rm(isolated, { recursive: true, force: true });
