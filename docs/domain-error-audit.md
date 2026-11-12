@@ -147,7 +147,21 @@ An absent platform variant uses its local npm lock selection when
 available, before registry fallback. The
 [packed-adapter regression](../tests/integration/preview.test.ts)
 performs a clean production install and executes a handler using
-React DOM, React, send and both installed debug versions.
+React DOM, React, send and both installed debug versions. A
+second application retains root React 18 alongside a widget's
+React 19 and React DOM 19. It uses Hooks after a clean install
+and asserts the widget and renderer resolve the same React file,
+not merely equal versions. Peer-dependent packages stay in their
+requesting scope instead of hoisting into any free root slot.
+
+Lock-only child lookup precedes installed ancestor lookup, so an
+absent platform variant retains its nested locked version. A
+bounded subprocess also exercises a manually symlinked,
+version-changing cycle. Reusable ancestors still terminate
+normally; an identity shadowed by another version stops before
+queueing another copy. This synthetic probe establishes a
+termination guard, not that a supported installer creates this
+layout or that cycles constitute a new Domain Error.
 
 npm documents nested installs containing multiple versions of one
 package in its

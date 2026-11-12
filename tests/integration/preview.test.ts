@@ -273,7 +273,7 @@ import send from 'send';
 import debug from 'debug';
 import hidden from 'hidden-import-only';
 import feature from 'hidden-subpath-only/feature';
-import {createRequire as make} from 'node:module';
+const {createRequire: make} = await import('node:module');
 const req = make(import.meta.url);
 export const GET = () => new Response(JSON.stringify({
   peer: renderToStaticMarkup('peer-ok'), send: typeof send, debug: typeof debug,
@@ -386,6 +386,149 @@ console.log(JSON.stringify(result));
 					feature: "hidden-subpath-only",
 				});
 				expect(body.id).toMatch(/^[\w-]{21}$/);
+			} finally {
+				await rm(isolated, { recursive: true, force: true });
+			}
+		});
+
+		it("preserves the React peer instance shared by a nested widget and React DOM", async () => {
+			const widget = join(root, "peer-widget-source");
+			await mkdir(widget);
+			await writeFile(
+				join(widget, "package.json"),
+				JSON.stringify({
+					name: "peer-widget",
+					version: "1.0.0",
+					type: "module",
+					exports: "./index.js",
+					dependencies: {
+						react: "19.2.0",
+						"react-dom": "19.2.0",
+					},
+				}),
+			);
+			await writeFile(
+				join(widget, "index.js"),
+				`
+import React from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+export const render = () => renderToStaticMarkup(React.createElement(function Widget() {
+ const [state] = React.useState('shared-peer');
+ return React.createElement('p', null, state);
+}));
+`,
+			);
+			await runCommand(
+				"npm",
+				["pack", "--ignore-scripts", "--pack-destination", root],
+				{ cwd: widget },
+			);
+			const application = join(root, "peer-identity");
+			await mkdir(join(application, "src/pages"), {
+				recursive: true,
+			});
+			await writeFile(
+				join(application, "package.json"),
+				JSON.stringify({
+					private: true,
+					type: "module",
+					dependencies: {
+						react: "18.3.1",
+						"peer-widget": `file:${join(root, "peer-widget-1.0.0.tgz")}`,
+					},
+				}),
+			);
+			await runCommand(
+				"npm",
+				[
+					"install",
+					"--ignore-scripts",
+					"--no-audit",
+					"--no-fund",
+				],
+				{ cwd: application },
+			);
+			const original = await runCommand(
+				process.execPath,
+				[
+					"--input-type=module",
+					"-e",
+					"import {render} from 'peer-widget'; console.log(render());",
+				],
+				{ cwd: application },
+			);
+			expect(original.stdout.trim()).toBe("<p>shared-peer</p>");
+			await writeFile(
+				join(application, "src/pages/identity.ts"),
+				"import React from 'react'; import {render} from 'peer-widget'; export const GET=()=>new Response(React.version+':'+render());",
+			);
+			await writeFile(
+				join(application, "astro.config.mjs"),
+				"import adapter from '@astro-yandex-cloud/adapter'; import {passthroughImageService} from 'astro/config'; export default {output:'server',image:{service:passthroughImageService()},adapter:adapter({target:'object-storage-functions',apiGateway:true,dependencyStrategy:'install'})};",
+			);
+			await astro.build({
+				root: `${application}/`,
+				logLevel: "silent",
+			});
+			const isolated = await mkdtemp(
+				join(tmpdir(), "yandex-peer-identity-"),
+			);
+			try {
+				await cp(join(application, "dist/function"), isolated, {
+					recursive: true,
+				});
+				const before = await readFile(
+					join(isolated, "package-lock.json"),
+					"utf8",
+				);
+				await runCommand(
+					"npm",
+					[
+						"ci",
+						"--production",
+						"--ignore-scripts",
+						"--no-audit",
+						"--no-fund",
+					],
+					{ cwd: isolated },
+				);
+				expect(
+					await readFile(
+						join(isolated, "package-lock.json"),
+						"utf8",
+					),
+				).toBe(before);
+				const { stdout } = await runCommand(
+					process.execPath,
+					[
+						"--input-type=module",
+						"-e",
+						`
+import {handler} from './index.js';
+const result=await handler({url:'/identity',httpMethod:'GET',headers:{host:'fixture.example'}},{getPayload:()=>undefined,getRemainingTimeInMillis:()=>30000});
+console.log(JSON.stringify(result));
+`,
+					],
+					{ cwd: isolated },
+				);
+				expect(
+					JSON.parse(stdout.trim()) as unknown,
+				).toMatchObject({
+					statusCode: 200,
+					body: "18.3.1:<p>shared-peer</p>",
+				});
+				const require = createRequire(
+					join(isolated, "index.js"),
+				);
+				const widgetRequire = createRequire(
+					require.resolve("peer-widget"),
+				);
+				const rendererRequire = createRequire(
+					widgetRequire.resolve("react-dom/server"),
+				);
+				expect(rendererRequire.resolve("react")).toBe(
+					widgetRequire.resolve("react"),
+				);
 			} finally {
 				await rm(isolated, { recursive: true, force: true });
 			}

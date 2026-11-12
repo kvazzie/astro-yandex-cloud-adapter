@@ -20,6 +20,7 @@ interface DependencySource {
 	directory?: string;
 	lockLocation?: string;
 	metadata?: RegistryVersionMetadata;
+	hasPeers?: boolean;
 }
 
 interface InstalledPackage extends DependencySource {
@@ -41,6 +42,7 @@ export async function resolvePinnedRuntimeDependencies(
 			source: DependencySource;
 			dependency: ResolvedRuntimeDependency;
 			edges: Array<{ location: string; optional: boolean }>;
+			ancestry: string[];
 		}
 	>();
 	const pending: string[] = [];
@@ -73,14 +75,23 @@ export async function resolvePinnedRuntimeDependencies(
 			if (!ancestor) break;
 			ancestor = parentLocation(ancestor);
 		}
+		const key = identity(name, source);
+		const ancestry = nodes.get(parent)?.ancestry ?? [];
+		if (ancestry.includes(key))
+			throw new Error(
+				`The "install" dependency strategy cannot preserve the installed dependency cycle at ${name}@${source.version}: a different installed context shadows the earlier instance. Artifact generation stopped before expanding another copy. Use "bundle" where supported or change the installed layout; no dependency versions were reselected.`,
+			);
 		const root = `node_modules/${name}`;
-		const location = nodes.has(root)
-			? `${parent}/node_modules/${name}`
-			: root;
+		// Peer-dependent packages must remain beside the requesting scope's peer instances.
+		const location =
+			nodes.has(root) || (parent && source.hasPeers)
+				? `${parent}/node_modules/${name}`
+				: root;
 		nodes.set(location, {
 			source,
 			dependency: { name, location, version: source.version },
 			edges: [],
+			ancestry: [...ancestry, key],
 		});
 		pending.push(location);
 		return location;
@@ -184,23 +195,35 @@ export async function resolvePinnedRuntimeDependencies(
 		for (const [name, { range, optional, peer }] of [
 			...ranges,
 		].sort(([a], [b]) => compareNames(a, b))) {
-			let child: DependencySource | undefined =
-				await findInstalledPackage(
-					join(
-						source.directory ??
-							source.lockLocation ??
-							appDirectory,
-						"package.json",
-					),
-					name,
-				);
+			let locked =
+				!source.directory && source.lockLocation && lock
+					? findLockedPackage(lock, source.lockLocation, name)
+					: undefined;
+			let child: DependencySource | undefined = locked
+				? {
+						version: locked.metadata.version!,
+						metadata: locked.metadata,
+						lockLocation: locked.location,
+						hasPeers:
+							Object.keys(locked.metadata.peerDependencies ?? {})
+								.length > 0,
+					}
+				: await findInstalledPackage(
+						join(
+							source.directory ??
+								source.lockLocation ??
+								appDirectory,
+							"package.json",
+						),
+						name,
+					);
 			if (child && !semver.satisfies(child.version, range))
 				throw unresolved(name, dependency.name, range);
 			if (!child) {
 				if (peer && optional) continue;
 				if (source.directory && !optional)
-					throw unresolved(name, dependency.name, range);
-				const locked = lock
+					throw unresolved(name, dependency.name, range, peer);
+				locked = lock
 					? findLockedPackage(
 							lock,
 							source.directory ??
@@ -223,6 +246,9 @@ export async function resolvePinnedRuntimeDependencies(
 				child = {
 					version,
 					metadata: childMetadata,
+					hasPeers:
+						Object.keys(childMetadata.peerDependencies ?? {})
+							.length > 0,
 					...(locked ? { lockLocation: locked.location } : {}),
 				};
 			}
@@ -265,9 +291,10 @@ function unresolved(
 	name: string,
 	parent?: string,
 	range?: string,
+	peer = false,
 ): Error {
 	return new Error(
-		`The "install" dependency strategy cannot resolve the runtime package "${name}"${parent ? ` (required by "${parent}" as "${range}")` : " imported by the Function Artifact"}. Install a matching application dependency so its exact version can be written to the Function Artifact.`,
+		`The "install" dependency strategy cannot resolve ${peer ? "the required runtime peer" : "the runtime package"} "${name}"${parent ? ` (required by "${parent}" as "${range}")` : " imported by the Function Artifact"}. Install a matching application dependency so its exact version can be written to the Function Artifact.`,
 	);
 }
 
@@ -296,6 +323,9 @@ async function findInstalledPackage(
 			return {
 				version: manifest.version,
 				directory: await realpath(directory),
+				hasPeers:
+					Object.keys(manifest.peerDependencies ?? {}).length >
+					0,
 			};
 		}
 	}

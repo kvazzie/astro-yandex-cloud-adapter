@@ -5,8 +5,10 @@ import {
 	symlink,
 	writeFile,
 } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -141,7 +143,8 @@ describe("runtime dependency regressions", () => {
 				packages: Record<string, RegistryVersionMetadata>;
 			};
 			expect(
-				lock.packages["node_modules/renderer"]?.peerDependencies,
+				lock.packages["node_modules/alpha/node_modules/renderer"]
+					?.peerDependencies,
 			).toEqual({ peer: "1.0.0" });
 			expect(
 				lock.packages["node_modules/beta/node_modules/renderer"]
@@ -211,11 +214,205 @@ describe("runtime dependency regressions", () => {
 		}
 	});
 
+	it.each(["1 || 2", "^2.0.0"])(
+		"prefers the locked nested child of an absent variant for %s",
+		async (range) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-locked-child-"),
+			);
+			try {
+				for (const name of ["native", "helper"]) {
+					await mkdir(join(root, "node_modules", name), {
+						recursive: true,
+					});
+					await writeFile(
+						join(root, "node_modules", name, "package.json"),
+						JSON.stringify({ name, version: "1.0.0" }),
+					);
+				}
+				await writeFile(
+					join(root, "package-lock.json"),
+					JSON.stringify({
+						packages: {
+							"node_modules/native": {
+								version: "1.0.0",
+								optionalDependencies: { variant: "1.0.0" },
+							},
+							"node_modules/helper": { version: "1.0.0" },
+							"node_modules/variant": {
+								version: "1.0.0",
+								os: ["darwin"],
+								dependencies: { helper: range },
+							},
+							"node_modules/variant/node_modules/helper": {
+								version: "2.0.0",
+							},
+						},
+					}),
+				);
+				const graph = await resolvePinnedRuntimeDependencies(
+					pathToFileURL(`${root}/`),
+					new Set(["native", "helper"]),
+					{
+						resolve: () => {
+							throw new Error("must use the exact lock graph");
+						},
+					},
+				);
+				expect(
+					graph.find(
+						({ location }) =>
+							location ===
+							"node_modules/variant/node_modules/helper",
+					),
+				).toMatchObject({ version: "2.0.0", optional: true });
+				expect(
+					graph.find(
+						({ location }) => location === "node_modules/helper",
+					),
+				).toMatchObject({ version: "1.0.0" });
+				expect(
+					graph.find(({ name }) => name === "variant"),
+				).toMatchObject({ optional: true, os: ["darwin"] });
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
+	it.each([true, false])(
+		"terminates symlink cycles without banning reusable ancestors (conflicting=%s)",
+		async (conflicting) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-cycle-"),
+			);
+			const edges: [string, string][] = conflicting
+				? [
+						["a1", "b1"],
+						["b1", "a2"],
+						["a2", "b2"],
+						["b2", "a1"],
+					]
+				: [
+						["a1", "b1"],
+						["b1", "a1"],
+					];
+			try {
+				for (const [id, child] of edges) {
+					const directory = join(root, "installed", id);
+					await mkdir(join(directory, "node_modules"), {
+						recursive: true,
+					});
+					await writeFile(
+						join(directory, "package.json"),
+						JSON.stringify({
+							name: id[0],
+							version: `${id[1]}.0.0`,
+							dependencies: { [child[0]!]: `${child[1]}.0.0` },
+						}),
+					);
+				}
+				for (const [id, child] of edges)
+					await symlink(
+						join(root, "installed", child),
+						join(
+							root,
+							"installed",
+							id,
+							"node_modules",
+							child[0]!,
+						),
+						"dir",
+					);
+				await mkdir(join(root, "node_modules"));
+				await symlink(
+					join(root, "installed/a1"),
+					join(root, "node_modules/a"),
+					"dir",
+				);
+				const { stdout } = await promisify(execFile)(
+					process.execPath,
+					[
+						"--experimental-strip-types",
+						"--max-old-space-size=128",
+						"--input-type=module",
+						"-e",
+						`
+import {resolvePinnedRuntimeDependencies} from ${JSON.stringify(pathToFileURL(resolve("packages/adapter/src/conditional/FunctionArtifact/Dependency/index.ts")).href)};
+try {
+ const graph = await resolvePinnedRuntimeDependencies(new URL(${JSON.stringify(pathToFileURL(`${root}/`).href)}), new Set(['a']), {resolve: () => Promise.resolve({})});
+ console.log(graph.map(({name, version}) => name+'@'+version).join(','));
+} catch (error) {console.log(error.message);}
+`,
+					],
+					{
+						timeout: 2000,
+						killSignal: "SIGKILL",
+						maxBuffer: 50_000,
+					},
+				);
+				if (conflicting)
+					expect(stdout).toMatch(/cannot preserve.*cycle/i);
+				else expect(stdout.trim()).toBe("a@1.0.0,b@1.0.0");
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
+	it.each([true, false])(
+		"does not invent an absent required dependency (peer=%s)",
+		async (peer) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-missing-required-"),
+			);
+			try {
+				await mkdir(join(root, "node_modules/plugin"), {
+					recursive: true,
+				});
+				await writeFile(
+					join(root, "node_modules/plugin/package.json"),
+					JSON.stringify({
+						name: "plugin",
+						version: "1.0.0",
+						[peer ? "peerDependencies" : "dependencies"]: {
+							missing: "^1.0.0",
+						},
+					}),
+				);
+				await expect(
+					resolvePinnedRuntimeDependencies(
+						pathToFileURL(`${root}/`),
+						new Set(["plugin"]),
+						{
+							resolve: (name) => {
+								if (name !== "plugin")
+									throw new Error(
+										"must not select an absent required package from the registry",
+									);
+								return Promise.resolve({});
+							},
+						},
+					),
+				).rejects.toThrow(
+					peer
+						? /required runtime peer "missing"/
+						: /runtime package "missing"/,
+				);
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
 	it.each([
 		"import {createRequire as make} from 'node:module'; const req = make(import.meta.url); req('nanoid');",
 		"import * as mod from 'module'; const req = mod.createRequire(import.meta.url); const alias = req; alias(`nanoid`);",
 		"import {createRequire} from 'module'; createRequire(import.meta.url)('nanoid');",
 		"const mod = await import('node:module'); const req=mod.createRequire(import.meta.url); req('nanoid');",
+		"const {createRequire} = await import('node:module'); const req=createRequire(import.meta.url); req('nanoid');",
+		"const {createRequire: make} = await import('module'); const req=make(import.meta.url); req('nanoid');",
+		"import * as mod from 'node:module'; const {createRequire: make}=mod; const req=make(import.meta.url); req('nanoid');",
 		"import {'createRequire' as make} from 'node:module'; const req=make(import.meta.url); req('nanoid');",
 		"import {createRequire} from 'node:module'; const req=createRequire(import.meta.url); const lookup=req.resolve; lookup('nanoid');",
 		"import {createRequire} from 'node:module'; const req=createRequire(import.meta.url); function shadow(req) { req(name); } req('nanoid');",
@@ -238,8 +435,21 @@ describe("runtime dependency regressions", () => {
 		"export {req}",
 		"const {resolve} = req; resolve(name)",
 		"req = other",
+		"req.resolve('nanoid', {paths: [otherDirectory]})",
+		"const resolve=req.resolve; resolve('nanoid', {paths: [otherDirectory]})",
 	])("rejects unaccounted createRequire loading: %s", (load) => {
 		const contents = `import {createRequire} from 'node:module'; const req = createRequire(import.meta.url); ${load};`;
+		expect(() =>
+			findRuntimePackageImports(
+				[{ path: "index.js", contents }],
+				"install",
+			),
+		).toThrow(/unresolved dynamic/);
+	});
+
+	it("rejects new.target.url as an unaccounted loader scope", () => {
+		const contents =
+			"import {createRequire} from 'node:module'; function Loader() {const req=createRequire(new.target.url); return req('nanoid');}";
 		expect(() =>
 			findRuntimePackageImports(
 				[{ path: "index.js", contents }],

@@ -210,8 +210,11 @@ _Dependency_ selection supported.
 
 An `install` build needs an installed application _Dependency_
 with a discoverable version. Required child packages must satisfy
-their declared version ranges. Optional packages absent on the
-build host can require exact registry resolution too.
+their declared version ranges. A required peer absent from an
+installed package's context is identified as a missing required
+peer; it is not selected from the registry or silently removed
+from the metadata. Optional packages absent on the build host can
+require exact registry resolution too.
 
 Install the missing or matching _Dependency_ and rebuild. A
 package that exists but cannot be read is not proven absent;
