@@ -1,0 +1,35 @@
+{
+	"name": "@astro-yandex-cloud/function-runtime-bridge",
+	"version": "0.0.0",
+	"private": true,
+	"description": "Yandex Cloud Functions HTTP invocation translation to Web Standards requests and responses",
+	"type": "module",
+	"license": "MIT",
+	"sideEffects": false,
+	"engines": {
+		"node": ">=22.12.0"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsdown",
+		"typecheck": "tsc -p tsconfig.json --noEmit"
+	},
+	"dependencies": {
+		"effect": "^3.22.2"
+	},
+	"devDependencies": {
+		"@types/node": "^24.2.0",
+		"tsdown": "^0.15.1",
+		"typescript": "^5.9.2"
+	}
+}

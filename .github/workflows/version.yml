@@ -18,13 +18,13 @@ jobs:
   version-policy:
     # Version PR automation is enabled only in the upstream repository.
     if: >-
-      github.repository == 'kvazzie/astro-yandex-cloud-adapter' &&
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.conclusion == 'success'))
+      github.repository == 'kvazzie/astro-yandex-cloud-adapter'
+      && github.ref == 'refs/heads/main' && (github.event_name ==
+      'workflow_dispatch' || (github.event.workflow_run.event ==
+      'push' && github.event.workflow_run.head_branch == 'main'
+      && github.event.workflow_run.head_repository.full_name ==
+      github.repository && github.event.workflow_run.conclusion
+      == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -41,7 +41,8 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-      - name: Require successful push CI on the current main commit
+      - name:
+          Require successful push CI on the current main commit
         id: policy
         env:
           GH_TOKEN: ${{ github.token }}
@@ -50,6 +51,7 @@ jobs:
   version:
     needs: version-policy
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       pull-requests: write
@@ -57,6 +59,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.version-policy.outputs.sha }}
+          # Changesets resolves the commits that introduced pending changesets.
+          fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7

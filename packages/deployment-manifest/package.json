@@ -1,0 +1,46 @@
+{
+	"name": "@astro-yandex-cloud/deployment-manifest",
+	"version": "0.0.0",
+	"private": true,
+	"description": "Versioned Deployment Manifest schema, validation, and target encoding",
+	"type": "module",
+	"license": "MIT",
+	"sideEffects": false,
+	"engines": {
+		"node": ">=22.12.0"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./schema": {
+			"types": "./dist/schema.d.ts",
+			"import": "./dist/schema.js"
+		},
+		"./v1/target-encoding": {
+			"types": "./dist/v1/target-encoding.d.ts",
+			"import": "./dist/v1/target-encoding.js"
+		},
+		"./deployment-manifest.schema.json": "./dist/deployment-manifest.schema.json"
+	},
+	"scripts": {
+		"build": "pnpm schema:generate && tsdown",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"schema:generate": "node --experimental-strip-types scripts/generate-manifest-schema.mjs"
+	},
+	"dependencies": {
+		"effect": "^3.22.2",
+		"@astro-yandex-cloud/targets": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "^24.2.0",
+		"tsdown": "^0.15.1",
+		"typescript": "^5.9.2"
+	}
+}
