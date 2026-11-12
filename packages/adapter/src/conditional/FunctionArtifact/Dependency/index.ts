@@ -263,29 +263,7 @@ export async function resolvePinnedRuntimeDependencies(
 		source: DependencySource,
 		parent = "",
 	): Promise<string> => {
-		let ancestor = parent;
-		const available: string[] = [];
-		while (true) {
-			const location = packageLocation(ancestor, name);
-			const existing = nodes.get(location);
-			if (existing) {
-				if (
-					identity(name, existing.source) ===
-					identity(name, source)
-				)
-					return location;
-				break;
-			}
-			available.push(ancestor);
-			if (!ancestor) break;
-			ancestor = parentLocation(ancestor);
-		}
 		const key = identity(name, source);
-		const ancestry = nodes.get(parent)?.ancestry ?? [];
-		if (ancestry.includes(key))
-			throw new Error(
-				`The "install" dependency strategy cannot preserve the installed dependency cycle at ${name}@${source.version}: a different installed context shadows the earlier instance. Artifact generation stopped before expanding another copy. Use "bundle" where supported or change the installed layout; no dependency versions were reselected.`,
-			);
 		const { metadata, children } = await resolveSource(
 			name,
 			source,
@@ -299,39 +277,50 @@ export async function resolvePinnedRuntimeDependencies(
 				child ? identity(peer, child.source) : undefined,
 			] as const;
 		});
-		let scope = parent;
-		let compatible = false;
-		for (const candidate of available.toReversed()) {
-			const actual = await contextIdentity(candidate, name);
-			if (
-				contexts.has(packageLocation(candidate, name)) &&
-				actual !== key
-			)
-				continue;
+		let ancestor = parent;
+		const available: string[] = [];
+		let reused: string | undefined;
+		while (true) {
+			const location = packageLocation(ancestor, name);
+			const actual = await contextIdentity(ancestor, name);
+			if (contexts.has(location) && actual !== key) break;
 			let peersMatch = true;
 			for (const [peer, expected] of peers) {
-				const actual = await contextIdentity(candidate, peer);
+				const actual = await contextIdentity(ancestor, peer);
 				if (
-					contexts.has(packageLocation(candidate, peer)) &&
+					contexts.has(packageLocation(ancestor, peer)) &&
 					actual !== expected
 				)
 					peersMatch = false;
 			}
-			if (peersMatch) {
-				scope = candidate;
-				compatible = true;
+			if (!peersMatch) break;
+			available.push(ancestor);
+			if (nodes.has(location)) {
+				reused = location;
 				break;
 			}
+			if (!ancestor) break;
+			ancestor = parentLocation(ancestor);
 		}
-		const location = packageLocation(scope, name);
+		const location =
+			reused ??
+			packageLocation(available.at(-1) ?? parent, name);
+		const ancestry = nodes.get(parent)?.ancestry ?? [];
+		if (!reused && ancestry.includes(key))
+			throw new Error(
+				`The "install" dependency strategy cannot preserve the installed dependency cycle at ${name}@${source.version}: a different installed context shadows the earlier instance. Artifact generation stopped before expanding another copy. Use "bundle" where supported or change the installed layout; no dependency versions were reselected.`,
+			);
 		contexts.set(location, key);
 		// Children must not shadow this package's own peers, including optional absence.
 		for (const [peer, expected] of peers)
 			contexts.set(packageLocation(location, peer), expected);
-		// Reserve peer identities before their nodes are discovered, including optional absence.
-		if (compatible)
+		// Protect the whole lookup path, including when reusing an existing node.
+		for (const scope of available) {
+			contexts.set(packageLocation(scope, name), key);
 			for (const [peer, expected] of peers)
 				contexts.set(packageLocation(scope, peer), expected);
+		}
+		if (reused) return reused;
 		nodes.set(location, {
 			source,
 			dependency: { name, location, version: source.version },
@@ -430,7 +419,7 @@ async function findInstalledPackage(
 	name: string,
 ): Promise<InstalledPackage | undefined> {
 	for (const modules of createRequire(base).resolve.paths(
-		name,
+		`${name}/package.json`,
 	) ?? []) {
 		const directory = join(modules, name);
 		const manifest = await readJsonFile<PackageJson>(
@@ -483,7 +472,7 @@ function findLockedPackage(
 	| undefined {
 	for (const modules of createRequire(
 		join(directory, "package.json"),
-	).resolve.paths(name) ?? []) {
+	).resolve.paths(`${name}/package.json`) ?? []) {
 		const location = join(modules, name);
 		const metadata =
 			lock.packages?.[

@@ -220,6 +220,7 @@ describe.sequential(
 						"@astro-yandex-cloud/adapter": `file:./${tarball!}`,
 						astro: astroPackage.version,
 						nanoid: "3.3.17",
+						events: "3.3.0",
 						"react-dom": "19.2.0",
 						react: "19.2.0",
 						send: "0.19.0",
@@ -277,7 +278,7 @@ const {createRequire: make} = await import('node:module');
 const req = make(import.meta.url);
 export const GET = () => new Response(JSON.stringify({
   peer: renderToStaticMarkup('peer-ok'), send: typeof send, debug: typeof debug,
-  id: req('nanoid').nanoid(), hidden, feature,
+  id: req('nanoid').nanoid(), events: req('events/package.json').version, hidden, feature,
 }));
 `,
 			);
@@ -380,6 +381,7 @@ console.log(JSON.stringify(result));
 				const body = JSON.parse(result.body) as { id: string };
 				expect(body).toMatchObject({
 					peer: "peer-ok",
+					events: "3.3.0",
 					send: "function",
 					debug: "function",
 					hidden: "hidden-import-only",
@@ -390,6 +392,232 @@ console.log(JSON.stringify(result));
 				await rm(isolated, { recursive: true, force: true });
 			}
 		});
+
+		it.each([false, true])(
+			"protects nested npm lookup paths from later shadowing (peer=%s)",
+			async (peer) => {
+				const fixture = join(root, `nested-shadow-${peer}`);
+				await mkdir(fixture);
+				const tarballs: Record<string, string> = {};
+				const packages = [
+					{
+						name: "p1",
+						version: "2.0.0",
+						code: "module.exports={};",
+					},
+					{
+						name: "p2",
+						version: "2.0.0",
+						code: "module.exports={};",
+					},
+					{
+						name: "aaa-renderer",
+						version: "1.0.0",
+						peerDependencies: { seedrandom: "3.0.5" },
+						code: "module.exports=require('seedrandom');",
+					},
+					{
+						name: "p1",
+						version: "1.0.0",
+						dependencies: peer
+							? { "aaa-renderer": "1.0.0" }
+							: { seedrandom: "3.0.5" },
+						code: `exports.own=require('seedrandom'); exports.peer=${peer ? "require('aaa-renderer')" : "exports.own"};`,
+					},
+					{
+						name: "p2",
+						version: "1.0.0",
+						dependencies: { seedrandom: "3.0.5" },
+						code: "exports.own=require('seedrandom');",
+					},
+					{
+						name: "middle",
+						version: "1.0.0",
+						dependencies: { p1: "1.0.0", p2: "1.0.0" },
+						code: "const p1=require('p1'),p2=require('p2'); exports.read=()=>({separate:p1.own!==p2.own,peer:p1.peer===p1.own});",
+					},
+				];
+				for (const { code, ...manifest } of packages) {
+					const directory = join(
+						fixture,
+						`${manifest.name}-${manifest.version}`,
+					);
+					await mkdir(directory);
+					await writeFile(
+						join(directory, "package.json"),
+						JSON.stringify({ ...manifest, main: "index.cjs" }),
+					);
+					await writeFile(join(directory, "index.cjs"), code);
+					await runCommand(
+						"npm",
+						[
+							"pack",
+							"--ignore-scripts",
+							"--pack-destination",
+							fixture,
+						],
+						{ cwd: directory },
+					);
+					tarballs[`${manifest.name}@${manifest.version}`] =
+						`file:${join(fixture, `${manifest.name}-${manifest.version}.tgz`)}`;
+				}
+				const application = join(fixture, "app");
+				await mkdir(join(application, "src/pages"), {
+					recursive: true,
+				});
+				await writeFile(
+					join(application, "package.json"),
+					JSON.stringify({
+						private: true,
+						type: "module",
+						dependencies: {
+							middle: tarballs["middle@1.0.0"],
+							p1: tarballs["p1@2.0.0"],
+							p2: tarballs["p2@2.0.0"],
+						},
+						overrides: {
+							middle: {
+								p1: {
+									".": tarballs["p1@1.0.0"],
+									...(peer
+										? {
+												"aaa-renderer":
+													tarballs["aaa-renderer@1.0.0"],
+											}
+										: {}),
+								},
+								p2: tarballs["p2@1.0.0"],
+							},
+						},
+					}),
+				);
+				await runCommand(
+					"npm",
+					[
+						"install",
+						"--install-strategy=nested",
+						"--ignore-scripts",
+						"--no-audit",
+						"--no-fund",
+					],
+					{ cwd: application },
+				);
+				const original = await runCommand(
+					process.execPath,
+					[
+						"-e",
+						"console.log(JSON.stringify(require('middle').read()));",
+					],
+					{ cwd: application },
+				);
+				expect(
+					JSON.parse(original.stdout.trim()) as unknown,
+				).toEqual({ separate: true, peer: true });
+				const originalRequire = createRequire(
+					join(application, "package.json"),
+				);
+				const originalMiddle = createRequire(
+					originalRequire.resolve("middle"),
+				);
+				expect(() =>
+					originalRequire.resolve("seedrandom"),
+				).toThrow();
+				expect(() =>
+					originalMiddle.resolve("seedrandom"),
+				).toThrow();
+				expect(originalMiddle.resolve("p1")).not.toBe(
+					originalRequire.resolve("p1"),
+				);
+				expect(originalMiddle.resolve("p2")).not.toBe(
+					originalRequire.resolve("p2"),
+				);
+				await writeFile(
+					join(application, "src/pages/shadow.ts"),
+					"import middle from 'middle'; export const GET=()=>new Response(JSON.stringify(middle.read()));",
+				);
+				await writeFile(
+					join(application, "astro.config.mjs"),
+					"import adapter from '@astro-yandex-cloud/adapter'; import {passthroughImageService} from 'astro/config'; export default {output:'server',image:{service:passthroughImageService()},adapter:adapter({target:'object-storage-functions',apiGateway:true,dependencyStrategy:'install'})};",
+				);
+				await astro.build({
+					root: `${application}/`,
+					logLevel: "silent",
+				});
+				const isolated = await mkdtemp(
+					join(tmpdir(), "yandex-nested-shadow-"),
+				);
+				try {
+					await cp(
+						join(application, "dist/function"),
+						isolated,
+						{ recursive: true },
+					);
+					const before = await readFile(
+						join(isolated, "package-lock.json"),
+						"utf8",
+					);
+					await runCommand(
+						"npm",
+						[
+							"ci",
+							"--production",
+							"--ignore-scripts",
+							"--no-audit",
+							"--no-fund",
+						],
+						{ cwd: isolated },
+					);
+					expect(
+						await readFile(
+							join(isolated, "package-lock.json"),
+							"utf8",
+						),
+					).toBe(before);
+					const { stdout } = await runCommand(
+						process.execPath,
+						[
+							"--input-type=module",
+							"-e",
+							`
+import {handler} from './index.js';
+const result=await handler({url:'/shadow',httpMethod:'GET',headers:{host:'fixture.example'}},{getPayload:()=>undefined,getRemainingTimeInMillis:()=>30000});
+console.log(JSON.stringify(result));
+`,
+						],
+						{ cwd: isolated },
+					);
+					expect(
+						JSON.parse(stdout.trim()) as unknown,
+					).toMatchObject({
+						statusCode: 200,
+						body: '{"separate":true,"peer":true}',
+					});
+					const require = createRequire(
+						join(isolated, "index.js"),
+					);
+					const middleRequire = createRequire(
+						require.resolve("middle"),
+					);
+					const firstRequire = createRequire(
+						middleRequire.resolve("p1"),
+					);
+					const secondRequire = createRequire(
+						middleRequire.resolve("p2"),
+					);
+					expect(firstRequire.resolve("seedrandom")).not.toBe(
+						secondRequire.resolve("seedrandom"),
+					);
+					if (peer)
+						expect(
+							createRequire(
+								firstRequire.resolve("aaa-renderer"),
+							).resolve("seedrandom"),
+						).toBe(firstRequire.resolve("seedrandom"));
+				} finally {
+					await rm(isolated, { recursive: true, force: true });
+				}
+			},
+		);
 
 		it("preserves one peer-dependent singleton shared by sibling requesters", async () => {
 			const application = join(root, "shared-peer-singleton");

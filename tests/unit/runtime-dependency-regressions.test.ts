@@ -418,6 +418,265 @@ describe("runtime dependency regressions", () => {
 		}
 	});
 
+	it.each([
+		{ peer: false, reuse: false, barrier: false },
+		{ peer: false, reuse: true, barrier: false },
+		{ peer: true, reuse: false, barrier: false },
+		{ peer: true, reuse: true, barrier: false },
+		{ peer: false, reuse: false, barrier: true },
+	])(
+		"protects every lookup scope from later shadowing: %j",
+		async ({ peer, reuse, barrier }) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-shadowed-edge-"),
+			);
+			const middle = "node_modules/middle";
+			const first = `${middle}/node_modules/p1`;
+			const second = `${middle}/node_modules/p2`;
+			try {
+				const manifests: Record<string, object> = {
+					"node_modules/p1": { name: "p1", version: "2.0.0" },
+					"node_modules/p2": { name: "p2", version: "2.0.0" },
+					[middle]: {
+						name: "middle",
+						version: "1.0.0",
+						dependencies: { p1: "1.0.0", p2: "1.0.0" },
+					},
+					[first]: {
+						name: "p1",
+						version: "1.0.0",
+						dependencies: {
+							[peer ? "renderer" : "shared"]: "1.0.0",
+						},
+					},
+					[second]: {
+						name: "p2",
+						version: "1.0.0",
+						[barrier ? "peerDependencies" : "dependencies"]: {
+							shared: "2.0.0",
+						},
+					},
+					[`${first}/node_modules/shared`]: {
+						name: "shared",
+						version: "1.0.0",
+					},
+					[`${barrier ? middle : second}/node_modules/shared`]: {
+						name: "shared",
+						version: "2.0.0",
+					},
+				};
+				if (peer)
+					manifests[`${first}/node_modules/renderer`] = {
+						name: "renderer",
+						version: "1.0.0",
+						peerDependencies: { shared: "1.0.0" },
+					};
+				if (reuse)
+					manifests["node_modules/a-early"] = {
+						name: "a-early",
+						version: "1.0.0",
+						dependencies: {
+							[peer ? "renderer" : "shared"]: "1.0.0",
+						},
+					};
+				for (const [directory, manifest] of Object.entries(
+					manifests,
+				)) {
+					await mkdir(join(root, directory, "node_modules"), {
+						recursive: true,
+					});
+					await writeFile(
+						join(root, directory, "package.json"),
+						JSON.stringify(manifest),
+					);
+				}
+				if (reuse)
+					await symlink(
+						join(
+							root,
+							first,
+							"node_modules",
+							peer ? "renderer" : "shared",
+						),
+						join(
+							root,
+							"node_modules/a-early/node_modules",
+							peer ? "renderer" : "shared",
+						),
+						"dir",
+					);
+				const graph = await resolvePinnedRuntimeDependencies(
+					pathToFileURL(`${root}/`),
+					new Set(reuse ? ["a-early", "middle"] : ["middle"]),
+					{ resolve: () => Promise.resolve({}) },
+				);
+				expect(
+					graph.find(
+						({ name, version }) =>
+							name === "shared" && version === "1.0.0",
+					)?.location,
+				).toBe(
+					barrier
+						? `${first}/node_modules/shared`
+						: "node_modules/shared",
+				);
+				if (!barrier)
+					expect(
+						graph.find(
+							({ name, version }) =>
+								name === "shared" && version === "2.0.0",
+						)?.location,
+					).toBe(`${second}/node_modules/shared`);
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
+	it.each([
+		"events",
+		"buffer",
+		"punycode",
+		"util",
+		"process",
+		"@fixture/import-only",
+	])(
+		"discovers a declared installed package named %s without resolving its exports",
+		async (name) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-core-named-package-"),
+			);
+			try {
+				for (const [packageName, manifest] of [
+					[
+						"host",
+						{
+							name: "host",
+							version: "1.0.0",
+							dependencies: { [name]: "^1.0.0" },
+						},
+					],
+					[
+						name,
+						{
+							name,
+							version: "1.2.3",
+							type: "module",
+							exports: { ".": { import: "./index.js" } },
+						},
+					],
+				] as const) {
+					await mkdir(join(root, "node_modules", packageName), {
+						recursive: true,
+					});
+					await writeFile(
+						join(
+							root,
+							"node_modules",
+							packageName,
+							"package.json",
+						),
+						JSON.stringify(manifest),
+					);
+				}
+				await writeFile(
+					join(root, "node_modules", name, "index.js"),
+					"throw new Error('must not execute metadata discovery');",
+				);
+				const graph = await resolvePinnedRuntimeDependencies(
+					pathToFileURL(`${root}/`),
+					new Set(["host"]),
+					{ resolve: () => Promise.resolve({}) },
+				);
+				expect(
+					graph.find((entry) => entry.name === name)?.version,
+				).toBe("1.2.3");
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
+	it("retains a lock-only events selection without registry reselection", async () => {
+		const root = await mkdtemp(
+			join(tmpdir(), "yandex-locked-core-name-"),
+		);
+		try {
+			const native = {
+				version: "1.0.0",
+				optionalDependencies: { variant: "1.0.0" },
+			};
+			await mkdir(join(root, "node_modules/native"), {
+				recursive: true,
+			});
+			await writeFile(
+				join(root, "node_modules/native/package.json"),
+				JSON.stringify({ name: "native", ...native }),
+			);
+			await writeFile(
+				join(root, "package-lock.json"),
+				JSON.stringify({
+					packages: {
+						"node_modules/native": native,
+						"node_modules/variant": {
+							version: "1.0.0",
+							os: ["darwin"],
+							dependencies: { events: "^3.0.0" },
+						},
+						"node_modules/variant/node_modules/events": {
+							version: "3.3.0",
+						},
+					},
+				}),
+			);
+			const graph = await resolvePinnedRuntimeDependencies(
+				pathToFileURL(`${root}/`),
+				new Set(["native"]),
+				{
+					resolve: () => {
+						throw new Error(
+							"must use locked events@3.3.0, not registry",
+						);
+					},
+				},
+			);
+			expect(
+				graph.find(({ name }) => name === "events"),
+			).toMatchObject({ version: "3.3.0", optional: true });
+			expect(
+				graph.find(({ name }) => name === "variant"),
+			).toMatchObject({ os: ["darwin"], optional: true });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps real builtin imports out of package delivery", () => {
+		expect([
+			...findRuntimePackageImports(
+				[
+					{
+						path: "index.js",
+						contents:
+							"import 'events'; import 'node:events'; import 'buffer'; import 'node:process';",
+					},
+				],
+				"install",
+			),
+		]).toEqual([]);
+		expect([
+			...findRuntimePackageImports(
+				[
+					{
+						path: "index.js",
+						contents: "import 'events/events.js';",
+					},
+				],
+				"install",
+			),
+		]).toEqual(["events"]);
+	});
+
 	it("uses the locked optional variant version instead of selecting a newer registry version", async () => {
 		const root = await mkdtemp(
 			join(tmpdir(), "yandex-optional-lock-"),
