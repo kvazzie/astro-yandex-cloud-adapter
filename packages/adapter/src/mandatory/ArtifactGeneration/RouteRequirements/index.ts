@@ -83,7 +83,15 @@ function objectKey(base: string, path: string): string {
 	return base === "/" ? path : `${base.slice(1)}/${path}`;
 }
 
-function pageFile(url: string, files: Set<string>): string {
+/** Prefers page-owned output; other files remain candidates only for diagnostics. */
+function pageFile(
+	url: string,
+	files: Set<string>,
+	pageEmitters: ReadonlyMap<
+		string,
+		ReadonlySet<IntegrationResolvedRoute>
+	>,
+): string {
 	const pathname = url.replace(/^\/+|\/+$/g, "");
 	const candidates =
 		url === "/"
@@ -91,9 +99,12 @@ function pageFile(url: string, files: Set<string>): string {
 			: url.endsWith("/")
 				? [`${pathname}/index.html`, `${pathname}.html`]
 				: [`${pathname}.html`, `${pathname}/index.html`];
-	const file = candidates.find((candidate) =>
+	const existing = candidates.filter((candidate) =>
 		files.has(candidate),
 	);
+	const file =
+		existing.find((candidate) => pageEmitters.has(candidate)) ??
+		existing[0];
 	if (!file)
 		throw new Error(
 			`Could not match the Prerendered Route ${url} to a Client Artifact file.`,
@@ -180,38 +191,47 @@ export function reconcileRoutes(
 		});
 	};
 
+	const clientPath = fileURLToPath(clientDirectory);
+	const assetFile = (asset: URL): string =>
+		relative(clientPath, fileURLToPath(asset))
+			.split(sep)
+			.join("/");
+	const pageEmitters = new Map<
+		string,
+		Set<IntegrationResolvedRoute>
+	>();
+	for (const route of resolvedRoutes) {
+		if (route.type !== "page" || !route.isPrerendered) continue;
+		for (const asset of emittedAssets.get(route.pattern) ?? []) {
+			const file = assetFile(asset);
+			const emitters = pageEmitters.get(file) ?? new Set();
+			emitters.add(route);
+			pageEmitters.set(file, emitters);
+		}
+	}
+
 	for (const { pathname } of pages) {
 		const url = pathname
 			? `/${pathname.replace(/^\/+/, "")}`
 			: "/";
-		const matches = resolvedRoutes.filter(
-			(route) =>
-				route.type === "page" &&
-				route.isPrerendered &&
-				route.patternRegex.test(url),
-		);
-		const exact = matches.find(
-			(route) =>
-				route.pattern.replace(/\/$/, "") ===
-				url.replace(/\/$/, ""),
-		);
+		const file = pageFile(url, files, pageEmitters);
+		const emitters = [...(pageEmitters.get(file) ?? [])];
 		const route =
-			exact ?? (matches.length === 1 ? matches[0] : undefined);
+			emitters.length === 1 ? emitters[0] : undefined;
 		if (!route)
 			throw new Error(
-				`Could not identify the Astro route that emitted ${url}.`,
+				emitters.length === 0
+					? `Missing Astro page emitter evidence for ${url} (Client Artifact file ${file}) in completed-build assets.`
+					: `Conflicting Astro page emitter evidence for ${url} (Client Artifact file ${file}) in completed-build assets: ${emitters.map((emitter) => emitter.pattern).join(", ")}.`,
 			);
-		addPrerendered(route, url, pageFile(url, files));
+		addPrerendered(route, url, file);
 	}
 
-	const clientPath = fileURLToPath(clientDirectory);
 	for (const route of resolvedRoutes) {
 		if (route.type !== "endpoint" || !route.isPrerendered)
 			continue;
 		for (const asset of emittedAssets.get(route.pattern) ?? []) {
-			const file = relative(clientPath, fileURLToPath(asset))
-				.split(sep)
-				.join("/");
+			const file = assetFile(asset);
 			if (!files.has(file)) continue;
 			addPrerendered(
 				route,
