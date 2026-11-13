@@ -4,7 +4,7 @@ import prettier from "eslint-config-prettier";
 import tseslint from "typescript-eslint";
 
 const typedFiles = [
-  "packages/adapter/src/**/*.ts",
+  "packages/*/src/**/*.{ts,js}",
   "packages/adapter/*.ts",
   "tests/unit/**/*.ts",
   "tests/integration/**/*.ts",
@@ -28,6 +28,10 @@ export default defineConfig(
     extends: tseslint.configs.recommended,
   },
   prettier,
+  {
+    files: ["packages/adapter/src/Hooks/**/*.ts"],
+    rules: { "require-yield": "off" },
+  },
   {
     files: typedFiles,
     languageOptions: {
