@@ -254,6 +254,7 @@ export default {
     },
     {
       files: [
+        ".changeset/allow-static-node-module-destructuring.md",
         ".changeset/decode-adapter-options.md",
         ".changeset/extract-deployment-manifest-targets.md",
         ".changeset/extract-function-runtime-bridge.md",

@@ -252,10 +252,31 @@ describe("Function Artifact mutation plans", () => {
 		expect(await snapshot(f.directory)).toEqual(before);
 	});
 
+	it.each(["bundle", "install"] as const)(
+		"plans fixed Node module metadata destructuring for %s without mutations",
+		async (dependencyStrategy) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				`import * as mod from 'node:module'; const { builtinModules } = mod; console.log(builtinModules);\n${f.index}`,
+			);
+			const before = await snapshot(f.directory);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(f.build, f.routePlan, {
+					...settings,
+					dependencyStrategy,
+				}),
+			);
+			expect(plan.plannedOutput.functions).toHaveLength(1);
+			expect(await snapshot(f.directory)).toEqual(before);
+		},
+	);
+
 	it.each([
 		"import value from 'example';",
 		"import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); load('example');",
 		"import * as mod from 'node:module'; const load = mod.createRequire(import.meta.url); load('example');",
+		"import * as mod from 'node:module'; const {builtinModules, createRequire: make} = mod; const load = make(import.meta.url); load('example');",
 	])("plans exact install metadata for %s", async (source) => {
 		const f = await fixture();
 		await writeFile(
@@ -423,13 +444,25 @@ describe("Function Artifact mutation plans", () => {
 		});
 	});
 
-	it.each(["bundle", "install"] as const)(
-		"rejects a computed createRequire load for %s before writing output",
-		async (dependencyStrategy) => {
+	it.each(
+		[
+			"import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); load(process.env.RUNTIME_PACKAGE);",
+			"import * as mod from 'node:module'; const {builtinModules, createRequire: make} = mod; consume(make);",
+			"import * as mod from 'node:module'; const {builtinModules, createRequire: make} = mod; const load = make(import.meta.url); load(process.env.RUNTIME_PACKAGE);",
+			"import * as mod from 'node:module'; const {builtinModules, Module: moduleClass} = mod; consume(moduleClass);",
+			"import * as mod from 'node:module'; const {builtinModules, default: moduleClass} = mod; consume(moduleClass);",
+		].flatMap((source) =>
+			(["bundle", "install"] as const).map(
+				(dependencyStrategy) => ({ source, dependencyStrategy }),
+			),
+		),
+	)(
+		"rejects unaccounted Node loader use before writing output: %j",
+		async ({ source, dependencyStrategy }) => {
 			const f = await fixture();
 			await writeFile(
 				new URL("index.js", f.server),
-				`import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); load(process.env.RUNTIME_PACKAGE);\n${f.index}`,
+				`${source}\n${f.index}`,
 			);
 			const before = await snapshot(f.directory);
 			const outcome = await Effect.runPromise(

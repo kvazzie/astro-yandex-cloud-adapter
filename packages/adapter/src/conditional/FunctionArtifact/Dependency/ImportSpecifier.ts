@@ -115,15 +115,14 @@ function findImportedPackageNames(
 				parent?.type === "VariableDeclarator" &&
 				isSyntaxNode(parent.id) &&
 				(parent.id.type === "Identifier" ||
-					(role === "module" &&
-						isCreateRequirePattern(parent.id))) &&
+					(role === "module" && isModulePattern(parent.id))) &&
 				ancestors.at(-3)?.type !== "ExportNamedDeclaration" &&
 				(parent.id === node || parent.init === node);
 			const importBinding = parent?.type.startsWith("Import");
 			const patternBinding =
 				parent?.type === "Property" &&
 				parent.value === node &&
-				isCreateRequirePattern(ancestors.at(-2));
+				isModulePattern(ancestors.at(-2));
 			const awaited =
 				parent?.type === "AwaitExpression" &&
 				parent.argument === node;
@@ -387,7 +386,7 @@ function visitSyntax(
 
 type LoaderRole = "factory" | "require" | "resolve" | "module";
 
-function isCreateRequirePattern(value: unknown): boolean {
+function isModulePattern(value: unknown): boolean {
 	return (
 		isSyntaxNode(value) &&
 		value.type === "ObjectPattern" &&
@@ -398,8 +397,9 @@ function isCreateRequirePattern(value: unknown): boolean {
 				isSyntaxNode(property) &&
 				property.type === "Property" &&
 				!property.computed &&
-				(isIdentifier(property.key, "createRequire") ||
-					getStaticString(property.key) === "createRequire") &&
+				isSyntaxNode(property.key) &&
+				(property.key.type === "Identifier" ||
+					getStaticString(property.key) !== undefined) &&
 				isSyntaxNode(property.value) &&
 				property.value.type === "Identifier",
 		)
@@ -453,19 +453,30 @@ function runtimeLoaderBindings(
 			Array.isArray(value.properties)
 		) {
 			for (const property of value.properties as unknown[]) {
-				if (isSyntaxNode(property))
+				if (isSyntaxNode(property)) {
+					const key =
+						isSyntaxNode(property.key) &&
+						property.key.type === "Identifier"
+							? property.key.name
+							: getStaticString(property.key);
 					declarePattern(
 						property.type === "RestElement"
 							? property.argument
 							: property.value,
 						scope,
-						isCreateRequirePattern(value)
+						isModulePattern(value) &&
+							(key === "createRequire" ||
+								key === "default" ||
+								key === "Module")
 							? {
 									value: binding.value,
-									property: "createRequire",
+									...(key === "createRequire"
+										? { property: "createRequire" as const }
+										: {}),
 								}
 							: {},
 					);
+				}
 			}
 		}
 	};
