@@ -9,7 +9,6 @@ export default defineConfig({
 		target: "object-storage-functions",
 		apiGateway: true,
 		dependencyStrategy: "install",
-		apiGateway: true,
 	}),
 	image: { service: passthroughImageService() },
 	output: "server",
