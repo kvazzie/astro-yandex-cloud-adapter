@@ -107,6 +107,11 @@ function overlappingPath(
 				: right.kind === "literal"
 					? right.value
 					: "gateway-value";
+		if (
+			value === "" &&
+			(left.kind === "parameter" || right.kind === "parameter")
+		)
+			continue;
 		queue.push({
 			a: state.a + (left.kind === "rest" ? 0 : 1),
 			b: state.b + (right.kind === "rest" ? 0 : 1),
@@ -378,10 +383,15 @@ export function generateApiGatewaySpecificationTemplate(
 			});
 		}
 	}
-	validatePriorities(routes);
+	const routesByPath = new Map<string, GatewayRoute>();
 	for (const route of routes.sort(
 		(a, b) => b.priority - a.priority,
 	)) {
+		routesByPath.set(route.path, route);
+	}
+	const selectedRoutes = [...routesByPath.values()];
+	validatePriorities(selectedRoutes);
+	for (const route of selectedRoutes) {
 		template.paths[route.path] = Object.fromEntries(
 			route.methods.map((method) => [method, route.operation]),
 		);

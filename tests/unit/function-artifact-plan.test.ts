@@ -252,11 +252,15 @@ describe("Function Artifact mutation plans", () => {
 		expect(await snapshot(f.directory)).toEqual(before);
 	});
 
-	it("plans exact install metadata without writing it or using implicit strategy defaults", async () => {
+	it.each([
+		"import value from 'example';",
+		"import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); load('example');",
+		"import * as mod from 'node:module'; const load = mod.createRequire(import.meta.url); load('example');",
+	])("plans exact install metadata for %s", async (source) => {
 		const f = await fixture();
 		await writeFile(
 			new URL("index.js", f.server),
-			`import value from 'example';\n${f.index}`,
+			`${source}\n${f.index}`,
 		);
 		await mkdir(new URL("node_modules/example/", f.root), {
 			recursive: true,
@@ -302,6 +306,154 @@ describe("Function Artifact mutation plans", () => {
 			),
 		).toMatchObject({ dependencies: { example: "1.2.3" } });
 	});
+
+	it("plans an installed import-only package without a public package.json export", async () => {
+		const f = await fixture();
+		await writeFile(
+			new URL("index.js", f.server),
+			`import value from 'example';\n${f.index}`,
+		);
+		await writeFile(
+			new URL("package.json", f.root),
+			'{"name":"app"}',
+		);
+		await mkdir(new URL("node_modules/example/", f.root), {
+			recursive: true,
+		});
+		await writeFile(
+			new URL("node_modules/example/package.json", f.root),
+			JSON.stringify({
+				name: "example",
+				version: "1.2.3",
+				type: "module",
+				exports: { import: "./index.js" },
+			}),
+		);
+		await writeFile(
+			new URL("node_modules/example/index.js", f.root),
+			"export default 42;",
+		);
+		const plan = await Effect.runPromise(
+			FunctionArtifact.planPreparation(
+				f.build,
+				f.routePlan,
+				{ ...settings, dependencyStrategy: "install" },
+				{ resolve: () => Promise.resolve({ version: "1.2.3" }) },
+			),
+		);
+		const lock = plan.mutations.find(
+			(mutation) =>
+				mutation.kind === "writeFile" &&
+				mutation.path.pathname.endsWith("package-lock.json"),
+		);
+		expect(
+			lock?.kind === "writeFile" && JSON.parse(lock.contents),
+		).toMatchObject({
+			packages: { "node_modules/example": { version: "1.2.3" } },
+		});
+	});
+
+	it("uses registry edges when a legacy lockfile has no packages section", async () => {
+		const f = await fixture();
+		await writeFile(
+			new URL("index.js", f.server),
+			`import value from 'example';\n${f.index}`,
+		);
+		await writeFile(
+			new URL("package.json", f.root),
+			'{"name":"app"}',
+		);
+		for (const [name, version] of [
+			["example", "1.2.3"],
+			["child", "2.3.4"],
+		]) {
+			await mkdir(new URL(`node_modules/${name}/`, f.root), {
+				recursive: true,
+			});
+			await writeFile(
+				new URL(`node_modules/${name}/package.json`, f.root),
+				JSON.stringify({ name, version }),
+			);
+		}
+		await writeFile(
+			new URL("package-lock.json", f.root),
+			JSON.stringify({
+				lockfileVersion: 1,
+				dependencies: {
+					example: {
+						version: "1.2.3",
+						requires: { child: "^2.0.0" },
+					},
+					child: { version: "2.3.4" },
+				},
+			}),
+		);
+		const plan = await Effect.runPromise(
+			FunctionArtifact.planPreparation(
+				f.build,
+				f.routePlan,
+				{ ...settings, dependencyStrategy: "install" },
+				{
+					resolve: (name) =>
+						Promise.resolve(
+							name === "example"
+								? {
+										version: "1.2.3",
+										dependencies: { child: "^2.0.0" },
+									}
+								: { version: "2.3.4" },
+						),
+				},
+			),
+		);
+		const lock = plan.mutations.find(
+			(mutation) =>
+				mutation.kind === "writeFile" &&
+				mutation.path.pathname.endsWith("package-lock.json"),
+		);
+		expect(
+			lock?.kind === "writeFile" && JSON.parse(lock.contents),
+		).toMatchObject({
+			packages: {
+				"node_modules/example": {
+					dependencies: { child: "2.3.4" },
+				},
+				"node_modules/child": { version: "2.3.4" },
+			},
+		});
+	});
+
+	it.each(["bundle", "install"] as const)(
+		"rejects a computed createRequire load for %s before writing output",
+		async (dependencyStrategy) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				`import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); load(process.env.RUNTIME_PACKAGE);\n${f.index}`,
+			);
+			const before = await snapshot(f.directory);
+			const outcome = await Effect.runPromise(
+				Effect.either(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						{ ...settings, dependencyStrategy },
+					),
+				),
+			);
+			expect(outcome).toMatchObject({
+				_tag: "Left",
+				left: {
+					_tag: "UnresolvedDependency",
+				},
+			});
+			expect(outcome).toHaveProperty(
+				"left.message",
+				expect.stringMatching(/unresolved dynamic/),
+			);
+			expect(await snapshot(f.directory)).toEqual(before);
+		},
+	);
 
 	it("stops applying on failure and retains earlier mutations without rollback", async () => {
 		const f = await fixture();

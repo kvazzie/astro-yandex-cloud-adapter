@@ -79,17 +79,100 @@ function findImportedPackageNames(
 			packageNameFromSpecifier(importSpecifier),
 		);
 	};
-	const rejectDynamicImport = (): never => {
+	const rejectDynamicImport = (detail?: string): never => {
 		if (strategy === "install") {
 			throw new Error(
-				`The Function Artifact contains unresolved dynamic runtime dependency resolution in ${relativePath}, which cannot use the "install" dependency strategy. Replace it with a fixed package import so its exact version can be written to the Function Artifact.`,
+				`The Function Artifact contains unresolved dynamic runtime dependency resolution${detail ? ` (${detail})` : ""} in ${relativePath}, which cannot use the "install" dependency strategy. Replace it with a fixed package import so its exact version can be written to the Function Artifact.`,
 			);
 		}
 		throw new Error(
-			`The Function Artifact contains unresolved dynamic or native runtime dependency resolution in ${relativePath}, which cannot use the "bundle" dependency strategy. Bundle a fixed package import or select dependencyStrategy: "install" to keep runtime package imports.`,
+			`The Function Artifact contains unresolved dynamic or native runtime dependency resolution${detail ? ` (${detail})` : ""} in ${relativePath}, which cannot use the "bundle" dependency strategy. Bundle a fixed package import or select dependencyStrategy: "install" to keep runtime package imports.`,
 		);
 	};
+	const bindingRole = runtimeLoaderBindings(program);
 	visitSyntax(program, (node, ancestors) => {
+		const parent = ancestors.at(-1);
+		if (
+			node.type === "Identifier" &&
+			parent &&
+			((parent.type === "MemberExpression" &&
+				parent.property === node &&
+				!parent.computed) ||
+				(parent.type === "Property" &&
+					parent.key === node &&
+					!parent.computed &&
+					parent.value !== node))
+		)
+			return;
+		const role = bindingRole(node);
+		if (
+			role === "factory" ||
+			role === "require" ||
+			role === "resolve" ||
+			role === "module"
+		) {
+			const declaration =
+				parent?.type === "VariableDeclarator" &&
+				isSyntaxNode(parent.id) &&
+				(parent.id.type === "Identifier" ||
+					(role === "module" &&
+						isCreateRequirePattern(parent.id))) &&
+				ancestors.at(-3)?.type !== "ExportNamedDeclaration" &&
+				(parent.id === node || parent.init === node);
+			const importBinding = parent?.type.startsWith("Import");
+			const patternBinding =
+				parent?.type === "Property" &&
+				parent.value === node &&
+				isCreateRequirePattern(ancestors.at(-2));
+			const awaited =
+				parent?.type === "AwaitExpression" &&
+				parent.argument === node;
+			if (node.type === "ImportExpression" && !awaited)
+				rejectDynamicImport();
+			const call =
+				parent?.type === "CallExpression" &&
+				parent.callee === node;
+			const member =
+				parent?.type === "MemberExpression" &&
+				parent.object === node &&
+				!parent.computed &&
+				((role === "module" &&
+					node.type !== "ImportExpression") ||
+					(role === "require" &&
+						isIdentifier(parent.property, "resolve")));
+			if (
+				!declaration &&
+				!importBinding &&
+				!patternBinding &&
+				!awaited &&
+				!call &&
+				!member
+			)
+				rejectDynamicImport();
+		}
+		if (
+			node.type === "CallExpression" &&
+			bindingRole(node.callee) === "factory"
+		) {
+			const argument: unknown = Array.isArray(node.arguments)
+				? node.arguments[0]
+				: undefined;
+			if (
+				!isSyntaxNode(argument) ||
+				argument.type !== "MemberExpression" ||
+				!isIdentifier(argument.property, "url") ||
+				!isSyntaxNode(argument.object) ||
+				argument.object.type !== "MetaProperty" ||
+				!isIdentifier(argument.object.meta, "import") ||
+				!isIdentifier(argument.object.property, "meta") ||
+				argument.computed ||
+				(node.arguments &&
+					(node.arguments as unknown[]).length !== 1)
+			)
+				rejectDynamicImport(
+					"createRequire must use import.meta.url",
+				);
+		}
 		switch (node.type) {
 			case "ImportDeclaration":
 			case "ExportNamedDeclaration":
@@ -118,13 +201,27 @@ function findImportedPackageNames(
 				const callee = node.callee;
 				if (
 					!isSyntaxNode(callee) ||
-					callee.type !== "Identifier" ||
-					(callee.name !== "require" &&
-						callee.name !== "__require")
+					(bindingRole(callee) !== "require" &&
+						bindingRole(callee) !== "resolve" &&
+						!(
+							callee.type === "MemberExpression" &&
+							!callee.computed &&
+							isIdentifier(callee.property, "resolve") &&
+							bindingRole(callee.object) === "require"
+						) &&
+						!isIdentifier(callee, "require") &&
+						!isIdentifier(callee, "__require"))
 				) {
 					return;
 				}
 				const arguments_ = node.arguments;
+				if (
+					bindingRole(callee) === "resolve" &&
+					(!Array.isArray(arguments_) || arguments_.length !== 1)
+				)
+					rejectDynamicImport(
+						"require.resolve options are not accounted for; use require.resolve('package') without options",
+					);
 				const requireArgument: unknown = Array.isArray(
 					arguments_,
 				)
@@ -286,4 +383,225 @@ function visitSyntax(
 			}
 		}
 	}
+}
+
+type LoaderRole = "factory" | "require" | "resolve" | "module";
+
+function isCreateRequirePattern(value: unknown): boolean {
+	return (
+		isSyntaxNode(value) &&
+		value.type === "ObjectPattern" &&
+		Array.isArray(value.properties) &&
+		value.properties.length > 0 &&
+		value.properties.every(
+			(property: unknown) =>
+				isSyntaxNode(property) &&
+				property.type === "Property" &&
+				!property.computed &&
+				(isIdentifier(property.key, "createRequire") ||
+					getStaticString(property.key) === "createRequire") &&
+				isSyntaxNode(property.value) &&
+				property.value.type === "Identifier",
+		)
+	);
+}
+
+/** Resolve lexical bindings before inspecting calls, including declarations after a use. */
+function runtimeLoaderBindings(
+	program: SyntaxNode,
+): (value: unknown) => LoaderRole | undefined {
+	interface Scope {
+		parent?: Scope;
+		functionScope: boolean;
+		bindings: Map<
+			string,
+			{
+				value?: unknown;
+				role?: LoaderRole;
+				property?: "createRequire";
+			}
+		>;
+	}
+	const scopes = new Map<SyntaxNode, Scope>();
+	const declarePattern = (
+		value: unknown,
+		scope: Scope,
+		binding: {
+			value?: unknown;
+			role?: LoaderRole;
+			property?: "createRequire";
+		} = {},
+	) => {
+		if (!isSyntaxNode(value)) return;
+		if (
+			value.type === "Identifier" &&
+			typeof value.name === "string"
+		)
+			scope.bindings.set(value.name, binding);
+		else if (value.type === "RestElement")
+			declarePattern(value.argument, scope);
+		else if (value.type === "AssignmentPattern")
+			declarePattern(value.left, scope);
+		else if (
+			value.type === "ArrayPattern" &&
+			Array.isArray(value.elements)
+		) {
+			for (const element of value.elements)
+				declarePattern(element, scope);
+		} else if (
+			value.type === "ObjectPattern" &&
+			Array.isArray(value.properties)
+		) {
+			for (const property of value.properties as unknown[]) {
+				if (isSyntaxNode(property))
+					declarePattern(
+						property.type === "RestElement"
+							? property.argument
+							: property.value,
+						scope,
+						isCreateRequirePattern(value)
+							? {
+									value: binding.value,
+									property: "createRequire",
+								}
+							: {},
+					);
+			}
+		}
+	};
+	visitSyntax(program, (node, ancestors) => {
+		const parent = ancestors.at(-1);
+		const outer = parent ? scopes.get(parent) : undefined;
+		const isFunction =
+			/^(?:FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(
+				node.type,
+			);
+		if (
+			(node.type === "FunctionDeclaration" ||
+				node.type === "ClassDeclaration") &&
+			outer
+		)
+			declarePattern(node.id, outer);
+		const scope =
+			!outer ||
+			isFunction ||
+			[
+				"BlockStatement",
+				"ClassDeclaration",
+				"ClassExpression",
+				"CatchClause",
+				"ForStatement",
+				"ForInStatement",
+				"ForOfStatement",
+				"SwitchStatement",
+			].includes(node.type)
+				? {
+						parent: outer,
+						functionScope: !outer || isFunction,
+						bindings: new Map(),
+					}
+				: outer;
+		scopes.set(node, scope);
+		if (
+			node.type === "ClassDeclaration" ||
+			node.type === "ClassExpression"
+		)
+			declarePattern(node.id, scope);
+		if (isFunction) {
+			declarePattern(node.id, scope);
+			if (Array.isArray(node.params))
+				for (const param of node.params)
+					declarePattern(param, scope);
+		}
+		if (node.type === "CatchClause")
+			declarePattern(node.param, scope);
+		if (node.type === "VariableDeclarator") {
+			let target = scope;
+			if (parent?.kind === "var")
+				while (!target.functionScope && target.parent)
+					target = target.parent;
+			declarePattern(node.id, target, { value: node.init });
+		}
+		if (
+			node.type === "ImportDeclaration" &&
+			Array.isArray(node.specifiers)
+		) {
+			const builtin = ["module", "node:module"].includes(
+				getStaticString(node.source) ?? "",
+			);
+			for (const specifier of node.specifiers as unknown[]) {
+				if (!isSyntaxNode(specifier)) continue;
+				const role: LoaderRole | undefined = !builtin
+					? undefined
+					: specifier.type === "ImportSpecifier"
+						? isIdentifier(
+								specifier.imported,
+								"createRequire",
+							) ||
+							getStaticString(specifier.imported) ===
+								"createRequire"
+							? "factory"
+							: undefined
+						: "module";
+				declarePattern(specifier.local, scope, { role });
+			}
+		}
+	});
+	const roleOf = (
+		value: unknown,
+		seen = new Set<unknown>(),
+	): LoaderRole | undefined => {
+		if (!isSyntaxNode(value) || seen.has(value))
+			return undefined;
+		seen.add(value);
+		if (
+			value.type === "ImportExpression" &&
+			["module", "node:module"].includes(
+				getStaticString(value.source) ?? "",
+			)
+		)
+			return "module";
+		if (value.type === "AwaitExpression")
+			return roleOf(value.argument, seen);
+		if (
+			value.type === "Identifier" &&
+			typeof value.name === "string"
+		) {
+			let scope = scopes.get(value);
+			while (scope) {
+				const binding = scope.bindings.get(value.name);
+				if (binding) {
+					const role =
+						binding.role ?? roleOf(binding.value, seen);
+					return binding.property === "createRequire"
+						? role === "module"
+							? "factory"
+							: undefined
+						: role;
+				}
+				scope = scope.parent;
+			}
+		}
+		if (
+			value.type === "MemberExpression" &&
+			!value.computed &&
+			isIdentifier(value.property, "createRequire") &&
+			roleOf(value.object, seen) === "module"
+		)
+			return "factory";
+		if (
+			value.type === "MemberExpression" &&
+			!value.computed &&
+			isIdentifier(value.property, "resolve") &&
+			roleOf(value.object, seen) === "require"
+		)
+			return "resolve";
+		if (
+			value.type === "CallExpression" &&
+			roleOf(value.callee, seen) === "factory"
+		)
+			return "require";
+		return undefined;
+	};
+	return (value) => roleOf(value);
 }

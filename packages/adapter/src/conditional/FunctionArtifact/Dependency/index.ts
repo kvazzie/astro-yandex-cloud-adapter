@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, realpath } from "node:fs/promises";
 
 import type { PackageJson } from "pkg-types";
 import semver from "semver";
@@ -221,50 +221,20 @@ async function findPackageFromBase(
 	resolutionBase: URL | string,
 	packageName: string,
 ): Promise<{ version: string; directory: string } | undefined> {
-	const requireFunction = createRequire(resolutionBase);
-	const manifestPath = tryResolveModule(
-		requireFunction,
-		`${packageName}/package.json`,
-	);
-	if (manifestPath) {
-		const manifest =
-			await readJsonFile<PackageJson>(manifestPath);
+	for (const modules of createRequire(
+		resolutionBase,
+	).resolve.paths(`${packageName}/package.json`) ?? []) {
+		const directory = join(modules, packageName);
+		const manifest = await readJsonFile<PackageJson>(
+			join(directory, "package.json"),
+		);
 		if (manifest?.version !== undefined)
 			return {
 				version: manifest.version,
-				directory: dirname(manifestPath),
+				directory: await realpath(directory),
 			};
 	}
-	const entryPoint = tryResolveModule(
-		requireFunction,
-		packageName,
-	);
-	if (!entryPoint) return undefined;
-	let current: string | undefined = dirname(entryPoint);
-	while (current !== undefined) {
-		const manifest = await readJsonFile<PackageJson>(
-			join(current, "package.json"),
-		);
-		if (
-			manifest !== undefined &&
-			manifest.name === packageName &&
-			manifest.version !== undefined
-		)
-			return { version: manifest.version, directory: current };
-		current = parentDirectory(current);
-	}
 	return undefined;
-}
-
-function tryResolveModule(
-	requireFunction: ReturnType<typeof createRequire>,
-	importSpecifier: string,
-): string | undefined {
-	try {
-		return requireFunction.resolve(importSpecifier);
-	} catch {
-		return undefined;
-	}
 }
 
 async function readJsonFile<T>(
@@ -311,21 +281,20 @@ async function readLocalLockMetadata(
 	const lockfile = await readJsonFile<NpmLockfile>(lockfilePath);
 	const lockEntry =
 		lockfile?.packages?.[`node_modules/${packageName}`];
-	const entry =
-		lockEntry ?? lockfile?.dependencies?.[packageName];
-	if (!entry || entry.version !== version) return undefined;
+	if (!lockEntry || lockEntry.version !== version)
+		return undefined;
 	return {
-		resolved: entry.resolved,
-		integrity: entry.integrity,
-		license: entry.license,
-		engines: entry.engines,
-		os: entry.os,
-		cpu: entry.cpu,
-		libc: entry.libc,
+		resolved: lockEntry.resolved,
+		integrity: lockEntry.integrity,
+		license: lockEntry.license,
+		engines: lockEntry.engines,
+		os: lockEntry.os,
+		cpu: lockEntry.cpu,
+		libc: lockEntry.libc,
 		// The packages section pins exact transitive versions; the legacy
 		// section only carries ranges, so transitive discovery uses packages.
-		dependencies: lockEntry?.dependencies,
-		optionalDependencies: lockEntry?.optionalDependencies,
+		dependencies: lockEntry.dependencies,
+		optionalDependencies: lockEntry.optionalDependencies,
 	};
 }
 
