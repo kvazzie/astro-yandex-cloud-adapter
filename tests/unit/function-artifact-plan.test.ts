@@ -451,6 +451,10 @@ describe("Function Artifact mutation plans", () => {
 			"import * as mod from 'node:module'; const {builtinModules, createRequire: make} = mod; const load = make(import.meta.url); load(process.env.RUNTIME_PACKAGE);",
 			"import * as mod from 'node:module'; const {builtinModules, Module: moduleClass} = mod; consume(moduleClass);",
 			"import * as mod from 'node:module'; const {builtinModules, default: moduleClass} = mod; consume(moduleClass);",
+			"import * as mod from 'node:module'; const {register} = mod; register('example', import.meta.url);",
+			"import * as mod from 'node:module'; const {register: installHooks} = mod; installHooks('example', import.meta.url);",
+			"import * as mod from 'node:module'; const {builtinModules, 'register': installHooks} = mod; installHooks('example', import.meta.url);",
+			"const {register: installHooks} = await import('node:module'); installHooks('example', import.meta.url);",
 		].flatMap((source) =>
 			(["bundle", "install"] as const).map(
 				(dependencyStrategy) => ({ source, dependencyStrategy }),

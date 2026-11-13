@@ -400,6 +400,8 @@ function isModulePattern(value: unknown): boolean {
 				isSyntaxNode(property.key) &&
 				(property.key.type === "Identifier" ||
 					getStaticString(property.key) !== undefined) &&
+				!isIdentifier(property.key, "register") &&
+				getStaticString(property.key) !== "register" &&
 				isSyntaxNode(property.value) &&
 				property.value.type === "Identifier",
 		)
