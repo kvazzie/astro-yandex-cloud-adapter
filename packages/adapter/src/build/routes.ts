@@ -213,8 +213,12 @@ export function manifestRoutes(plan: RoutePlan): {
         ...route.paths.map((path) => ({ kind: route.routeKind, ...path })),
       );
       if (route.routeKind === "page" && /\/404\/?$/.test(route.pattern)) {
-        const scope = route.pattern.replace(/\/404\/?$/, "") || "/";
-        notFound.push(...route.paths.map((path) => ({ scope, ...path })));
+        notFound.push(
+          ...route.paths.map((path) => ({
+            scope: path.url.replace(/\/404\/?$/, "") || "/",
+            ...path,
+          })),
+        );
       }
     } else {
       onDemand.push({

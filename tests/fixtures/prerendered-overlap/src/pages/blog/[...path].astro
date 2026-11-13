@@ -1,0 +1,10 @@
+---
+export function getStaticPaths() {
+	return [
+		{ params: { path: "b" } },
+		{ params: { path: "b/404" } },
+		{ params: { path: "nested/item" } },
+	];
+}
+---
+<p>Rest page</p>

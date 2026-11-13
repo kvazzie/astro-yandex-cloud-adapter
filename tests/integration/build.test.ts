@@ -1,11 +1,20 @@
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, readFile, readdir, rm, symlink } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+} from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { build } from "astro";
+import yandexCloud from "../../packages/adapter/src/index.js";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { YandexCloudHttpResult } from "../../packages/adapter/src/runtime.js";
@@ -1168,4 +1177,40 @@ describe.sequential("Astro artifact builds", () => {
       }
     },
   );
+});
+
+describe("prerendered dynamic 404 scopes", () => {
+  it("emits a distinct concrete scope for every generated 404 page", async () => {
+    const root = await mkdtemp(join(fixtures, ".dynamic-404-"));
+    try {
+      const pages = join(root, "src/pages/blog/[slug]");
+      await mkdir(pages, { recursive: true });
+      await cp(
+        join(fixtures, "recursive-404/src/pages/blog/[slug]/404.astro"),
+        join(pages, "404.astro"),
+      );
+      await symlink(
+        join(fixtures, "static/node_modules"),
+        join(root, "node_modules"),
+      );
+      await build({
+        root: `${root}/`,
+        configFile: false,
+        adapter: yandexCloud(),
+        base: "/docs",
+        logLevel: "silent",
+      });
+      const deployment = JSON.parse(
+        await readFile(join(root, "dist/yandex-cloud.json"), "utf8"),
+      ) as YandexCloudManifestV1;
+      expect(
+        deployment.routes.notFound.map(({ scope, url }) => ({ scope, url })),
+      ).toEqual([
+        { scope: "/docs/blog/a", url: "/docs/blog/a/404/" },
+        { scope: "/docs/blog/b", url: "/docs/blog/b/404/" },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

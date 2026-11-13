@@ -1,0 +1,9 @@
+---
+const action =
+  "https://functions.yandexcloud.net/function-id?__astro_path=%2Fdocs%2Fapi%2Fsubmit%3Fsource%3Dstatic%26__astro_path%3Duser-value";
+---
+
+<form method="post" action={action}>
+  <label>Name <input name="name" /></label>
+  <button type="submit">Send</button>
+</form>
