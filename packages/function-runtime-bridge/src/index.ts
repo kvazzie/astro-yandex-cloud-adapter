@@ -115,10 +115,12 @@ function directRequestTarget(
 	const path = target.split("?", 1)[0]!;
 	let decodedPath: string;
 	try {
-		const decoded = decodeURIComponent(target);
-		if (!decoded.startsWith("/") || decoded.startsWith("//"))
-			throw invalid();
 		decodedPath = decodeURIComponent(path);
+		if (
+			!decodedPath.startsWith("/") ||
+			decodedPath.startsWith("//")
+		)
+			throw invalid();
 		// URLSearchParams repairs malformed outer encoding; reject it instead.
 		for (const entry of query.split("&")) {
 			const equals = entry.indexOf("=");

@@ -82,6 +82,7 @@ export default {
         "tests/fixtures/static/package.json",
         "tests/unit/default-import-name.test.ts",
         "tests/unit/errors-namespace.test.ts",
+        "tests/unit/function-runtime-bridge.test.ts",
         "tests/unit/import-paths.test.ts",
         "tests/unit/package-info.test.ts",
         "tsconfig.json",
@@ -96,6 +97,7 @@ export default {
       files: [
         ".changeset/extract-deployment-manifest-targets.md",
         ".changeset/extract-function-runtime-bridge.md",
+        ".changeset/preserve-explicit-js-and-query-bytes.md",
         ".github/workflows/ci.yml",
         "packages/deployment-manifest/README.md",
         "packages/eslint-plugin/README.md",

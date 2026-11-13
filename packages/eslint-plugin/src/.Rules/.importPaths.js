@@ -21,6 +21,11 @@ const importPathsRule = {
 				suffixStart < 0 ? source : source.slice(0, suffixStart);
 			const suffix =
 				suffixStart < 0 ? "" : source.slice(suffixStart);
+			if (
+				path.endsWith(".js") &&
+				existsSync(resolve(dirname(context.filename), path))
+			)
+				return source;
 			const stem = path.replace(/\.(?:js|ts)$/, "");
 			const absolute = resolve(dirname(context.filename), stem);
 			let file = `${absolute}.ts`;

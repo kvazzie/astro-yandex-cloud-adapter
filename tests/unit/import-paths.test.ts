@@ -22,6 +22,7 @@ for (const file of [
 	"ambiguous.ts",
 	"ambiguous/index.ts",
 	"native.js",
+	"native.ts",
 	"data.json",
 ]) {
 	mkdirSync(join(directory, file, ".."), { recursive: true });
@@ -108,6 +109,14 @@ describe("TypeScript import specifiers", () => {
 		'new URL("./file.js", import.meta.url);',
 	])("accepts %s", (source) => {
 		expect(linter.verify(source, config, options)).toEqual([]);
+	});
+
+	it("preserves an existing JavaScript file when a TypeScript sibling exists", () => {
+		const source = 'import "./native.js?raw#part";';
+		const result = linter.verifyAndFix(source, config, options);
+		expect(result.output).toBe(source);
+		expect(result.messages).toEqual([]);
+		expect(result.fixed).toBe(false);
 	});
 
 	it("resolves parent directories relative to the importing file", () => {
