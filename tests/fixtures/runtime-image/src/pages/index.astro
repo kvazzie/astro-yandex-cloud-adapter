@@ -1,0 +1,10 @@
+---
+import { getImage } from "astro:assets";
+
+const src = Astro.url.searchParams.get("src") ?? "http://127.0.0.1/image.png";
+const image = await getImage({ src, width: 8, height: 8, format: "png" });
+---
+
+<!doctype html>
+<title>Runtime image fixture</title>
+<img src={image.src} width="8" height="8" alt="Runtime image" />
