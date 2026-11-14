@@ -39,16 +39,6 @@ export function findRuntimePackageImports(
 	return names;
 }
 
-declare const directoryPathBrand: unique symbol;
-
-export type DirectoryPath = string & {
-	readonly [directoryPathBrand]: "DirectoryPath";
-};
-
-export function asDirectoryPath(path: string): DirectoryPath {
-	return path as DirectoryPath;
-}
-
 function findImportedPackageNames(
 	moduleSource: string,
 	relativePath: string,

@@ -5,6 +5,8 @@ import type { PackageJson } from "pkg-types";
 export interface ResolvedRuntimeDependency {
 	name: string;
 	registryName?: string;
+	/** Relative npm package location, including any nested node_modules. */
+	location: string;
 	version: string;
 	optional?: boolean;
 	os?: string[];
@@ -16,6 +18,8 @@ export interface ResolvedRuntimeDependency {
 	engines?: Record<string, string>;
 	dependencies?: Record<string, string>;
 	optionalDependencies?: Record<string, string>;
+	peerDependencies?: Record<string, string>;
+	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 }
 
 export function exactDependencyVersion(dependency: {
@@ -38,7 +42,7 @@ function sortedDependencies(
 	dependencies: ResolvedRuntimeDependency[],
 ): ResolvedRuntimeDependency[] {
 	return dependencies.toSorted((a, b) =>
-		compareNames(a.name, b.name),
+		compareNames(a.location, b.location),
 	);
 }
 
@@ -47,7 +51,11 @@ function exactDependencies(
 ): Record<string, string> {
 	const exact: Record<string, string> = {};
 	for (const dependency of sortedDependencies(dependencies)) {
-		exact[dependency.name] = exactDependencyVersion(dependency);
+		if (
+			dependency.location === `node_modules/${dependency.name}`
+		)
+			exact[dependency.name] =
+				exactDependencyVersion(dependency);
 	}
 	return exact;
 }
@@ -99,6 +107,8 @@ interface NpmLockPackageEntry {
 	engines?: Record<string, string>;
 	dependencies?: Record<string, string>;
 	optionalDependencies?: Record<string, string>;
+	peerDependencies?: Record<string, string>;
+	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 }
 
 function lockPackageEntry(
@@ -131,6 +141,16 @@ function lockPackageEntry(
 	);
 	if (optionalDependencies !== undefined)
 		entry.optionalDependencies = optionalDependencies;
+	if (dependency.peerDependencies !== undefined)
+		entry.peerDependencies = sortedRecord(
+			dependency.peerDependencies,
+		);
+	if (dependency.peerDependenciesMeta !== undefined)
+		entry.peerDependenciesMeta = Object.fromEntries(
+			Object.entries(dependency.peerDependenciesMeta).sort(
+				([a], [b]) => compareNames(a, b),
+			),
+		);
 	return entry;
 }
 
@@ -154,14 +174,9 @@ export function formatNpmLockfile(
 				: {}),
 		},
 	};
-	const legacy: Record<string, NpmLockPackageEntry> = {};
 	for (const dependency of sorted) {
-		const entry = lockPackageEntry(dependency);
-		lockPackages[`node_modules/${dependency.name}`] = entry;
-		legacy[dependency.name] = {
-			...entry,
-			version: exactDependencyVersion(dependency),
-		};
+		lockPackages[dependency.location] =
+			lockPackageEntry(dependency);
 	}
 	return `${JSON.stringify(
 		{
@@ -170,7 +185,6 @@ export function formatNpmLockfile(
 			lockfileVersion: NPM_LOCKFILE_VERSION,
 			requires: true,
 			packages: lockPackages,
-			dependencies: legacy,
 		},
 		null,
 		2,

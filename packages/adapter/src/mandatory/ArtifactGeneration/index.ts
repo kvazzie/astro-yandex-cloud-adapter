@@ -1,4 +1,4 @@
-import { relative, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
@@ -166,7 +166,9 @@ async function inspectRoutes(
 		await Promise.all(
 			clientFiles
 				.filter((file) => file.endsWith(".html"))
-				.map((file) => readFile(new URL(file, client), "utf8")),
+				.map((file) =>
+					readFile(join(fileURLToPath(client), file), "utf8"),
+				),
 		)
 	).join("\n");
 	const evidence = {
@@ -209,7 +211,10 @@ async function hasServerIslandEntries(
 		let found = false;
 		visitSyntax(
 			parseModule(
-				await readFile(new URL(file, directory), "utf8"),
+				await readFile(
+					join(fileURLToPath(directory), file),
+					"utf8",
+				),
 			),
 			(node) => {
 				if (
