@@ -18,9 +18,12 @@ export function parseRegistryRequirement(
 }
 
 export interface RegistryVersionMetadata {
+	name?: string;
 	version?: string;
 	dependencies?: Record<string, string>;
 	optionalDependencies?: Record<string, string>;
+	peerDependencies?: Record<string, string>;
+	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 	resolved?: string;
 	integrity?: string;
 	license?: string;
@@ -45,6 +48,8 @@ interface PublishedVersion {
 	version?: string;
 	dependencies?: Record<string, string>;
 	optionalDependencies?: Record<string, string>;
+	peerDependencies?: Record<string, string>;
+	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 	dist?: { tarball?: string; integrity?: string };
 	license?: unknown;
 	engines?: Record<string, string>;
@@ -94,6 +99,8 @@ async function fetchRegistryMetadata(
 		version,
 		dependencies: metadata.dependencies,
 		optionalDependencies: metadata.optionalDependencies,
+		peerDependencies: metadata.peerDependencies,
+		peerDependenciesMeta: metadata.peerDependenciesMeta,
 		resolved: metadata.dist?.tarball,
 		integrity: metadata.dist?.integrity,
 		license: extractLicenseIdentifier(metadata.license),

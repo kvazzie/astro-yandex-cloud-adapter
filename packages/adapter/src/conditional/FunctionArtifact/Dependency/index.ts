@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { access, readFile, realpath } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 
 import type { PackageJson } from "pkg-types";
 import semver from "semver";
@@ -12,10 +12,6 @@ import {
 	type ResolvedRuntimeDependency,
 } from "./Metadata.ts";
 import {
-	asDirectoryPath,
-	type DirectoryPath,
-} from "./ImportSpecifier.ts";
-import {
 	parseRegistryRequirement,
 	type Registry,
 	type RegistryVersionMetadata,
@@ -25,240 +21,467 @@ interface DependencySource {
 	registryName?: string;
 	version: string;
 	directory?: string;
+	lockLocation?: string;
 	metadata?: RegistryVersionMetadata;
 }
 
-/** Pins the runtime graph, including optional packages absent on the build host. */
+interface InstalledPackage extends DependencySource {
+	directory: string;
+}
+
+/** Pins installed contexts, retaining absent optional packages for other platforms. */
 export async function resolvePinnedRuntimeDependencies(
 	appRoot: URL,
 	directDependencyNames: Set<string>,
 	registry: Registry,
 ): Promise<ResolvedRuntimeDependency[]> {
-	const appDirectory = asDirectoryPath(fileURLToPath(appRoot));
-	const appManifestPath = new URL("package.json", appRoot);
-	const pinned = new Map<string, ResolvedRuntimeDependency>();
-	const visited = new Set<string>();
-	const discoveredVersions = new Map<string, string>();
-	const pending: Array<{
-		dependencyName: string;
-		resolutionBases: Array<URL | string>;
-		source?: DependencySource;
-	}> = Array.from(directDependencyNames)
-		.sort()
-		.map((dependencyName) => ({
-			dependencyName,
-			resolutionBases: [appManifestPath],
-		}));
-	while (pending.length) {
-		const current = pending.shift();
-		if (!current) continue;
-		const source: DependencySource | undefined =
-			current.source ??
-			(await findInstalledPackage(
-				current.resolutionBases,
-				current.dependencyName,
-			));
-		if (!source) {
-			throw new Error(
-				`The "install" dependency strategy cannot resolve the runtime package "${current.dependencyName}" imported by the Function Artifact. Install it as an application dependency so its exact version can be written to the Function Artifact.`,
-			);
+	const appDirectory = fileURLToPath(appRoot);
+	const appManifestPath = join(appDirectory, "package.json");
+	const lock = await readLocalLock(appDirectory);
+	const nodes = new Map<
+		string,
+		{
+			source: DependencySource;
+			dependency: ResolvedRuntimeDependency;
+			edges: Array<{ location: string; optional: boolean }>;
+			ancestry: string[];
 		}
-		assertCompatibleVersion(
-			discoveredVersions,
-			current.dependencyName,
-			exactDependencyVersion(source),
+	>();
+	const pending: string[] = [];
+	const roots: string[] = [];
+	type Child = {
+		name: string;
+		source: DependencySource;
+		optional: boolean;
+	};
+	// Peer checks must not depend on whether their child nodes have been queued yet.
+	const resolvedSources = new Map<
+		string,
+		Promise<{
+			metadata: RegistryVersionMetadata;
+			children: Child[];
+		}>
+	>();
+	const identity = (name: string, source: DependencySource) =>
+		source.directory ??
+		source.lockLocation ??
+		`${source.registryName ?? name}@${source.version}`;
+	const resolveSource = (
+		packageName: string,
+		source: DependencySource,
+	) => {
+		const key = identity(packageName, source);
+		let result = resolvedSources.get(key);
+		if (!result) {
+			result = (async () => {
+				const local = source.directory
+					? await readJsonFile<PackageJson>(
+							join(source.directory, "package.json"),
+						)
+					: undefined;
+				const entry =
+					source.directory && lock
+						? lock.packages?.[
+								relative(lock.directory, source.directory)
+									.split("\\")
+									.join("/")
+							]
+						: undefined;
+				const selected =
+					source.metadata ??
+					(entry?.version === source.version
+						? entry
+						: await registry.resolve(
+								source.registryName ?? packageName,
+								source.version,
+							));
+				const metadata = {
+					...selected,
+					...Object.fromEntries(
+						[
+							"dependencies",
+							"optionalDependencies",
+							"peerDependencies",
+							"peerDependenciesMeta",
+						].flatMap((field) =>
+							local?.[field] === undefined
+								? []
+								: [[field, local[field]]],
+						),
+					),
+				};
+				const children: Child[] = [];
+				const ranges = new Map<
+					string,
+					{ range: string; optional: boolean; peer: boolean }
+				>();
+				for (const [name, range] of Object.entries(
+					metadata.peerDependencies ?? {},
+				))
+					ranges.set(name, {
+						range,
+						optional:
+							metadata.peerDependenciesMeta?.[name]?.optional ===
+							true,
+						peer: true,
+					});
+				for (const [name, range] of Object.entries(
+					metadata.dependencies ?? {},
+				))
+					ranges.set(name, {
+						range,
+						optional: false,
+						peer: false,
+					});
+				for (const [name, range] of Object.entries(
+					metadata.optionalDependencies ?? {},
+				))
+					ranges.set(name, {
+						range,
+						optional: true,
+						peer: false,
+					});
+				for (const [name, { range, optional, peer }] of [
+					...ranges,
+				].sort(([a], [b]) => compareNames(a, b))) {
+					const requirement = parseRegistryRequirement(
+						name,
+						range,
+					);
+					let locked =
+						!source.directory && source.lockLocation && lock
+							? findLockedPackage(
+									lock,
+									source.lockLocation,
+									name,
+								)
+							: undefined;
+					let child: DependencySource | undefined = locked
+						? {
+								version: locked.metadata.version!,
+								...(locked.metadata.name &&
+								locked.metadata.name !== name
+									? { registryName: locked.metadata.name }
+									: {}),
+								metadata: locked.metadata,
+								lockLocation: locked.location,
+							}
+						: await findInstalledPackage(
+								join(
+									source.directory ??
+										source.lockLocation ??
+										appDirectory,
+									"package.json",
+								),
+								name,
+							);
+					if (
+						child &&
+						(!semver.satisfies(
+							child.version,
+							requirement.requirement,
+						) ||
+							(requirement.name !== name &&
+								(child.registryName ?? name) !==
+									requirement.name))
+					)
+						throw unresolved(name, packageName, range);
+					if (!child) {
+						if (peer && optional) continue;
+						if (source.directory && !optional)
+							throw unresolved(name, packageName, range, peer);
+						locked = lock
+							? findLockedPackage(
+									lock,
+									source.directory ??
+										source.lockLocation ??
+										appDirectory,
+									name,
+								)
+							: undefined;
+						const childMetadata =
+							locked?.metadata ??
+							(await registry.resolve(
+								requirement.name,
+								requirement.requirement,
+							));
+						const version =
+							childMetadata.version ??
+							semver.valid(requirement.requirement);
+						if (!version)
+							throw new Error(
+								`The "install" dependency strategy cannot pin ${name}@${range} to an exact version.`,
+							);
+						if (
+							!semver.satisfies(version, requirement.requirement)
+						)
+							throw unresolved(name, packageName, range);
+						child = {
+							version,
+							...((childMetadata.name ?? requirement.name) !==
+							name
+								? {
+										registryName:
+											childMetadata.name ?? requirement.name,
+									}
+								: {}),
+							metadata: childMetadata,
+							...(locked
+								? { lockLocation: locked.location }
+								: {}),
+						};
+					}
+					children.push({ name, source: child, optional });
+				}
+				return { metadata, children };
+			})();
+			resolvedSources.set(key, result);
+		}
+		return result;
+	};
+	const packageLocation = (scope: string, name: string) =>
+		`${scope ? `${scope}/` : ""}node_modules/${name}`;
+	// Installed bindings constrain peers even before their output nodes are emitted.
+	const contexts = new Map<string, string | undefined>();
+	const installedSources = new Map<
+		string,
+		Promise<DependencySource | undefined>
+	>();
+	const sourceAt = (scope: string, name: string) => {
+		const location = packageLocation(scope, name);
+		let result = installedSources.get(location);
+		if (!result) {
+			result = (async () => {
+				const owner = nodes.get(scope)?.source;
+				const locked =
+					!owner?.directory && owner?.lockLocation && lock
+						? findLockedPackage(lock, owner.lockLocation, name)
+						: undefined;
+				if (locked)
+					return {
+						version: locked.metadata.version!,
+						...(locked.metadata.name &&
+						locked.metadata.name !== name
+							? { registryName: locked.metadata.name }
+							: {}),
+						metadata: locked.metadata,
+						lockLocation: locked.location,
+					};
+				return findInstalledPackage(
+					scope
+						? join(
+								owner?.directory ??
+									owner?.lockLocation ??
+									appDirectory,
+								"package.json",
+							)
+						: appManifestPath,
+					name,
+				);
+			})();
+			installedSources.set(location, result);
+		}
+		return result;
+	};
+	const contextIdentity = async (
+		scope: string,
+		name: string,
+	) => {
+		const location = packageLocation(scope, name);
+		if (!contexts.has(location)) {
+			const installed = await sourceAt(scope, name);
+			if (installed)
+				contexts.set(location, identity(name, installed));
+		}
+		return contexts.get(location);
+	};
+	const place = async (
+		name: string,
+		source: DependencySource,
+		parent = "",
+	): Promise<string> => {
+		const key = identity(name, source);
+		const { metadata, children } = await resolveSource(
+			name,
+			source,
 		);
-		if (visited.has(current.dependencyName)) continue;
-		visited.add(current.dependencyName);
-		const metadata =
-			source.metadata ??
-			(await readLocalLockMetadata(
-				appDirectory,
-				current.dependencyName,
-				source.version,
-			)) ??
-			(await registry.resolve(
-				source.registryName ?? current.dependencyName,
-				source.version,
-			));
+		const peers = Object.keys(
+			metadata.peerDependencies ?? {},
+		).map((peer) => {
+			const child = children.find(({ name }) => name === peer);
+			return [
+				peer,
+				child ? identity(peer, child.source) : undefined,
+			] as const;
+		});
+		let ancestor = parent;
+		const available: string[] = [];
+		let reused: string | undefined;
+		while (true) {
+			const location = packageLocation(ancestor, name);
+			const actual = await contextIdentity(ancestor, name);
+			if (contexts.has(location) && actual !== key) break;
+			let peersMatch = true;
+			for (const [peer, expected] of peers) {
+				const actual = await contextIdentity(ancestor, peer);
+				if (
+					contexts.has(packageLocation(ancestor, peer)) &&
+					actual !== expected
+				)
+					peersMatch = false;
+			}
+			if (!peersMatch) break;
+			available.push(ancestor);
+			if (nodes.has(location)) {
+				reused = location;
+				break;
+			}
+			if (!ancestor) break;
+			ancestor = parentLocation(ancestor);
+		}
+		const location =
+			reused ??
+			packageLocation(available.at(-1) ?? parent, name);
+		const ancestry = nodes.get(parent)?.ancestry ?? [];
+		if (!reused && ancestry.includes(key))
+			throw new Error(
+				`The "install" dependency strategy cannot preserve the installed dependency cycle at ${name}@${source.version}: a different installed context shadows the earlier instance. Artifact generation stopped before expanding another copy. Use "bundle" where supported or change the installed layout; no dependency versions were reselected.`,
+			);
+		contexts.set(location, key);
+		// Children must not shadow this package's own peers, including optional absence.
+		for (const [peer, expected] of peers)
+			contexts.set(packageLocation(location, peer), expected);
+		// Protect the whole lookup path, including when reusing an existing node.
+		for (const scope of available) {
+			contexts.set(packageLocation(scope, name), key);
+			for (const [peer, expected] of peers)
+				contexts.set(packageLocation(scope, peer), expected);
+		}
+		if (reused) return reused;
+		nodes.set(location, {
+			source,
+			dependency: {
+				name,
+				location,
+				version: source.version,
+				...(source.registryName
+					? { registryName: source.registryName }
+					: {}),
+			},
+			edges: [],
+			ancestry: [...ancestry, key],
+		});
+		pending.push(location);
+		return location;
+	};
+	for (const name of [...directDependencyNames].sort(
+		compareNames,
+	)) {
+		const source = await sourceAt("", name);
+		if (!source) throw unresolved(name);
+		roots.push(await place(name, source));
+	}
+	while (pending.length) {
+		const location = pending.shift()!;
+		const node = nodes.get(location)!;
+		const { source, dependency } = node;
+		const { metadata, children } = await resolveSource(
+			dependency.name,
+			source,
+		);
+		for (const field of [
+			"resolved",
+			"integrity",
+			"license",
+			"engines",
+			"os",
+			"cpu",
+			"libc",
+			"peerDependenciesMeta",
+		] as const) {
+			if (metadata[field] !== undefined)
+				Object.assign(dependency, { [field]: metadata[field] });
+		}
 		const dependencies: Record<string, string> = {};
 		const optionalDependencies: Record<string, string> = {};
-		const resolutionBases = [
-			...(source.directory
-				? [join(source.directory, "package.json")]
-				: []),
-			appManifestPath,
-		];
-		const transitiveRanges = [
-			...Object.entries(metadata.dependencies ?? {})
-				.filter(
-					([name]) =>
-						metadata.optionalDependencies?.[name] === undefined,
-				)
-				.map(([name, range]) => ({
-					name,
-					range,
-					optional: false,
-				})),
-			...Object.entries(metadata.optionalDependencies ?? {}).map(
-				([name, range]) => ({ name, range, optional: true }),
-			),
-		].sort((a, b) => compareNames(a.name, b.name));
-		for (const { name, range, optional } of transitiveRanges) {
-			const requirement = parseRegistryRequirement(name, range);
-			let dependency: DependencySource | undefined =
-				await findInstalledPackage(resolutionBases, name);
-			if (
-				!dependency ||
-				!semver.satisfies(
-					dependency.version,
-					requirement.requirement,
-				) ||
-				(requirement.name !== name &&
-					(dependency.registryName ?? name) !== requirement.name)
-			) {
-				if (!optional && source.directory) {
-					throw new Error(
-						`The "install" dependency strategy cannot resolve the runtime package "${name}" (required by "${current.dependencyName}" as "${range}"). Install a matching application dependency.`,
-					);
-				}
-				const remoteMetadata = await registry.resolve(
-					requirement.name,
-					requirement.requirement,
-				);
-				const version =
-					remoteMetadata.version ??
-					semver.valid(requirement.requirement);
-				if (!version) {
-					throw new Error(
-						`The "install" dependency strategy cannot pin ${name}@${range} to an exact version.`,
-					);
-				}
-				dependency = {
-					version,
-					metadata: remoteMetadata,
-					...(requirement.name !== name
-						? { registryName: requirement.name }
-						: {}),
-				};
-			}
-			assertCompatibleVersion(
-				discoveredVersions,
-				name,
-				exactDependencyVersion(dependency),
-			);
+		const peerDependencies = { ...metadata.peerDependencies };
+		for (const { name, source: child, optional } of children) {
+			const childLocation = await place(name, child, location);
+			node.edges.push({ location: childLocation, optional });
 			(optional ? optionalDependencies : dependencies)[name] =
-				exactDependencyVersion(dependency);
-			if (!visited.has(name)) {
-				pending.push({
-					dependencyName: name,
-					resolutionBases,
-					source: dependency,
-				});
-			}
+				exactDependencyVersion(child);
+			if (metadata.peerDependencies?.[name] !== undefined)
+				peerDependencies[name] = exactDependencyVersion(child);
 		}
-		pinned.set(current.dependencyName, {
-			name: current.dependencyName,
-			version: source.version,
-			...(source.registryName
-				? { registryName: source.registryName }
-				: {}),
-			...(metadata.resolved !== undefined
-				? { resolved: metadata.resolved }
-				: {}),
-			...(metadata.integrity !== undefined
-				? { integrity: metadata.integrity }
-				: {}),
-			...(metadata.license !== undefined
-				? { license: metadata.license }
-				: {}),
-			...(metadata.engines !== undefined
-				? { engines: metadata.engines }
-				: {}),
-			...(metadata.os !== undefined ? { os: metadata.os } : {}),
-			...(metadata.cpu !== undefined
-				? { cpu: metadata.cpu }
-				: {}),
-			...(metadata.libc !== undefined
-				? { libc: metadata.libc }
-				: {}),
-			...(Object.keys(dependencies).length
-				? { dependencies }
-				: {}),
-			...(Object.keys(optionalDependencies).length
-				? { optionalDependencies }
-				: {}),
-		});
+		if (Object.keys(dependencies).length)
+			dependency.dependencies = dependencies;
+		if (Object.keys(optionalDependencies).length)
+			dependency.optionalDependencies = optionalDependencies;
+		if (Object.keys(peerDependencies).length)
+			dependency.peerDependencies = peerDependencies;
 	}
-	// An optional-first discovery must not make a later required edge optional.
+	// Required reachability is per location: an optional discovery cannot demote a required edge.
 	const required = new Set<string>();
-	const requiredPending = [...directDependencyNames];
+	const requiredPending = [...roots];
 	while (requiredPending.length) {
-		const name = requiredPending.shift()!;
-		if (required.has(name)) continue;
-		required.add(name);
+		const location = requiredPending.shift()!;
+		if (required.has(location)) continue;
+		required.add(location);
 		requiredPending.push(
-			...Object.keys(pinned.get(name)?.dependencies ?? {}),
+			...nodes
+				.get(location)!
+				.edges.filter((edge) => !edge.optional)
+				.map((edge) => edge.location),
 		);
 	}
-	return [...pinned.values()].map((dependency) =>
-		required.has(dependency.name)
+	return [...nodes].map(([location, { dependency }]) =>
+		required.has(location)
 			? dependency
 			: { ...dependency, optional: true },
 	);
 }
 
-function assertCompatibleVersion(
-	discoveredVersions: Map<string, string>,
-	dependencyName: string,
-	version: string,
-): void {
-	const previous = discoveredVersions.get(dependencyName);
-	if (previous !== undefined && previous !== version) {
-		throw new Error(
-			`The "install" dependency strategy found conflicting versions of the runtime package "${dependencyName}" (${previous} and ${version}). The Function Artifact lockfile cannot represent both. Align dependency versions or use dependencyStrategy: "bundle" when the package can be bundled.`,
-		);
-	}
-	discoveredVersions.set(dependencyName, version);
+function unresolved(
+	name: string,
+	parent?: string,
+	range?: string,
+	peer = false,
+): Error {
+	return new Error(
+		`The "install" dependency strategy cannot resolve ${peer ? "the required runtime peer" : "the runtime package"} "${name}"${parent ? ` (required by "${parent}" as "${range}")` : " imported by the Function Artifact"}. Install a matching application dependency so its exact version can be written to the Function Artifact.`,
+	);
 }
 
+function parentLocation(location: string): string {
+	const index = location.lastIndexOf("/node_modules/");
+	return index === -1 ? "" : location.slice(0, index);
+}
+
+/** Search package directories, not exported entrypoints or CommonJS conditions. */
 async function findInstalledPackage(
-	resolutionBases: Array<URL | string>,
-	packageName: string,
-): Promise<
-	(DependencySource & { directory: string }) | undefined
-> {
-	for (const resolutionBase of resolutionBases) {
-		const installed = await findPackageFromBase(
-			resolutionBase,
-			packageName,
-		);
-		if (installed) return installed;
-	}
-	return undefined;
-}
-
-async function findPackageFromBase(
-	resolutionBase: URL | string,
-	packageName: string,
-): Promise<
-	(DependencySource & { directory: string }) | undefined
-> {
-	for (const modules of createRequire(
-		resolutionBase,
-	).resolve.paths(`${packageName}/package.json`) ?? []) {
-		const directory = join(modules, packageName);
+	base: string,
+	name: string,
+): Promise<InstalledPackage | undefined> {
+	for (const modules of createRequire(base).resolve.paths(
+		`${name}/package.json`,
+	) ?? []) {
+		const directory = join(modules, name);
 		const manifest = await readJsonFile<PackageJson>(
 			join(directory, "package.json"),
 		);
-		if (manifest?.version !== undefined)
+		if (manifest !== undefined) {
+			if (!manifest.version || !semver.valid(manifest.version))
+				throw new Error(
+					`Cannot read an exact dependency version at ${directory}.`,
+				);
 			return {
 				version: manifest.version,
-				...(manifest.name && manifest.name !== packageName
+				...(manifest.name && manifest.name !== name
 					? { registryName: manifest.name }
 					: {}),
 				directory: await realpath(directory),
 			};
+		}
 	}
 	return undefined;
 }
@@ -268,79 +491,56 @@ async function readJsonFile<T>(
 ): Promise<T | undefined> {
 	try {
 		return JSON.parse(await readFile(filePath, "utf8")) as T;
-	} catch {
-		return undefined;
+	} catch (error) {
+		if (
+			["ENOENT", "ENOTDIR"].includes(
+				(error as NodeJS.ErrnoException).code ?? "",
+			)
+		)
+			return undefined;
+		throw new Error(
+			`Cannot read dependency metadata at ${filePath}.`,
+			{ cause: error },
+		);
 	}
 }
 
-function parentDirectory(childPath: string): string | undefined {
-	const parent = dirname(childPath);
-	return parent === childPath ? undefined : parent;
+interface LocalLock {
+	directory: string;
+	packages?: Record<string, RegistryVersionMetadata>;
 }
 
-interface NpmLockEntry {
-	os?: string[];
-	cpu?: string[];
-	libc?: string[];
-	version?: string;
-	resolved?: string;
-	integrity?: string;
-	license?: string;
-	engines?: Record<string, string>;
-	dependencies?: Record<string, string>;
-	optionalDependencies?: Record<string, string>;
-}
-
-interface NpmLockfile {
-	packages?: Record<string, NpmLockEntry>;
-	dependencies?: Record<string, NpmLockEntry>;
-}
-
-async function readLocalLockMetadata(
-	fromDirectory: DirectoryPath,
-	packageName: string,
-	version: string,
-): Promise<RegistryVersionMetadata | undefined> {
-	const lockfilePath =
-		await findNearestPackageLock(fromDirectory);
-	if (!lockfilePath) return undefined;
-	const lockfile = await readJsonFile<NpmLockfile>(lockfilePath);
-	const lockEntry =
-		lockfile?.packages?.[`node_modules/${packageName}`];
-	if (!lockEntry || lockEntry.version !== version)
-		return undefined;
-	return {
-		resolved: lockEntry.resolved,
-		integrity: lockEntry.integrity,
-		license: lockEntry.license,
-		engines: lockEntry.engines,
-		os: lockEntry.os,
-		cpu: lockEntry.cpu,
-		libc: lockEntry.libc,
-		// The packages section pins exact transitive versions; the legacy
-		// section only carries ranges, so transitive discovery uses packages.
-		dependencies: lockEntry.dependencies,
-		optionalDependencies: lockEntry.optionalDependencies,
-	};
-}
-
-async function findNearestPackageLock(
-	fromDirectory: DirectoryPath,
-): Promise<string | undefined> {
-	let current: string | undefined = resolve(fromDirectory);
-	while (current !== undefined) {
-		const candidate = join(current, "package-lock.json");
-		if (await pathExists(candidate)) return candidate;
-		current = parentDirectory(current);
+function findLockedPackage(
+	lock: LocalLock,
+	directory: string,
+	name: string,
+):
+	| { location: string; metadata: RegistryVersionMetadata }
+	| undefined {
+	for (const modules of createRequire(
+		join(directory, "package.json"),
+	).resolve.paths(`${name}/package.json`) ?? []) {
+		const location = join(modules, name);
+		const metadata =
+			lock.packages?.[
+				relative(lock.directory, location).split("\\").join("/")
+			];
+		if (metadata?.version) return { location, metadata };
 	}
 	return undefined;
 }
 
-async function pathExists(filePath: string): Promise<boolean> {
-	try {
-		await access(filePath);
-		return true;
-	} catch {
-		return false;
+async function readLocalLock(
+	fromDirectory: string,
+): Promise<LocalLock | undefined> {
+	let directory = fromDirectory;
+	while (true) {
+		const lock = await readJsonFile<LocalLock>(
+			join(directory, "package-lock.json"),
+		);
+		if (lock) return { ...lock, directory };
+		const parent = dirname(directory);
+		if (parent === directory) return undefined;
+		directory = parent;
 	}
 }

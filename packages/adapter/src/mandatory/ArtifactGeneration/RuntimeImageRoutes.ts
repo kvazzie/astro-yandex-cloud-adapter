@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type { IntegrationResolvedRoute } from "astro";
 import { glob } from "tinyglobby";
@@ -44,7 +45,7 @@ export async function hasRuntimeImageCalls(
 		onlyFiles: true,
 	})) {
 		const source = await readFile(
-			new URL(file, directory),
+			join(fileURLToPath(directory), file),
 			"utf8",
 		);
 		const syntax = parseModule(source);
@@ -57,11 +58,14 @@ export async function hasRuntimeImageCalls(
 			)
 				declarations.set(node.id.name, node);
 		});
-		modules.set(new URL(file, directory).href, {
-			source,
-			syntax,
-			declarations,
-		});
+		modules.set(
+			pathToFileURL(join(fileURLToPath(directory), file)).href,
+			{
+				source,
+				syntax,
+				declarations,
+			},
+		);
 	}
 
 	const mapModules = new Set<string>();

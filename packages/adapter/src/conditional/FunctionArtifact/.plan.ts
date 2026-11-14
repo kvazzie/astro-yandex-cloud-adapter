@@ -1,4 +1,4 @@
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as Effect from "effect/Effect";
 import type { RoutePlan } from "../../mandatory/ArtifactGeneration/RouteRequirements";
@@ -98,9 +98,8 @@ export function planPreparation(
 					});
 				}
 				for (const file of files.values()) {
-					const destination = new URL(
-						file.path,
-						artifact.directory,
+					const destination = pathToFileURL(
+						join(fileURLToPath(artifact.directory), file.path),
 					);
 					if (file.from?.href === destination.href) continue;
 					const parent = pathToFileURL(

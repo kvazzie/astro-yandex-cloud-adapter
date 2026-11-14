@@ -210,8 +210,11 @@ _Dependency_ selection supported.
 
 An `install` build needs an installed application _Dependency_
 with a discoverable version. Required child packages must satisfy
-their declared version ranges. Optional packages absent on the
-build host can require exact registry resolution too.
+their declared version ranges. A required peer absent from an
+installed package's context is identified as a missing required
+peer; it is not selected from the registry or silently removed
+from the metadata. Optional packages absent on the build host can
+require exact registry resolution too.
 
 Install the missing or matching _Dependency_ and rebuild. A
 package that exists but cannot be read is not proven absent;
@@ -221,21 +224,13 @@ condition.
 
 ### Multiple installed dependency versions
 
-The current `install` implementation reports
-`conflicting versions of the runtime package` when it discovers
-different exact versions for one package name. Its generated
-metadata currently represents each package name once. npm itself
-supports nested packages with multiple versions; this comparison
-does not prove that the application's requirements are invalid or
-impossible to install.
-
-This is a current implementation limitation under review, not an
-established _Domain Error_. Using `bundle`, where supported, or
-aligning installed versions may avoid the current guard. These
-workarounds do not establish that the original graph was wrong.
-See the
+`install` preserves distinct installed versions and peer contexts
+in nested npm lockfile locations. It does not select a common
+version or require a flat tree. The former
+`conflicting versions of the runtime package` guard was a private
+representation defect, not an established _Domain Error_. See the
 [dependency representation finding](domain-error-audit.md#dependency-graph-representation)
-for evidence and the unresolved delivery-contract decision.
+for its history and regression evidence.
 
 ### [_Dependency Metadata Failure_](../GLOSSARY.md#dependency-metadata-failure)
 
@@ -248,8 +243,9 @@ still be necessary to retain its supported runtime variant.
 Restore readable local metadata or access to the configured
 registry and verify the named package/version. A package that
 genuinely has no matching version is a _Dependency Resolution
-Failure_. Current local lookup can suppress these distinctions;
-see the [implementation audit](domain-error-audit.md).
+Failure_. Local metadata reads preserve non-absence errors and
+their causes; only missing path candidates continue to another
+location.
 
 ## _Manifest_ contract
 

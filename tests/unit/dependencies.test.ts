@@ -16,7 +16,7 @@ import type {
 } from "../../packages/adapter/src/conditional/FunctionArtifact/Dependency/Registry.ts";
 
 describe("install dependency resolution", () => {
-	it("fails when the flat Function Artifact lockfile cannot represent two versions", async () => {
+	it("preserves two installed versions in nested Function Artifact lockfile locations", async () => {
 		const app = await mkdtemp(
 			join(tmpdir(), "astro-yandex-versions-"),
 		);
@@ -63,15 +63,27 @@ describe("install dependency resolution", () => {
 					);
 				},
 			};
-			await expect(
-				resolvePinnedRuntimeDependencies(
-					pathToFileURL(`${app}/`),
-					new Set(["alpha", "beta"]),
-					registry,
-				),
-			).rejects.toThrow(
-				/conflicting versions of the runtime package "shared" \(1\.0\.0 and 2\.0\.0\)/,
+			const graph = await resolvePinnedRuntimeDependencies(
+				pathToFileURL(`${app}/`),
+				new Set(["alpha", "beta"]),
+				registry,
 			);
+			const lock = JSON.parse(formatNpmLockfile(graph)) as {
+				packages: Record<string, RegistryVersionMetadata>;
+			};
+			expect(lock.packages["node_modules/shared"]?.version).toBe(
+				"1.0.0",
+			);
+			expect(
+				lock.packages["node_modules/beta/node_modules/shared"]
+					?.version,
+			).toBe("2.0.0");
+			expect(
+				lock.packages["node_modules/alpha"]?.dependencies,
+			).toEqual({ shared: "1.0.0" });
+			expect(
+				lock.packages["node_modules/beta"]?.dependencies,
+			).toEqual({ shared: "2.0.0" });
 		} finally {
 			await rm(app, { recursive: true, force: true });
 		}
