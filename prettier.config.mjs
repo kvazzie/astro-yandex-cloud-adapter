@@ -263,6 +263,7 @@ export default {
         ".changeset/extract-function-runtime-bridge.md",
         ".changeset/preserve-explicit-js-and-query-bytes.md",
         ".changeset/preserve-gateway-route-selection.md",
+        ".changeset/reject-reassigned-resolver-exports.md",
         ".changeset/reject-untracked-register-hooks.md",
         ".github/workflows/ci.yml",
         "packages/deployment-manifest/README.md",

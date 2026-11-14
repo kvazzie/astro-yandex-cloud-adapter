@@ -116,9 +116,12 @@ function findImportedPackageNames(
 			const declaration =
 				parent?.type === "VariableDeclarator" &&
 				isSyntaxNode(parent.id) &&
-				(parent.id.type === "Identifier" ||
-					((role === "module" || role === "meta") &&
-						isLoaderPattern(parent.id, role))) &&
+				(parent.id.type === "Identifier"
+					? parent.init === null ||
+						(bindingRole(parent.id) === role &&
+							bindingRole(parent.init) === role)
+					: (role === "module" || role === "meta") &&
+						isLoaderPattern(parent.id, role, bindingRole)) &&
 				(ancestors.at(-3)?.type !== "ExportNamedDeclaration" ||
 					(role === "meta" &&
 						parent.id.type === "ObjectPattern" &&
@@ -126,6 +129,8 @@ function findImportedPackageNames(
 						parent.id.properties.every(
 							(property: unknown) =>
 								isSyntaxNode(property) &&
+								!isIdentifier(property.key, "resolve") &&
+								getStaticString(property.key) !== "resolve" &&
 								bindingRole(property.value) === undefined,
 						))) &&
 				(parent.id === node || parent.init === node);
@@ -403,9 +408,24 @@ function visitSyntax(
 type LoaderRole =
 	"factory" | "require" | "resolve" | "module" | "meta";
 
+function loaderPropertyRole(
+	role: LoaderRole | undefined,
+	property: unknown,
+): LoaderRole | undefined {
+	if (role === "module") {
+		if (property === "createRequire") return "factory";
+		if (property === "default" || property === "Module")
+			return "module";
+	}
+	if (role === "meta" && property === "resolve")
+		return "resolve";
+	return undefined;
+}
+
 function isLoaderPattern(
 	value: unknown,
 	role?: LoaderRole,
+	bindingRole?: (value: unknown) => LoaderRole | undefined,
 ): boolean {
 	return (
 		isSyntaxNode(value) &&
@@ -424,7 +444,15 @@ function isLoaderPattern(
 					(!isIdentifier(property.key, "register") &&
 						getStaticString(property.key) !== "register")) &&
 				isSyntaxNode(property.value) &&
-				property.value.type === "Identifier",
+				property.value.type === "Identifier" &&
+				(!bindingRole ||
+					bindingRole(property.value) ===
+						loaderPropertyRole(
+							role,
+							property.key.type === "Identifier"
+								? property.key.name
+								: getStaticString(property.key),
+						)),
 		)
 	);
 }
@@ -623,13 +651,9 @@ function runtimeLoaderBindings(
 				if (binding) {
 					const role =
 						binding.role ?? roleOf(binding.value, seen);
-					if (binding.property === "resolve")
-						return role === "meta" ? "resolve" : undefined;
-					if (binding.property === "createRequire")
-						return role === "module" ? "factory" : undefined;
-					if (binding.property)
-						return role === "module" ? "module" : undefined;
-					return role;
+					return binding.property
+						? loaderPropertyRole(role, binding.property)
+						: role;
 				}
 				scope = scope.parent;
 			}
