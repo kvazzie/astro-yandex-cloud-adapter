@@ -293,6 +293,46 @@ describe("Function Artifact mutation plans", () => {
 	);
 
 	it.each(["bundle", "install"] as const)(
+		"keeps fixed import.meta metadata and local resolutions available through aliases for %s",
+		async (dependencyStrategy) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				`const meta = import.meta; const {url, dirname, filename} = meta; console.log(url, dirname, filename, meta['url']); meta.resolve('node:fs'); meta.resolve('./asset.bin');\n${f.index}`,
+			);
+			const before = await snapshot(f.directory);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(f.build, f.routePlan, {
+					...settings,
+					dependencyStrategy,
+				}),
+			);
+			expect(plan.plannedOutput.functions).toHaveLength(1);
+			expect(await snapshot(f.directory)).toEqual(before);
+		},
+	);
+
+	it.each(["bundle", "install"] as const)(
+		"keeps a shadowed import.meta alias local for %s",
+		async (dependencyStrategy) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				`const meta = import.meta; function unused(meta) {meta.resolve('not-a-runtime-package');}\n${f.index}`,
+			);
+			const before = await snapshot(f.directory);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(f.build, f.routePlan, {
+					...settings,
+					dependencyStrategy,
+				}),
+			);
+			expect(plan.plannedOutput.functions).toHaveLength(1);
+			expect(await snapshot(f.directory)).toEqual(before);
+		},
+	);
+
+	it.each(["bundle", "install"] as const)(
 		"keeps a function-local bare var from inheriting an outer Node loader for %s",
 		async (dependencyStrategy) => {
 			const f = await fixture();
@@ -312,36 +352,48 @@ describe("Function Artifact mutation plans", () => {
 		},
 	);
 
-	it("rejects a retained package asset resolution in a bundle before writing output", async () => {
-		const f = await fixture();
-		await writeFile(
-			new URL("index.js", f.server),
-			`const asset = import.meta.resolve('example/asset.css');\n${f.index}`,
-		);
-		const before = await snapshot(f.directory);
-		const outcome = await Effect.runPromise(
-			Effect.either(
-				FunctionArtifact.planPreparation(
-					f.build,
-					f.routePlan,
-					settings,
+	it.each([
+		"const asset = import.meta.resolve('example/asset.css');",
+		"const meta = import.meta; const asset = meta.resolve('example/asset.css');",
+		"const meta = import.meta; const copy = meta; const locate = copy['resolve']; locate('example/asset.css');",
+		"const {resolve: locate, url} = import.meta; locate('example/asset.css');",
+	])(
+		"rejects a retained package asset resolution in a bundle before writing output: %s",
+		async (source) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				`${source}\n${f.index}`,
+			);
+			const before = await snapshot(f.directory);
+			const outcome = await Effect.runPromise(
+				Effect.either(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						settings,
+					),
 				),
-			),
-		);
-		expect(outcome).toMatchObject({
-			_tag: "Left",
-			left: { _tag: "UnresolvedDependency" },
-		});
-		expect(outcome).toHaveProperty(
-			"left.message",
-			expect.stringContaining("example"),
-		);
-		expect(await snapshot(f.directory)).toEqual(before);
-	});
+			);
+			expect(outcome).toMatchObject({
+				_tag: "Left",
+				left: { _tag: "UnresolvedDependency" },
+			});
+			expect(outcome).toHaveProperty(
+				"left.message",
+				expect.stringContaining("example"),
+			);
+			expect(await snapshot(f.directory)).toEqual(before);
+		},
+	);
 
 	it.each([
 		"import value from 'example';",
 		"const asset = import.meta.resolve('example/asset.css');",
+		"const meta = import.meta; const asset = meta.resolve('example/asset.css');",
+		"const meta = import.meta; const copy = meta; const locate = copy['resolve']; locate('example/asset.css');",
+		"const {resolve: locate, url} = import.meta; locate('example/asset.css');",
+		"const meta = import.meta; const {resolve: locate} = meta; locate('example/asset.css');",
 		"const locate = import.meta.resolve; const asset = locate('example/asset.css');",
 		"const asset = import.meta['resolve']('example/asset.css');",
 		"import {createRequire} from 'node:module'; var load = createRequire(import.meta.url); { var load; } load('example');",
@@ -531,6 +583,15 @@ describe("Function Artifact mutation plans", () => {
 			"const locate = import.meta.resolve; locate(process.env.RUNTIME_PACKAGE);",
 			"consume(import.meta.resolve);",
 			"import.meta.resolve('example/asset.css', import.meta.url);",
+			"const meta = import.meta; meta.resolve(process.env.RUNTIME_PACKAGE);",
+			"const meta = import.meta; consume(meta);",
+			"consume(import.meta);",
+			"const meta = import.meta; meta[process.env.RESOLVER]('example');",
+			"const meta = import.meta; const {resolve: locate} = meta; consume(locate);",
+			"const {resolve: locate} = import.meta; locate(process.env.RUNTIME_PACKAGE);",
+			"const meta = import.meta; export {meta};",
+			"const meta = import.meta; const {...copy} = meta; copy.resolve('example');",
+			"const meta = import.meta; meta.resolve('example/asset.css', meta.url);",
 			"import {createRequire} from 'node:module'; var load = createRequire(import.meta.url); var load; load(process.env.RUNTIME_PACKAGE);",
 		].flatMap((source) =>
 			(["bundle", "install"] as const).map(

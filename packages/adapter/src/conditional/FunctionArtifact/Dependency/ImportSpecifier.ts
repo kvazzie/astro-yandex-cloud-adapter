@@ -95,9 +95,10 @@ function findImportedPackageNames(
 		if (
 			node.type === "Identifier" &&
 			parent &&
-			((parent.type === "MemberExpression" &&
-				parent.property === node &&
-				!parent.computed) ||
+			(parent.type === "MetaProperty" ||
+				(parent.type === "MemberExpression" &&
+					parent.property === node &&
+					!parent.computed) ||
 				(parent.type === "Property" &&
 					parent.key === node &&
 					!parent.computed &&
@@ -109,20 +110,22 @@ function findImportedPackageNames(
 			role === "factory" ||
 			role === "require" ||
 			role === "resolve" ||
-			role === "module"
+			role === "module" ||
+			role === "meta"
 		) {
 			const declaration =
 				parent?.type === "VariableDeclarator" &&
 				isSyntaxNode(parent.id) &&
 				(parent.id.type === "Identifier" ||
-					(role === "module" && isModulePattern(parent.id))) &&
+					((role === "module" || role === "meta") &&
+						isLoaderPattern(parent.id, role))) &&
 				ancestors.at(-3)?.type !== "ExportNamedDeclaration" &&
 				(parent.id === node || parent.init === node);
 			const importBinding = parent?.type.startsWith("Import");
 			const patternBinding =
 				parent?.type === "Property" &&
 				parent.value === node &&
-				isModulePattern(ancestors.at(-2));
+				isLoaderPattern(ancestors.at(-2), role);
 			const awaited =
 				parent?.type === "AwaitExpression" &&
 				parent.argument === node;
@@ -134,11 +137,16 @@ function findImportedPackageNames(
 			const member =
 				parent?.type === "MemberExpression" &&
 				parent.object === node &&
-				!parent.computed &&
-				((role === "module" &&
-					node.type !== "ImportExpression") ||
-					(role === "require" &&
-						isIdentifier(parent.property, "resolve")));
+				((role === "meta" &&
+					(parent.computed
+						? getStaticString(parent.property) !== undefined
+						: isSyntaxNode(parent.property) &&
+							parent.property.type === "Identifier")) ||
+					(!parent.computed &&
+						((role === "module" &&
+							node.type !== "ImportExpression") ||
+							(role === "require" &&
+								isIdentifier(parent.property, "resolve")))));
 			if (
 				!declaration &&
 				!importBinding &&
@@ -384,9 +392,13 @@ function visitSyntax(
 	}
 }
 
-type LoaderRole = "factory" | "require" | "resolve" | "module";
+type LoaderRole =
+	"factory" | "require" | "resolve" | "module" | "meta";
 
-function isModulePattern(value: unknown): boolean {
+function isLoaderPattern(
+	value: unknown,
+	role?: LoaderRole,
+): boolean {
 	return (
 		isSyntaxNode(value) &&
 		value.type === "ObjectPattern" &&
@@ -400,8 +412,9 @@ function isModulePattern(value: unknown): boolean {
 				isSyntaxNode(property.key) &&
 				(property.key.type === "Identifier" ||
 					getStaticString(property.key) !== undefined) &&
-				!isIdentifier(property.key, "register") &&
-				getStaticString(property.key) !== "register" &&
+				(role !== "module" ||
+					(!isIdentifier(property.key, "register") &&
+						getStaticString(property.key) !== "register")) &&
 				isSyntaxNode(property.value) &&
 				property.value.type === "Identifier",
 		)
@@ -420,7 +433,8 @@ function runtimeLoaderBindings(
 			{
 				value?: unknown;
 				role?: LoaderRole;
-				property?: "createRequire";
+				property?:
+					"createRequire" | "default" | "Module" | "resolve";
 			}
 		>;
 	}
@@ -431,7 +445,8 @@ function runtimeLoaderBindings(
 		binding: {
 			value?: unknown;
 			role?: LoaderRole;
-			property?: "createRequire";
+			property?:
+				"createRequire" | "default" | "Module" | "resolve";
 		} = {},
 	) => {
 		if (!isSyntaxNode(value)) return;
@@ -466,15 +481,14 @@ function runtimeLoaderBindings(
 							? property.argument
 							: property.value,
 						scope,
-						isModulePattern(value) &&
+						isLoaderPattern(value) &&
 							(key === "createRequire" ||
 								key === "default" ||
-								key === "Module")
+								key === "Module" ||
+								key === "resolve")
 							? {
 									value: binding.value,
-									...(key === "createRequire"
-										? { property: "createRequire" as const }
-										: {}),
+									property: key,
 								}
 							: {},
 					);
@@ -577,6 +591,12 @@ function runtimeLoaderBindings(
 			return undefined;
 		seen.add(value);
 		if (
+			value.type === "MetaProperty" &&
+			isIdentifier(value.meta, "import") &&
+			isIdentifier(value.property, "meta")
+		)
+			return "meta";
+		if (
 			value.type === "ImportExpression" &&
 			["module", "node:module"].includes(
 				getStaticString(value.source) ?? "",
@@ -595,11 +615,13 @@ function runtimeLoaderBindings(
 				if (binding) {
 					const role =
 						binding.role ?? roleOf(binding.value, seen);
-					return binding.property === "createRequire"
-						? role === "module"
-							? "factory"
-							: undefined
-						: role;
+					if (binding.property === "resolve")
+						return role === "meta" ? "resolve" : undefined;
+					if (binding.property === "createRequire")
+						return role === "module" ? "factory" : undefined;
+					if (binding.property)
+						return role === "module" ? "module" : undefined;
+					return role;
 				}
 				scope = scope.parent;
 			}
@@ -615,20 +637,15 @@ function runtimeLoaderBindings(
 			value.type === "MemberExpression" &&
 			(value.computed
 				? getStaticString(value.property) === "resolve"
-				: isIdentifier(value.property, "resolve")) &&
-			isSyntaxNode(value.object) &&
-			value.object.type === "MetaProperty" &&
-			isIdentifier(value.object.meta, "import") &&
-			isIdentifier(value.object.property, "meta")
-		)
-			return "resolve";
-		if (
-			value.type === "MemberExpression" &&
-			!value.computed &&
-			isIdentifier(value.property, "resolve") &&
-			roleOf(value.object, seen) === "require"
-		)
-			return "resolve";
+				: isIdentifier(value.property, "resolve"))
+		) {
+			const role = roleOf(value.object, seen);
+			if (
+				role === "meta" ||
+				(!value.computed && role === "require")
+			)
+				return "resolve";
+		}
 		if (
 			value.type === "CallExpression" &&
 			roleOf(value.callee, seen) === "factory"

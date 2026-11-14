@@ -255,6 +255,7 @@ export default {
     {
       files: [
         ".changeset/account-for-esm-resolution-and-var-bindings.md",
+        ".changeset/account-for-import-meta-aliases.md",
         ".changeset/allow-static-node-module-destructuring.md",
         ".changeset/decode-adapter-options.md",
         ".changeset/extract-deployment-manifest-targets.md",
