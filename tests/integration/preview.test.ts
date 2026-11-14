@@ -23,6 +23,7 @@ import {
 	expect,
 	it,
 } from "vitest";
+import { parse } from "yaml";
 
 const fixtures = resolve(import.meta.dirname, "../fixtures");
 const runCommand = promisify(execFile);
@@ -160,12 +161,15 @@ describe.sequential(
 					"utf8",
 				),
 			) as { version: string };
-			const workspacePackage = JSON.parse(
+			const workspace = parse(
 				await readFile(
-					resolve(import.meta.dirname, "../../package.json"),
+					resolve(
+						import.meta.dirname,
+						"../../pnpm-workspace.yaml",
+					),
 					"utf8",
 				),
-			) as { pnpm: { overrides: { unifont: string } } };
+			) as { overrides: { unifont: string } };
 			await writeFile(
 				join(root, "package.json"),
 				JSON.stringify({
@@ -178,7 +182,7 @@ describe.sequential(
 					},
 					// Match the workspace's Astro dependency pin on the supported Node minimum.
 					overrides: {
-						unifont: workspacePackage.pnpm.overrides.unifont,
+						unifont: workspace.overrides.unifont,
 					},
 				}),
 			);

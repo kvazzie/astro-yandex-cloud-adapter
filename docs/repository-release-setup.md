@@ -89,8 +89,10 @@ non-blocking. The rehearsal and local S3 jobs are part of the
 pending PR stack; require them when that stack reaches `main`,
 using the exact names `Beta release rehearsal` and
 `Local S3 uploads and updates`. Requiring absent jobs now would
-block earlier PRs in the stack. Verify the check names against
-the merged `ci.yml` and a CI run.
+block earlier PRs in the stack. The native pnpm migration runs
+its changeset checks inside the already-required `quality` job.
+It needs no additional required check name. Verify the check
+names against the merged `ci.yml` and a CI run.
 
 Each Astro matrix row selects the newest release in its
 configured range whose Node engine accepts that row's runtime.
@@ -129,8 +131,8 @@ permissions and enable **Allow GitHub Actions to create and
 approve pull requests**. The version workflow requests its own
 Contents and Pull requests write permissions; only the protected
 publication job requests OIDC. This repository setting enables
-the Changesets version PR, but it does not supply a human review
-or publication approval.
+the pnpm version PR, but it does not supply a human review or
+publication approval.
 
 ### Publication environment
 
