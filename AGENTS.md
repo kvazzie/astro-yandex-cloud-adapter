@@ -46,6 +46,15 @@ When preparing or verifying the first beta release, read
 For stable promotion, read
 [issue #83](https://github.com/kvazzie/astro-yandex-cloud-adapter/issues/83).
 
+### Change workflow
+
+Before completing an ordinary PR, add a new changeset using
+`pnpm change` and follow
+[.changeset/README.md](.changeset/README.md) for bump selection,
+no-release decisions, and local validation. Leave version
+numbers, the release ledger, and changelog generation to the
+version PR.
+
 ### Setup
 
 `.agents/skills/` is gitignored. After clone or worktree
