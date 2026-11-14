@@ -219,7 +219,7 @@ function findImportedPackageNames(
 					(!Array.isArray(arguments_) || arguments_.length !== 1)
 				)
 					rejectDynamicImport(
-						"require.resolve options are not accounted for; use require.resolve('package') without options",
+						"resolution options or additional arguments are not accounted for; use require.resolve('package') or import.meta.resolve('package') without options",
 					);
 				const requireArgument: unknown = Array.isArray(
 					arguments_,
@@ -533,6 +533,15 @@ function runtimeLoaderBindings(
 			if (parent?.kind === "var")
 				while (!target.functionScope && target.parent)
 					target = target.parent;
+			if (
+				parent?.kind === "var" &&
+				node.init === null &&
+				isSyntaxNode(node.id) &&
+				node.id.type === "Identifier" &&
+				typeof node.id.name === "string" &&
+				target.bindings.has(node.id.name)
+			)
+				return;
 			declarePattern(node.id, target, { value: node.init });
 		}
 		if (
@@ -602,6 +611,17 @@ function runtimeLoaderBindings(
 			roleOf(value.object, seen) === "module"
 		)
 			return "factory";
+		if (
+			value.type === "MemberExpression" &&
+			(value.computed
+				? getStaticString(value.property) === "resolve"
+				: isIdentifier(value.property, "resolve")) &&
+			isSyntaxNode(value.object) &&
+			value.object.type === "MetaProperty" &&
+			isIdentifier(value.object.meta, "import") &&
+			isIdentifier(value.object.property, "meta")
+		)
+			return "resolve";
 		if (
 			value.type === "MemberExpression" &&
 			!value.computed &&

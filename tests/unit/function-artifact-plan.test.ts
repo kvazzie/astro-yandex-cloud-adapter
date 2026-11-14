@@ -272,8 +272,80 @@ describe("Function Artifact mutation plans", () => {
 		},
 	);
 
+	it.each(["bundle", "install"] as const)(
+		"keeps builtin and relative import.meta.resolve references local for %s",
+		async (dependencyStrategy) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				`import.meta.resolve('node:fs'); import.meta.resolve('./asset.bin');\n${f.index}`,
+			);
+			const before = await snapshot(f.directory);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(f.build, f.routePlan, {
+					...settings,
+					dependencyStrategy,
+				}),
+			);
+			expect(plan.plannedOutput.functions).toHaveLength(1);
+			expect(await snapshot(f.directory)).toEqual(before);
+		},
+	);
+
+	it.each(["bundle", "install"] as const)(
+		"keeps a function-local bare var from inheriting an outer Node loader for %s",
+		async (dependencyStrategy) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				`import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); function unused() {var load; load('not-a-node-loader');}\n${f.index}`,
+			);
+			const before = await snapshot(f.directory);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(f.build, f.routePlan, {
+					...settings,
+					dependencyStrategy,
+				}),
+			);
+			expect(plan.plannedOutput.functions).toHaveLength(1);
+			expect(await snapshot(f.directory)).toEqual(before);
+		},
+	);
+
+	it("rejects a retained package asset resolution in a bundle before writing output", async () => {
+		const f = await fixture();
+		await writeFile(
+			new URL("index.js", f.server),
+			`const asset = import.meta.resolve('example/asset.css');\n${f.index}`,
+		);
+		const before = await snapshot(f.directory);
+		const outcome = await Effect.runPromise(
+			Effect.either(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					settings,
+				),
+			),
+		);
+		expect(outcome).toMatchObject({
+			_tag: "Left",
+			left: { _tag: "UnresolvedDependency" },
+		});
+		expect(outcome).toHaveProperty(
+			"left.message",
+			expect.stringContaining("example"),
+		);
+		expect(await snapshot(f.directory)).toEqual(before);
+	});
+
 	it.each([
 		"import value from 'example';",
+		"const asset = import.meta.resolve('example/asset.css');",
+		"const locate = import.meta.resolve; const asset = locate('example/asset.css');",
+		"const asset = import.meta['resolve']('example/asset.css');",
+		"import {createRequire} from 'node:module'; var load = createRequire(import.meta.url); { var load; } load('example');",
+		"import {createRequire} from 'node:module'; var load = createRequire(import.meta.url); var load; load('example');",
 		"import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); load('example');",
 		"import * as mod from 'node:module'; const load = mod.createRequire(import.meta.url); load('example');",
 		"import * as mod from 'node:module'; const {builtinModules, createRequire: make} = mod; const load = make(import.meta.url); load('example');",
@@ -455,6 +527,11 @@ describe("Function Artifact mutation plans", () => {
 			"import * as mod from 'node:module'; const {register: installHooks} = mod; installHooks('example', import.meta.url);",
 			"import * as mod from 'node:module'; const {builtinModules, 'register': installHooks} = mod; installHooks('example', import.meta.url);",
 			"const {register: installHooks} = await import('node:module'); installHooks('example', import.meta.url);",
+			"import.meta.resolve(process.env.RUNTIME_PACKAGE);",
+			"const locate = import.meta.resolve; locate(process.env.RUNTIME_PACKAGE);",
+			"consume(import.meta.resolve);",
+			"import.meta.resolve('example/asset.css', import.meta.url);",
+			"import {createRequire} from 'node:module'; var load = createRequire(import.meta.url); var load; load(process.env.RUNTIME_PACKAGE);",
 		].flatMap((source) =>
 			(["bundle", "install"] as const).map(
 				(dependencyStrategy) => ({ source, dependencyStrategy }),

@@ -254,6 +254,7 @@ export default {
     },
     {
       files: [
+        ".changeset/account-for-esm-resolution-and-var-bindings.md",
         ".changeset/allow-static-node-module-destructuring.md",
         ".changeset/decode-adapter-options.md",
         ".changeset/extract-deployment-manifest-targets.md",
@@ -261,7 +262,6 @@ export default {
         ".changeset/preserve-explicit-js-and-query-bytes.md",
         ".changeset/preserve-gateway-route-selection.md",
         ".changeset/reject-untracked-register-hooks.md",
-        ".changeset/rename-encoded-options.md",
         ".github/workflows/ci.yml",
         "packages/deployment-manifest/README.md",
         "packages/eslint-plugin/README.md",
