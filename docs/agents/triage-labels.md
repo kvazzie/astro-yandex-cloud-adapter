@@ -8,4 +8,5 @@
 | `ready-for-human` | `ready-for-human` | Requires human implementation            |
 | `wontfix`         | `wontfix`         | Will not be actioned                     |
 
-When a skill mentions a role, use the corresponding tracker label.
+When a skill mentions a role, use the corresponding tracker
+label.
