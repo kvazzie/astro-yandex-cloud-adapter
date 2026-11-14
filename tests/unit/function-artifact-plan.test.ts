@@ -292,6 +292,36 @@ describe("Function Artifact mutation plans", () => {
 		},
 	);
 
+	it.each(
+		[
+			"export const {url} = import.meta;",
+			"const meta = import.meta; export const {url: moduleUrl, dirname, filename} = meta;",
+			"export const {'url': moduleUrl} = import.meta;",
+		].flatMap((source) =>
+			(["bundle", "install"] as const).map(
+				(dependencyStrategy) => ({ source, dependencyStrategy }),
+			),
+		),
+	)(
+		"allows exported import.meta URL metadata without mutations: %j",
+		async ({ source, dependencyStrategy }) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				`${source}\n${f.index}`,
+			);
+			const before = await snapshot(f.directory);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(f.build, f.routePlan, {
+					...settings,
+					dependencyStrategy,
+				}),
+			);
+			expect(plan.plannedOutput.functions).toHaveLength(1);
+			expect(await snapshot(f.directory)).toEqual(before);
+		},
+	);
+
 	it.each(["bundle", "install"] as const)(
 		"keeps fixed import.meta metadata and local resolutions available through aliases for %s",
 		async (dependencyStrategy) => {
@@ -590,6 +620,10 @@ describe("Function Artifact mutation plans", () => {
 			"const meta = import.meta; const {resolve: locate} = meta; consume(locate);",
 			"const {resolve: locate} = import.meta; locate(process.env.RUNTIME_PACKAGE);",
 			"const meta = import.meta; export {meta};",
+			"export const meta = import.meta;",
+			"export const {resolve} = import.meta;",
+			"const meta = import.meta; export const {url, resolve: locate} = meta;",
+			"export const {'resolve': url} = import.meta;",
 			"const meta = import.meta; const {...copy} = meta; copy.resolve('example');",
 			"const meta = import.meta; meta.resolve('example/asset.css', meta.url);",
 			"import {createRequire} from 'node:module'; var load = createRequire(import.meta.url); var load; load(process.env.RUNTIME_PACKAGE);",

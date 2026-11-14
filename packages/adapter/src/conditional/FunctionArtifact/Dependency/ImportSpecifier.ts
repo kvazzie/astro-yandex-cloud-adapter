@@ -119,7 +119,15 @@ function findImportedPackageNames(
 				(parent.id.type === "Identifier" ||
 					((role === "module" || role === "meta") &&
 						isLoaderPattern(parent.id, role))) &&
-				ancestors.at(-3)?.type !== "ExportNamedDeclaration" &&
+				(ancestors.at(-3)?.type !== "ExportNamedDeclaration" ||
+					(role === "meta" &&
+						parent.id.type === "ObjectPattern" &&
+						Array.isArray(parent.id.properties) &&
+						parent.id.properties.every(
+							(property: unknown) =>
+								isSyntaxNode(property) &&
+								bindingRole(property.value) === undefined,
+						))) &&
 				(parent.id === node || parent.init === node);
 			const importBinding = parent?.type.startsWith("Import");
 			const patternBinding =
