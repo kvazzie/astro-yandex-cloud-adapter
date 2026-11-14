@@ -4,6 +4,7 @@ import type { PackageJson } from "pkg-types";
 
 export interface ResolvedRuntimeDependency {
 	name: string;
+	registryName?: string;
 	version: string;
 	optional?: boolean;
 	os?: string[];
@@ -15,6 +16,15 @@ export interface ResolvedRuntimeDependency {
 	engines?: Record<string, string>;
 	dependencies?: Record<string, string>;
 	optionalDependencies?: Record<string, string>;
+}
+
+export function exactDependencyVersion(dependency: {
+	version: string;
+	registryName?: string;
+}): string {
+	return dependency.registryName
+		? `npm:${dependency.registryName}@${dependency.version}`
+		: dependency.version;
 }
 
 export const FUNCTION_NODE_RANGE = ">=22.12.0";
@@ -37,7 +47,7 @@ function exactDependencies(
 ): Record<string, string> {
 	const exact: Record<string, string> = {};
 	for (const dependency of sortedDependencies(dependencies)) {
-		exact[dependency.name] = dependency.version;
+		exact[dependency.name] = exactDependencyVersion(dependency);
 	}
 	return exact;
 }
@@ -77,6 +87,7 @@ export function formatFunctionPackageJson(
 }
 
 interface NpmLockPackageEntry {
+	name?: string;
 	optional?: boolean;
 	os?: string[];
 	cpu?: string[];
@@ -95,6 +106,9 @@ function lockPackageEntry(
 ): NpmLockPackageEntry {
 	const entry: NpmLockPackageEntry = {
 		version: dependency.version,
+		...(dependency.registryName
+			? { name: dependency.registryName }
+			: {}),
 	};
 	if (dependency.optional) entry.optional = true;
 	if (dependency.os !== undefined) entry.os = dependency.os;
@@ -144,7 +158,10 @@ export function formatNpmLockfile(
 	for (const dependency of sorted) {
 		const entry = lockPackageEntry(dependency);
 		lockPackages[`node_modules/${dependency.name}`] = entry;
-		legacy[dependency.name] = entry;
+		legacy[dependency.name] = {
+			...entry,
+			version: exactDependencyVersion(dependency),
+		};
 	}
 	return `${JSON.stringify(
 		{

@@ -463,7 +463,7 @@ function runtimeLoaderBindings(
 ): (value: unknown) => LoaderRole | undefined {
 	interface Scope {
 		parent?: Scope;
-		functionScope: boolean;
+		varScope: boolean;
 		bindings: Map<
 			string,
 			{
@@ -539,6 +539,7 @@ function runtimeLoaderBindings(
 			/^(?:FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(
 				node.type,
 			);
+		const isVarScope = isFunction || node.type === "StaticBlock";
 		if (
 			(node.type === "FunctionDeclaration" ||
 				node.type === "ClassDeclaration") &&
@@ -547,7 +548,7 @@ function runtimeLoaderBindings(
 			declarePattern(node.id, outer);
 		const scope =
 			!outer ||
-			isFunction ||
+			isVarScope ||
 			[
 				"BlockStatement",
 				"ClassDeclaration",
@@ -560,7 +561,7 @@ function runtimeLoaderBindings(
 			].includes(node.type)
 				? {
 						parent: outer,
-						functionScope: !outer || isFunction,
+						varScope: !outer || isVarScope,
 						bindings: new Map(),
 					}
 				: outer;
@@ -581,7 +582,7 @@ function runtimeLoaderBindings(
 		if (node.type === "VariableDeclarator") {
 			let target = scope;
 			if (parent?.kind === "var")
-				while (!target.functionScope && target.parent)
+				while (!target.varScope && target.parent)
 					target = target.parent;
 			if (
 				parent?.kind === "var" &&
@@ -606,14 +607,13 @@ function runtimeLoaderBindings(
 				const role: LoaderRole | undefined = !builtin
 					? undefined
 					: specifier.type === "ImportSpecifier"
-						? isIdentifier(
-								specifier.imported,
-								"createRequire",
-							) ||
-							getStaticString(specifier.imported) ===
-								"createRequire"
-							? "factory"
-							: undefined
+						? loaderPropertyRole(
+								"module",
+								isSyntaxNode(specifier.imported) &&
+									specifier.imported.type === "Identifier"
+									? specifier.imported.name
+									: getStaticString(specifier.imported),
+							)
 						: "module";
 				declarePattern(specifier.local, scope, { role });
 			}
@@ -658,23 +658,22 @@ function runtimeLoaderBindings(
 				scope = scope.parent;
 			}
 		}
-		if (
-			value.type === "MemberExpression" &&
-			!value.computed &&
-			isIdentifier(value.property, "createRequire") &&
-			roleOf(value.object, seen) === "module"
-		)
-			return "factory";
-		if (
-			value.type === "MemberExpression" &&
-			(value.computed
-				? getStaticString(value.property) === "resolve"
-				: isIdentifier(value.property, "resolve"))
-		) {
+		if (value.type === "MemberExpression") {
 			const role = roleOf(value.object, seen);
+			const property = value.computed
+				? getStaticString(value.property)
+				: isSyntaxNode(value.property) &&
+					  value.property.type === "Identifier"
+					? value.property.name
+					: undefined;
+			if (!value.computed) {
+				const selected = loaderPropertyRole(role, property);
+				if (selected) return selected;
+			}
 			if (
-				role === "meta" ||
-				(!value.computed && role === "require")
+				property === "resolve" &&
+				(role === "meta" ||
+					(!value.computed && role === "require"))
 			)
 				return "resolve";
 		}

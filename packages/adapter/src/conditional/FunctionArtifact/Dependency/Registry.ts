@@ -1,5 +1,22 @@
 import semver from "semver";
 
+/** Separates npm alias identity from its version requirement. */
+export function parseRegistryRequirement(
+	name: string,
+	requirement: string,
+): { name: string; requirement: string } {
+	if (!requirement.startsWith("npm:"))
+		return { name, requirement };
+	const target = requirement.slice(4);
+	const separator = target.lastIndexOf("@");
+	return separator > 0
+		? {
+				name: target.slice(0, separator),
+				requirement: target.slice(separator + 1) || "*",
+			}
+		: { name: target, requirement: "*" };
+}
+
 export interface RegistryVersionMetadata {
 	version?: string;
 	dependencies?: Record<string, string>;

@@ -8,18 +8,21 @@ import semver from "semver";
 
 import {
 	compareNames,
+	exactDependencyVersion,
 	type ResolvedRuntimeDependency,
 } from "./Metadata.ts";
 import {
 	asDirectoryPath,
 	type DirectoryPath,
 } from "./ImportSpecifier.ts";
-import type {
-	Registry,
-	RegistryVersionMetadata,
+import {
+	parseRegistryRequirement,
+	type Registry,
+	type RegistryVersionMetadata,
 } from "./Registry.ts";
 
 interface DependencySource {
+	registryName?: string;
 	version: string;
 	directory?: string;
 	metadata?: RegistryVersionMetadata;
@@ -63,7 +66,7 @@ export async function resolvePinnedRuntimeDependencies(
 		assertCompatibleVersion(
 			discoveredVersions,
 			current.dependencyName,
-			source.version,
+			exactDependencyVersion(source),
 		);
 		if (visited.has(current.dependencyName)) continue;
 		visited.add(current.dependencyName);
@@ -75,7 +78,7 @@ export async function resolvePinnedRuntimeDependencies(
 				source.version,
 			)) ??
 			(await registry.resolve(
-				current.dependencyName,
+				source.registryName ?? current.dependencyName,
 				source.version,
 			));
 		const dependencies: Record<string, string> = {};
@@ -102,11 +105,17 @@ export async function resolvePinnedRuntimeDependencies(
 			),
 		].sort((a, b) => compareNames(a.name, b.name));
 		for (const { name, range, optional } of transitiveRanges) {
+			const requirement = parseRegistryRequirement(name, range);
 			let dependency: DependencySource | undefined =
 				await findInstalledPackage(resolutionBases, name);
 			if (
 				!dependency ||
-				!semver.satisfies(dependency.version, range)
+				!semver.satisfies(
+					dependency.version,
+					requirement.requirement,
+				) ||
+				(requirement.name !== name &&
+					(dependency.registryName ?? name) !== requirement.name)
 			) {
 				if (!optional && source.directory) {
 					throw new Error(
@@ -114,25 +123,32 @@ export async function resolvePinnedRuntimeDependencies(
 					);
 				}
 				const remoteMetadata = await registry.resolve(
-					name,
-					range,
+					requirement.name,
+					requirement.requirement,
 				);
 				const version =
-					remoteMetadata.version ?? semver.valid(range);
+					remoteMetadata.version ??
+					semver.valid(requirement.requirement);
 				if (!version) {
 					throw new Error(
 						`The "install" dependency strategy cannot pin ${name}@${range} to an exact version.`,
 					);
 				}
-				dependency = { version, metadata: remoteMetadata };
+				dependency = {
+					version,
+					metadata: remoteMetadata,
+					...(requirement.name !== name
+						? { registryName: requirement.name }
+						: {}),
+				};
 			}
 			assertCompatibleVersion(
 				discoveredVersions,
 				name,
-				dependency.version,
+				exactDependencyVersion(dependency),
 			);
 			(optional ? optionalDependencies : dependencies)[name] =
-				dependency.version;
+				exactDependencyVersion(dependency);
 			if (!visited.has(name)) {
 				pending.push({
 					dependencyName: name,
@@ -144,6 +160,9 @@ export async function resolvePinnedRuntimeDependencies(
 		pinned.set(current.dependencyName, {
 			name: current.dependencyName,
 			version: source.version,
+			...(source.registryName
+				? { registryName: source.registryName }
+				: {}),
 			...(metadata.resolved !== undefined
 				? { resolved: metadata.resolved }
 				: {}),
@@ -206,7 +225,9 @@ function assertCompatibleVersion(
 async function findInstalledPackage(
 	resolutionBases: Array<URL | string>,
 	packageName: string,
-): Promise<{ version: string; directory: string } | undefined> {
+): Promise<
+	(DependencySource & { directory: string }) | undefined
+> {
 	for (const resolutionBase of resolutionBases) {
 		const installed = await findPackageFromBase(
 			resolutionBase,
@@ -220,7 +241,9 @@ async function findInstalledPackage(
 async function findPackageFromBase(
 	resolutionBase: URL | string,
 	packageName: string,
-): Promise<{ version: string; directory: string } | undefined> {
+): Promise<
+	(DependencySource & { directory: string }) | undefined
+> {
 	for (const modules of createRequire(
 		resolutionBase,
 	).resolve.paths(`${packageName}/package.json`) ?? []) {
@@ -231,6 +254,9 @@ async function findPackageFromBase(
 		if (manifest?.version !== undefined)
 			return {
 				version: manifest.version,
+				...(manifest.name && manifest.name !== packageName
+					? { registryName: manifest.name }
+					: {}),
 				directory: await realpath(directory),
 			};
 	}

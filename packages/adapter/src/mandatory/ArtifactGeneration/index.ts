@@ -28,6 +28,8 @@ import { generateApiGatewaySpecificationTemplate } from "../../conditional/ApiGa
 import {
 	manifestRoutes,
 	reconcileRoutes,
+	registeredOnDemandRoutes,
+	requiredOnDemandRoutes,
 	type RoutePlan,
 } from "./RouteRequirements";
 import { hasRuntimeImageCalls } from "./RuntimeImageRoutes.ts";
@@ -78,7 +80,7 @@ export function completeBuild<E>(
 		});
 		const hasFunction = entrypoint.ok;
 		const routePlan = yield* Effect.tryPromise({
-			try: () => inspectRoutes(build, hasFunction),
+			try: () => inspectRoutes(build, entrypoint),
 			catch: (cause) =>
 				new FunctionArtifact.Errors.InvalidArtifact({
 					message:
@@ -141,9 +143,19 @@ interface WriteDeploymentManifestInput {
 
 async function inspectRoutes(
 	build: CompletedBuild,
-	hasFunction: boolean,
+	entrypoint: Awaited<
+		ReturnType<typeof validateFunctionEntrypoint>
+	>,
 ): Promise<RoutePlan> {
 	const { config } = build;
+	const requireEntrypoint = () => {
+		if (!entrypoint.ok)
+			throw new Error(entrypoint.reason, {
+				cause: entrypoint.cause,
+			});
+	};
+	if (registeredOnDemandRoutes(build.resolvedRoutes).length)
+		requireEntrypoint();
 	const client = config.build.client;
 	const clientFiles = await glob(["**/*"], {
 		cwd: fileURLToPath(client),
@@ -157,7 +169,7 @@ async function inspectRoutes(
 				.map((file) => readFile(new URL(file, client), "utf8")),
 		)
 	).join("\n");
-	return reconcileRoutes({
+	const evidence = {
 		base: normalizedBase(config.base),
 		clientDirectory: client,
 		clientFiles,
@@ -165,20 +177,21 @@ async function inspectRoutes(
 		pages: build.pages,
 		resolvedRoutes: build.resolvedRoutes,
 		emittedAssets: build.emittedAssets,
-		hasFunction,
+		hasFunction: entrypoint.ok,
 		trailingSlash: config.trailingSlash,
-		hasServerIslands:
-			hasFunction &&
-			(await hasServerIslandEntries(config.build.server)),
-		hasRuntimeImages:
-			hasFunction &&
-			(await hasRuntimeImageCalls(
-				config.build.server,
-				build.resolvedRoutes,
-				build.routeComponents,
-			)),
+		hasServerIslands: await hasServerIslandEntries(
+			config.build.server,
+		),
+		hasRuntimeImages: await hasRuntimeImageCalls(
+			config.build.server,
+			build.resolvedRoutes,
+			build.routeComponents,
+		),
 		imageEndpoint: config.image.endpoint.route,
-	});
+	};
+	if (requiredOnDemandRoutes(evidence).length)
+		requireEntrypoint();
+	return reconcileRoutes(evidence);
 }
 
 /** Reads emitted island loader entries without executing application code at build time. */

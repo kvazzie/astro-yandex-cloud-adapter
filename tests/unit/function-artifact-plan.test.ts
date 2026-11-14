@@ -146,6 +146,57 @@ const settings = {
 } as const;
 
 describe("Function Artifact mutation plans", () => {
+	it.each([
+		{ exported: "h as handler, other", other: true },
+		{ exported: "default as handler, other", other: true },
+		{ exported: "h as handler", other: false },
+	])(
+		"links a policy-wrapped handler re-export: $exported",
+		async ({ exported, other }) => {
+			const f = await fixture();
+			await mkdir(new URL("chunks/", f.server));
+			await writeFile(
+				new URL("chunks/app.js", f.server),
+				"export function h(event, context, previewUrl, policy) {return policy;} export default h; export const other = 23;",
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				f.index.replace(
+					"export { handler };",
+					`const __yandexOriginalHandler = 1; export {${exported}} from './chunks/app.js';`,
+				),
+			);
+			const before = await snapshot(f.directory);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					settings,
+				),
+			);
+			expect(await snapshot(f.directory)).toEqual(before);
+			const output = await Effect.runPromise(
+				FunctionArtifact.applyPreparation(plan),
+			);
+			const artifact = output.functions[0]!;
+			const emitted = (await import(
+				new URL("index.js", artifact.directory).href
+			)) as {
+				other?: number;
+				handler(
+					event: unknown,
+					context: unknown,
+				): { artifactDirectory: URL; notFound: unknown[] };
+			};
+			expect(emitted.other).toBe(other ? 23 : undefined);
+			const policy = emitted.handler({}, {});
+			expect(policy.artifactDirectory.href).toBe(
+				artifact.directory.href,
+			);
+			expect(policy.notFound).toHaveLength(1);
+		},
+	);
+
 	it("plans the complete artifact without mutations, then applies handlers, 404 and metadata", async () => {
 		const f = await fixture();
 		const before = await snapshot(f.directory);
@@ -433,6 +484,9 @@ describe("Function Artifact mutation plans", () => {
 		"import {createRequire} from 'node:module'; var load = createRequire(import.meta.url); { var load; } load('example');",
 		"import {createRequire} from 'node:module'; var load = createRequire(import.meta.url); var load; load('example');",
 		"import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); load('example');",
+		"import {createRequire} from 'node:module'; class C {static {var createRequire = null;}} const load = createRequire(import.meta.url); load('example');",
+		"import {default as mod} from 'node:module'; const load = mod.createRequire(import.meta.url); load('example');",
+		"import * as mod from 'node:module'; const load = mod.default.createRequire(import.meta.url); load('example');",
 		"import * as mod from 'node:module'; const load = mod.createRequire(import.meta.url); load('example');",
 		"import * as mod from 'node:module'; const {builtinModules, createRequire: make} = mod; const load = make(import.meta.url); load('example');",
 	])("plans exact install metadata for %s", async (source) => {
@@ -531,6 +585,205 @@ describe("Function Artifact mutation plans", () => {
 			packages: { "node_modules/example": { version: "1.2.3" } },
 		});
 	});
+
+	it.each(["none", "legacy", "modern"])(
+		"preserves an installed npm alias with %s lock metadata",
+		async (lockKind) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				`import value from 'runtime-alias';\n${f.index}`,
+			);
+			await writeFile(
+				new URL("package.json", f.root),
+				'{"name":"app","dependencies":{"runtime-alias":"npm:@scope/real@^1"}}',
+			);
+			await mkdir(
+				new URL("node_modules/runtime-alias/", f.root),
+				{ recursive: true },
+			);
+			await writeFile(
+				new URL(
+					"node_modules/runtime-alias/package.json",
+					f.root,
+				),
+				'{"name":"@scope/real","version":"1.2.3"}',
+			);
+			const entry = {
+				name: "@scope/real",
+				version: "1.2.3",
+				resolved: "https://registry.example/real.tgz",
+			};
+			if (lockKind !== "none")
+				await writeFile(
+					new URL("package-lock.json", f.root),
+					JSON.stringify(
+						lockKind === "modern"
+							? {
+									lockfileVersion: 3,
+									packages: {
+										"node_modules/runtime-alias": entry,
+									},
+								}
+							: {
+									lockfileVersion: 1,
+									dependencies: {
+										"runtime-alias": {
+											version: "npm:@scope/real@1.2.3",
+										},
+									},
+								},
+					),
+				);
+			const requests: string[][] = [];
+			const before = await snapshot(f.directory);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					{ ...settings, dependencyStrategy: "install" },
+					{
+						resolve: (name, requirement) => {
+							requests.push([name, requirement]);
+							if (name !== "@scope/real")
+								throw new Error(
+									"Unpublished import alias must not be requested",
+								);
+							return Promise.resolve(entry);
+						},
+					},
+				),
+			);
+			expect(requests).toEqual(
+				lockKind === "modern" ? [] : [["@scope/real", "1.2.3"]],
+			);
+			expect(await snapshot(f.directory)).toEqual(before);
+			await Effect.runPromise(
+				FunctionArtifact.applyPreparation(plan),
+			);
+			expect(
+				JSON.parse(
+					await readFile(
+						new URL("package.json", f.server),
+						"utf8",
+					),
+				),
+			).toMatchObject({
+				dependencies: {
+					"runtime-alias": "npm:@scope/real@1.2.3",
+				},
+			});
+			expect(
+				JSON.parse(
+					await readFile(
+						new URL("package-lock.json", f.server),
+						"utf8",
+					),
+				),
+			).toMatchObject({
+				packages: {
+					"": {
+						dependencies: {
+							"runtime-alias": "npm:@scope/real@1.2.3",
+						},
+					},
+					"node_modules/runtime-alias": entry,
+				},
+			});
+		},
+	);
+
+	it.each([false, true])(
+		"pins an npm alias on a transitive edge (optional: %s)",
+		async (optional) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				`import value from 'example';\n${f.index}`,
+			);
+			await writeFile(
+				new URL("package.json", f.root),
+				'{"name":"app"}',
+			);
+			await mkdir(new URL("node_modules/example/", f.root), {
+				recursive: true,
+			});
+			const edges = {
+				[optional ? "optionalDependencies" : "dependencies"]: {
+					"runtime-alias": "npm:@scope/real@^2",
+				},
+			};
+			await writeFile(
+				new URL("node_modules/example/package.json", f.root),
+				JSON.stringify({
+					name: "example",
+					version: "1.2.3",
+					...edges,
+				}),
+			);
+			if (!optional) {
+				await mkdir(
+					new URL("node_modules/runtime-alias/", f.root),
+					{ recursive: true },
+				);
+				await writeFile(
+					new URL(
+						"node_modules/runtime-alias/package.json",
+						f.root,
+					),
+					'{"name":"@scope/real","version":"2.3.4"}',
+				);
+			}
+			const requests: string[][] = [];
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					{ ...settings, dependencyStrategy: "install" },
+					{
+						resolve: (name, requirement) => {
+							requests.push([name, requirement]);
+							if (name === "example")
+								return Promise.resolve({
+									version: "1.2.3",
+									...edges,
+								});
+							if (name === "@scope/real")
+								return Promise.resolve({ version: "2.3.4" });
+							throw new Error("Unpublished alias");
+						},
+					},
+				),
+			);
+			expect(requests).toContainEqual([
+				"@scope/real",
+				optional ? "^2" : "2.3.4",
+			]);
+			await Effect.runPromise(
+				FunctionArtifact.applyPreparation(plan),
+			);
+			expect(
+				JSON.parse(
+					await readFile(
+						new URL("package-lock.json", f.server),
+						"utf8",
+					),
+				),
+			).toMatchObject({
+				packages: {
+					"node_modules/example": {
+						[optional ? "optionalDependencies" : "dependencies"]:
+							{ "runtime-alias": "npm:@scope/real@2.3.4" },
+					},
+					"node_modules/runtime-alias": {
+						name: "@scope/real",
+						version: "2.3.4",
+						...(optional ? { optional: true } : {}),
+					},
+				},
+			});
+		},
+	);
 
 	it("uses registry edges when a legacy lockfile has no packages section", async () => {
 		const f = await fixture();

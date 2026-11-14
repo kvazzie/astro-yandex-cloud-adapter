@@ -134,6 +134,31 @@ function isActiveInternalRoute(
 	return false;
 }
 
+/** Runtime requirements are independent of whether Astro emitted a valid handler. */
+export function requiredOnDemandRoutes(
+	evidence: Pick<
+		RouteEvidence,
+		| "resolvedRoutes"
+		| "clientHtml"
+		| "hasServerIslands"
+		| "hasRuntimeImages"
+		| "imageEndpoint"
+	>,
+): IntegrationResolvedRoute[] {
+	return evidence.resolvedRoutes.filter(
+		(route) =>
+			(route.type === "page" || route.type === "endpoint") &&
+			!route.isPrerendered &&
+			isActiveInternalRoute(
+				route,
+				evidence.clientHtml,
+				evidence.hasServerIslands,
+				evidence.hasRuntimeImages,
+				evidence.imageEndpoint,
+			),
+	);
+}
+
 /** Reconciles Astro patterns with actual emitted Client Artifact files. */
 export function reconcileRoutes(
 	evidence: RouteEvidence,
@@ -242,29 +267,15 @@ export function reconcileRoutes(
 	}
 
 	const onDemand: PlannedRoute[] = hasFunction
-		? resolvedRoutes
-				.filter(
-					(route) =>
-						(route.type === "page" ||
-							route.type === "endpoint") &&
-						!route.isPrerendered &&
-						isActiveInternalRoute(
-							route,
-							evidence.clientHtml,
-							evidence.hasServerIslands,
-							evidence.hasRuntimeImages,
-							evidence.imageEndpoint,
-						),
-				)
-				.map((route) => ({
-					kind: "on-demand" as const,
-					routeKind: route.type as "page" | "endpoint",
-					pattern: withBase(base, route.pattern),
-					artifactId: functionId,
-					priority: resolvedRoutes.indexOf(route),
-					patternRegex: route.patternRegex.source,
-					origin: route.origin,
-				}))
+		? requiredOnDemandRoutes(evidence).map((route) => ({
+				kind: "on-demand" as const,
+				routeKind: route.type as "page" | "endpoint",
+				pattern: withBase(base, route.pattern),
+				artifactId: functionId,
+				priority: resolvedRoutes.indexOf(route),
+				patternRegex: route.patternRegex.source,
+				origin: route.origin,
+			}))
 		: [];
 	for (const route of prerenderedRoutes.values())
 		route.paths.sort((a, b) => a.url.localeCompare(b.url));

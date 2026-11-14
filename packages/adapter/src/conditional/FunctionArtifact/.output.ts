@@ -91,6 +91,39 @@ export function wrapFunctionPolicy(
 				typeof specifier.local.name === "string"
 			) {
 				handlerName = specifier.local.name;
+				if (isSyntaxNode(node.source)) {
+					if (handlerName === "__yandexArtifactHandler")
+						continue;
+					handlerName = "__yandexOriginalHandler";
+					while (source.includes(handlerName))
+						handlerName += "_";
+					const imported = source.slice(
+						specifier.local.start,
+						specifier.local.end,
+					);
+					const moduleSource = source.slice(
+						node.source.start,
+						node.source.end,
+					);
+					const suffix = source.slice(node.source.end, node.end);
+					const others = (node.specifiers as unknown[]).flatMap(
+						(other) =>
+							isSyntaxNode(other) && other !== specifier
+								? [source.slice(other.start, other.end)]
+								: [],
+					);
+					edits.push({
+						start: node.start,
+						end: node.end,
+						value:
+							`import { ${imported} as ${handlerName} } from ${moduleSource}${suffix}\n` +
+							(others.length
+								? `export { ${others.join(", ")} } from ${moduleSource}${suffix}\n`
+								: "") +
+							"export { __yandexArtifactHandler as handler };",
+					});
+					continue;
+				}
 				edits.push({
 					start: specifier.start,
 					end: specifier.end,
