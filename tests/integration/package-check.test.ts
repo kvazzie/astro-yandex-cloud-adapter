@@ -93,20 +93,20 @@ beforeAll(async () => {
 		join(tmpdir(), "adapter-package-check-test-"),
 	);
 	const { stdout } = await run(
-		"npm",
+		"pnpm",
 		[
+			"--config.ignore-scripts=true",
 			"pack",
-			"--ignore-scripts",
 			"--json",
 			"--pack-destination",
 			root,
 		],
 		{ cwd: resolve("packages/adapter") },
 	);
-	const [{ filename }] = JSON.parse(stdout) as [
-		{ filename: string },
-	];
-	await run("tar", ["-xzf", join(root, filename), "-C", root]);
+	const { filename } = JSON.parse(stdout) as {
+		filename: string;
+	};
+	await run("tar", ["-xzf", resolve(filename), "-C", root]);
 	const manifestPath = join(root, "package/package.json");
 	const manifest = JSON.parse(
 		await readFile(manifestPath, "utf8"),
