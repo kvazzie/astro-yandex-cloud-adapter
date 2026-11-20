@@ -1,0 +1,1334 @@
+{
+	"baseCommit": "973011de19485903044ffe3878e8d3a1e20a0664",
+	"recipeSha256": "3ceb48ffada008694051fed5a15619feb8825080c91c17edbbd409aec990c887",
+	"runs": [
+		{
+			"versions": {
+				"node": "v22.12.0",
+				"astro": "7.1.6",
+				"vite": "8.2.0",
+				"rolldown": "1.2.3"
+			},
+			"output": "/tmp/native-app-isolation-cdkby4",
+			"results": [
+				{
+					"name": "endpoints",
+					"base": "/",
+					"events": [
+						"astro:build:setup",
+						"ssr:buildStart",
+						"ssr:generateBundle",
+						"astro:build:ssr",
+						"astro:build:done"
+					],
+					"sources": [
+						{
+							"name": "one",
+							"file": "one.ts",
+							"path": "/one",
+							"marker": "PROBE_ONE_ONLY",
+							"component": "src/pages/one.ts",
+							"moduleSpecifier": "/src/pages/one.ts",
+							"facadeModuleId": "/tmp/native-app-isolation-cdkby4/endpoints/fixture/src/pages/one.ts"
+						},
+						{
+							"name": "two",
+							"file": "two.ts",
+							"path": "/two",
+							"marker": "PROBE_TWO_ONLY",
+							"component": "src/pages/two.ts",
+							"moduleSpecifier": "/src/pages/two.ts",
+							"facadeModuleId": "/tmp/native-app-isolation-cdkby4/endpoints/fixture/src/pages/two.ts"
+						}
+					],
+					"routeMetadata": [
+						{
+							"type": "page",
+							"component": "_server-islands.astro",
+							"params": ["name"],
+							"segments": [
+								[
+									{
+										"content": "_server-islands",
+										"dynamic": false,
+										"spread": false
+									}
+								],
+								[
+									{
+										"content": "name",
+										"dynamic": true,
+										"spread": false
+									}
+								]
+							],
+							"pattern": "^\\/_server-islands\\/([^/]+?)\\/?$",
+							"prerender": false,
+							"isIndex": false,
+							"fallbackRoutes": [],
+							"route": "/_server-islands/[name]",
+							"origin": "internal",
+							"distURL": [],
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						},
+						{
+							"route": "/_image",
+							"component": "../../../../home/artemi1/Dev/astro-yandex-cloud-adapter/node_modules/.pnpm/astro@7.1.6_@emnapi+core@1.11.1_@emnapi+runtime@1.11.3_@types+node@24.13.3_jiti@2.7.0_rollup@4.62.4/node_modules/astro/dist/assets/endpoint/generic.js",
+							"params": [],
+							"pathname": "/_image",
+							"pattern": "^\\/_image\\/?$",
+							"segments": [
+								[
+									{
+										"content": "_image",
+										"dynamic": false,
+										"spread": false
+									}
+								]
+							],
+							"type": "endpoint",
+							"prerender": false,
+							"fallbackRoutes": [],
+							"distURL": [],
+							"isIndex": false,
+							"origin": "internal",
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						},
+						{
+							"route": "/one",
+							"isIndex": false,
+							"type": "endpoint",
+							"pattern": "^\\/one\\/?$",
+							"segments": [
+								[
+									{
+										"content": "one",
+										"dynamic": false,
+										"spread": false
+									}
+								]
+							],
+							"params": [],
+							"component": "src/pages/one.ts",
+							"pathname": "/one",
+							"prerender": false,
+							"fallbackRoutes": [],
+							"distURL": [],
+							"origin": "project",
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						},
+						{
+							"route": "/two",
+							"isIndex": false,
+							"type": "endpoint",
+							"pattern": "^\\/two\\/?$",
+							"segments": [
+								[
+									{
+										"content": "two",
+										"dynamic": false,
+										"spread": false
+									}
+								]
+							],
+							"params": [],
+							"component": "src/pages/two.ts",
+							"pathname": "/two",
+							"prerender": false,
+							"fallbackRoutes": [],
+							"distURL": [],
+							"origin": "project",
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						}
+					],
+					"functions": [
+						{
+							"selected": "one",
+							"directory": "/tmp/isolated-endpoints-one-GkXmc4",
+							"files": [
+								{
+									"file": "index.mjs",
+									"bytes": 6398,
+									"sha256": "35e7a65670a54b629d5d1f21848cc2f1b89a919709bd3bdf5335bbdf07ccf6bd",
+									"edges": ["runtime.mjs", "one.mjs"]
+								},
+								{
+									"file": "chunks/entrypoints_9UohtUA6.mjs",
+									"bytes": 255278,
+									"sha256": "4c82cb49f831b7ba494f29e54dd30ac29ecbb4bf020e1a39fb9096a4abf8365e",
+									"edges": [
+										"chunks/server_BZ9ndAew.mjs",
+										"chunks/remote_C3XTqZZR.mjs"
+									]
+								},
+								{
+									"file": "chunks/one_BRhDeoMd.mjs",
+									"bytes": 324,
+									"sha256": "2a5958bad55fed428fef2b70c9f60d40c569fc1e45130ec8c87ea1aef4763e70",
+									"edges": [
+										"chunks/rolldown-runtime_BMI-E3GI.mjs"
+									]
+								},
+								{
+									"file": "chunks/remote_C3XTqZZR.mjs",
+									"bytes": 28533,
+									"sha256": "447396a7d122a5c84f3b1352d2df21ccaa85d684b7d3df42b4faa36b67ba0fc7",
+									"edges": []
+								},
+								{
+									"file": "chunks/rolldown-runtime_BMI-E3GI.mjs",
+									"bytes": 1928,
+									"sha256": "efc57dcff870d1e3f2f361b3ba80eb84330c649bef8f1529736019ea7e961346",
+									"edges": ["node:module"]
+								},
+								{
+									"file": "chunks/server_BZ9ndAew.mjs",
+									"bytes": 230177,
+									"sha256": "b1c5e503c135c8cd241c10aa9c68a3c4946befa84332ba7945849a273e08f100",
+									"edges": ["chunks/remote_C3XTqZZR.mjs"]
+								},
+								{
+									"file": "one.mjs",
+									"bytes": 70,
+									"sha256": "0b76fc4c8728c7cfdcc01d674db7f87051c42c295fb897295bc92959e915fe01",
+									"edges": ["chunks/one_BRhDeoMd.mjs"]
+								},
+								{
+									"file": "runtime.mjs",
+									"bytes": 125,
+									"sha256": "1cb2c85eaf264d7748ccca0cc1c70a44a77e35fdbf1b153af9b774ea0ca174b7",
+									"edges": ["chunks/entrypoints_9UohtUA6.mjs"]
+								}
+							],
+							"external": ["node:module"],
+							"containsOwnMarker": true,
+							"containsForeignMarker": false,
+							"finalNativeBytesUnchanged": true,
+							"runtime": {
+								"responses": [
+									{
+										"path": "/one",
+										"own": true,
+										"marker": "PROBE_ONE_ONLY",
+										"matched": "/one",
+										"status": 200,
+										"body": "PROBE_ONE_ONLY"
+									},
+									{
+										"path": "/two",
+										"own": false,
+										"marker": "PROBE_TWO_ONLY",
+										"matched": "/two",
+										"status": 404,
+										"body": "Not Found"
+									}
+								],
+								"unguardedResult": {
+									"status": 500,
+									"body": ""
+								}
+							}
+						},
+						{
+							"selected": "two",
+							"directory": "/tmp/isolated-endpoints-two-oHsqkl",
+							"files": [
+								{
+									"file": "index.mjs",
+									"bytes": 6398,
+									"sha256": "a317b450ee89e963077d57ad58ffb847ab24477459c5c378b27b46a92eed7720",
+									"edges": ["runtime.mjs", "two.mjs"]
+								},
+								{
+									"file": "chunks/entrypoints_9UohtUA6.mjs",
+									"bytes": 255278,
+									"sha256": "4c82cb49f831b7ba494f29e54dd30ac29ecbb4bf020e1a39fb9096a4abf8365e",
+									"edges": [
+										"chunks/server_BZ9ndAew.mjs",
+										"chunks/remote_C3XTqZZR.mjs"
+									]
+								},
+								{
+									"file": "chunks/remote_C3XTqZZR.mjs",
+									"bytes": 28533,
+									"sha256": "447396a7d122a5c84f3b1352d2df21ccaa85d684b7d3df42b4faa36b67ba0fc7",
+									"edges": []
+								},
+								{
+									"file": "chunks/rolldown-runtime_BMI-E3GI.mjs",
+									"bytes": 1928,
+									"sha256": "efc57dcff870d1e3f2f361b3ba80eb84330c649bef8f1529736019ea7e961346",
+									"edges": ["node:module"]
+								},
+								{
+									"file": "chunks/server_BZ9ndAew.mjs",
+									"bytes": 230177,
+									"sha256": "b1c5e503c135c8cd241c10aa9c68a3c4946befa84332ba7945849a273e08f100",
+									"edges": ["chunks/remote_C3XTqZZR.mjs"]
+								},
+								{
+									"file": "chunks/two_feOBJNWy.mjs",
+									"bytes": 324,
+									"sha256": "e38e398c3edee22b7a5d80a76d5acfcae23a2e86c57bb62676c661b0caa67bda",
+									"edges": [
+										"chunks/rolldown-runtime_BMI-E3GI.mjs"
+									]
+								},
+								{
+									"file": "runtime.mjs",
+									"bytes": 125,
+									"sha256": "1cb2c85eaf264d7748ccca0cc1c70a44a77e35fdbf1b153af9b774ea0ca174b7",
+									"edges": ["chunks/entrypoints_9UohtUA6.mjs"]
+								},
+								{
+									"file": "two.mjs",
+									"bytes": 70,
+									"sha256": "b938d3d2ea11686d0ee245f69e3b662334f774e54d1acb1be14eedd02a223a0f",
+									"edges": ["chunks/two_feOBJNWy.mjs"]
+								}
+							],
+							"external": ["node:module"],
+							"containsOwnMarker": true,
+							"containsForeignMarker": false,
+							"finalNativeBytesUnchanged": true,
+							"runtime": {
+								"responses": [
+									{
+										"path": "/one",
+										"own": false,
+										"marker": "PROBE_ONE_ONLY",
+										"matched": "/one",
+										"status": 404,
+										"body": "Not Found"
+									},
+									{
+										"path": "/two",
+										"own": true,
+										"marker": "PROBE_TWO_ONLY",
+										"matched": "/two",
+										"status": 200,
+										"body": "PROBE_TWO_ONLY"
+									}
+								],
+								"unguardedResult": {
+									"status": 500,
+									"body": ""
+								}
+							}
+						}
+					]
+				},
+				{
+					"name": "page-base-precedence",
+					"base": "/nested/",
+					"events": [
+						"astro:build:setup",
+						"ssr:buildStart",
+						"ssr:generateBundle",
+						"astro:build:ssr",
+						"astro:build:done"
+					],
+					"sources": [
+						{
+							"name": "specific",
+							"file": "specific.astro",
+							"path": "/specific",
+							"marker": "PROBE_PAGE_ONLY",
+							"component": "src/pages/specific.astro",
+							"moduleSpecifier": "/src/pages/specific.astro",
+							"facadeModuleId": "/tmp/native-app-isolation-cdkby4/page-base-precedence/fixture/src/pages/specific.astro"
+						},
+						{
+							"name": "rest",
+							"file": "[...rest].ts",
+							"path": "/anything",
+							"marker": "PROBE_REST_ONLY",
+							"component": "src/pages/[...rest].ts",
+							"moduleSpecifier": "/src/pages/[...rest].ts",
+							"facadeModuleId": "/tmp/native-app-isolation-cdkby4/page-base-precedence/fixture/src/pages/[...rest].ts"
+						}
+					],
+					"routeMetadata": [
+						{
+							"type": "page",
+							"component": "_server-islands.astro",
+							"params": ["name"],
+							"segments": [
+								[
+									{
+										"content": "_server-islands",
+										"dynamic": false,
+										"spread": false
+									}
+								],
+								[
+									{
+										"content": "name",
+										"dynamic": true,
+										"spread": false
+									}
+								]
+							],
+							"pattern": "^\\/_server-islands\\/([^/]+?)\\/?$",
+							"prerender": false,
+							"isIndex": false,
+							"fallbackRoutes": [],
+							"route": "/_server-islands/[name]",
+							"origin": "internal",
+							"distURL": [],
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						},
+						{
+							"route": "/_image",
+							"component": "../../../../home/artemi1/Dev/astro-yandex-cloud-adapter/node_modules/.pnpm/astro@7.1.6_@emnapi+core@1.11.1_@emnapi+runtime@1.11.3_@types+node@24.13.3_jiti@2.7.0_rollup@4.62.4/node_modules/astro/dist/assets/endpoint/generic.js",
+							"params": [],
+							"pathname": "/_image",
+							"pattern": "^\\/_image\\/?$",
+							"segments": [
+								[
+									{
+										"content": "_image",
+										"dynamic": false,
+										"spread": false
+									}
+								]
+							],
+							"type": "endpoint",
+							"prerender": false,
+							"fallbackRoutes": [],
+							"distURL": [],
+							"isIndex": false,
+							"origin": "internal",
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						},
+						{
+							"route": "/specific",
+							"isIndex": false,
+							"type": "page",
+							"pattern": "^\\/specific\\/?$",
+							"segments": [
+								[
+									{
+										"content": "specific",
+										"dynamic": false,
+										"spread": false
+									}
+								]
+							],
+							"params": [],
+							"component": "src/pages/specific.astro",
+							"pathname": "/specific",
+							"prerender": false,
+							"fallbackRoutes": [],
+							"distURL": [],
+							"origin": "project",
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						},
+						{
+							"route": "/[...rest]",
+							"isIndex": false,
+							"type": "endpoint",
+							"pattern": "^(?:\\/(.*?))?\\/?$",
+							"segments": [
+								[
+									{
+										"content": "...rest",
+										"dynamic": true,
+										"spread": true
+									}
+								]
+							],
+							"params": ["...rest"],
+							"component": "src/pages/[...rest].ts",
+							"prerender": false,
+							"fallbackRoutes": [],
+							"distURL": [],
+							"origin": "project",
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						}
+					],
+					"functions": [
+						{
+							"selected": "specific",
+							"directory": "/tmp/isolated-page-base-precedence-specific-3F06y6",
+							"files": [
+								{
+									"file": "index.mjs",
+									"bytes": 6747,
+									"sha256": "b148080cafa60e0e8c7fb9e53aa310fa873345ca711f8bf5fc855a5bb6fbfe4d",
+									"edges": ["runtime.mjs", "specific.mjs"]
+								},
+								{
+									"file": "chunks/compiler_DBGFrkaR.mjs",
+									"bytes": 1304,
+									"sha256": "594fc913344c4c5d8050f6a67d3cfbda99de32e7c1515c2fc67242d014ed3974",
+									"edges": [
+										"chunks/server_CUXlE85c.mjs",
+										"chunks/errors_Cmx71fxh.mjs"
+									]
+								},
+								{
+									"file": "chunks/entrypoints_Dv6_DVwe.mjs",
+									"bytes": 255318,
+									"sha256": "742a8403f2a3e555ef9c77bd7708bee4e28a573eb497a2fc72381dd5d910e5eb",
+									"edges": [
+										"chunks/server_CUXlE85c.mjs",
+										"chunks/remote_x4dWgqmH.mjs",
+										"chunks/errors_Cmx71fxh.mjs"
+									]
+								},
+								{
+									"file": "chunks/errors_Cmx71fxh.mjs",
+									"bytes": 22820,
+									"sha256": "86697681a1970906a419cdd04ec835915ff6e9adbb604910f280f009b75a54ce",
+									"edges": []
+								},
+								{
+									"file": "chunks/remote_x4dWgqmH.mjs",
+									"bytes": 5708,
+									"sha256": "71ec96b09473a5fe287c17605161c98e15c21d36ebf26533853d3660de0c6fdc",
+									"edges": []
+								},
+								{
+									"file": "chunks/rolldown-runtime_BMI-E3GI.mjs",
+									"bytes": 1928,
+									"sha256": "efc57dcff870d1e3f2f361b3ba80eb84330c649bef8f1529736019ea7e961346",
+									"edges": ["node:module"]
+								},
+								{
+									"file": "chunks/server_CUXlE85c.mjs",
+									"bytes": 230271,
+									"sha256": "e84b2e72de7aef3c569a064965105adcd285f00ab64d4838a35facd7dcade235",
+									"edges": ["chunks/errors_Cmx71fxh.mjs"]
+								},
+								{
+									"file": "chunks/specific_CpX1lcJm.mjs",
+									"bytes": 972,
+									"sha256": "ca216e8dc1f9dcb87cd18610d3686621eb808676c7b963fe460fdc5b3a66d951",
+									"edges": [
+										"chunks/rolldown-runtime_BMI-E3GI.mjs",
+										"chunks/server_CUXlE85c.mjs",
+										"chunks/compiler_DBGFrkaR.mjs"
+									]
+								},
+								{
+									"file": "runtime.mjs",
+									"bytes": 125,
+									"sha256": "f5e181875447767b01911391a385fb57fed71d3d608ff2c78a218fcff4e52cc5",
+									"edges": ["chunks/entrypoints_Dv6_DVwe.mjs"]
+								},
+								{
+									"file": "specific.mjs",
+									"bytes": 155,
+									"sha256": "d860bfb2d9b3595a5382c400ccc31fffa5e9bcf89a4e094ca7ad60c3265784e6",
+									"edges": ["chunks/specific_CpX1lcJm.mjs"]
+								}
+							],
+							"external": ["node:module"],
+							"containsOwnMarker": true,
+							"containsForeignMarker": false,
+							"finalNativeBytesUnchanged": true,
+							"runtime": {
+								"responses": [
+									{
+										"path": "/nested/specific",
+										"own": true,
+										"marker": "PROBE_PAGE_ONLY",
+										"matched": "/specific",
+										"status": 200,
+										"body": "<!DOCTYPE html><html><head><title>probe</title></head><body><h1>PROBE_PAGE_ONLY</h1></body></html>"
+									},
+									{
+										"path": "/nested/anything",
+										"own": false,
+										"marker": "PROBE_REST_ONLY",
+										"matched": "/[...rest]",
+										"status": 404,
+										"body": "Not Found"
+									}
+								],
+								"unguardedResult": {
+									"error": "Unexpectedly unable to find a component instance for route /[...rest]"
+								}
+							}
+						},
+						{
+							"selected": "rest",
+							"directory": "/tmp/isolated-page-base-precedence-rest-7YFu2P",
+							"files": [
+								{
+									"file": "index.mjs",
+									"bytes": 6741,
+									"sha256": "3bee939a3e6baea9b6f64bf427aa2511c967e3f766e7dfbbf2c881e6ae03bbaf",
+									"edges": ["runtime.mjs", "rest.mjs"]
+								},
+								{
+									"file": "chunks/_...rest__-EWMNRG1.mjs",
+									"bytes": 379,
+									"sha256": "6cd6dbbf499433311e7c5a2eae6525accf84cde21938474bd816123b3f959fd0",
+									"edges": [
+										"chunks/rolldown-runtime_BMI-E3GI.mjs"
+									]
+								},
+								{
+									"file": "chunks/entrypoints_Dv6_DVwe.mjs",
+									"bytes": 255318,
+									"sha256": "742a8403f2a3e555ef9c77bd7708bee4e28a573eb497a2fc72381dd5d910e5eb",
+									"edges": [
+										"chunks/server_CUXlE85c.mjs",
+										"chunks/remote_x4dWgqmH.mjs",
+										"chunks/errors_Cmx71fxh.mjs"
+									]
+								},
+								{
+									"file": "chunks/errors_Cmx71fxh.mjs",
+									"bytes": 22820,
+									"sha256": "86697681a1970906a419cdd04ec835915ff6e9adbb604910f280f009b75a54ce",
+									"edges": []
+								},
+								{
+									"file": "chunks/remote_x4dWgqmH.mjs",
+									"bytes": 5708,
+									"sha256": "71ec96b09473a5fe287c17605161c98e15c21d36ebf26533853d3660de0c6fdc",
+									"edges": []
+								},
+								{
+									"file": "chunks/rolldown-runtime_BMI-E3GI.mjs",
+									"bytes": 1928,
+									"sha256": "efc57dcff870d1e3f2f361b3ba80eb84330c649bef8f1529736019ea7e961346",
+									"edges": ["node:module"]
+								},
+								{
+									"file": "chunks/server_CUXlE85c.mjs",
+									"bytes": 230271,
+									"sha256": "e84b2e72de7aef3c569a064965105adcd285f00ab64d4838a35facd7dcade235",
+									"edges": ["chunks/errors_Cmx71fxh.mjs"]
+								},
+								{
+									"file": "rest.mjs",
+									"bytes": 76,
+									"sha256": "45cf7855c014956daa2785796a8bf9302a6e1e771e0fe7f813642b3c70811c9f",
+									"edges": ["chunks/_...rest__-EWMNRG1.mjs"]
+								},
+								{
+									"file": "runtime.mjs",
+									"bytes": 125,
+									"sha256": "f5e181875447767b01911391a385fb57fed71d3d608ff2c78a218fcff4e52cc5",
+									"edges": ["chunks/entrypoints_Dv6_DVwe.mjs"]
+								}
+							],
+							"external": ["node:module"],
+							"containsOwnMarker": true,
+							"containsForeignMarker": false,
+							"finalNativeBytesUnchanged": true,
+							"runtime": {
+								"responses": [
+									{
+										"path": "/nested/specific",
+										"own": false,
+										"marker": "PROBE_PAGE_ONLY",
+										"matched": "/specific",
+										"status": 404,
+										"body": "Not Found"
+									},
+									{
+										"path": "/nested/anything",
+										"own": true,
+										"marker": "PROBE_REST_ONLY",
+										"matched": "/[...rest]",
+										"status": 200,
+										"body": "PROBE_REST_ONLY:anything"
+									}
+								],
+								"unguardedResult": {
+									"status": 200,
+									"body": "PROBE_REST_ONLY:specific"
+								}
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"versions": {
+				"node": "v26.13.0",
+				"astro": "7.1.6",
+				"vite": "8.2.0",
+				"rolldown": "1.2.3"
+			},
+			"output": "/tmp/native-app-isolation-Jor6dA",
+			"results": [
+				{
+					"name": "endpoints",
+					"base": "/",
+					"events": [
+						"astro:build:setup",
+						"ssr:buildStart",
+						"ssr:generateBundle",
+						"astro:build:ssr",
+						"astro:build:done"
+					],
+					"sources": [
+						{
+							"name": "one",
+							"file": "one.ts",
+							"path": "/one",
+							"marker": "PROBE_ONE_ONLY",
+							"component": "src/pages/one.ts",
+							"moduleSpecifier": "/src/pages/one.ts",
+							"facadeModuleId": "/tmp/native-app-isolation-Jor6dA/endpoints/fixture/src/pages/one.ts"
+						},
+						{
+							"name": "two",
+							"file": "two.ts",
+							"path": "/two",
+							"marker": "PROBE_TWO_ONLY",
+							"component": "src/pages/two.ts",
+							"moduleSpecifier": "/src/pages/two.ts",
+							"facadeModuleId": "/tmp/native-app-isolation-Jor6dA/endpoints/fixture/src/pages/two.ts"
+						}
+					],
+					"routeMetadata": [
+						{
+							"type": "page",
+							"component": "_server-islands.astro",
+							"params": ["name"],
+							"segments": [
+								[
+									{
+										"content": "_server-islands",
+										"dynamic": false,
+										"spread": false
+									}
+								],
+								[
+									{
+										"content": "name",
+										"dynamic": true,
+										"spread": false
+									}
+								]
+							],
+							"pattern": "^\\/_server-islands\\/([^/]+?)\\/?$",
+							"prerender": false,
+							"isIndex": false,
+							"fallbackRoutes": [],
+							"route": "/_server-islands/[name]",
+							"origin": "internal",
+							"distURL": [],
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						},
+						{
+							"route": "/_image",
+							"component": "../../../../home/artemi1/Dev/astro-yandex-cloud-adapter/node_modules/.pnpm/astro@7.1.6_@emnapi+core@1.11.1_@emnapi+runtime@1.11.3_@types+node@24.13.3_jiti@2.7.0_rollup@4.62.4/node_modules/astro/dist/assets/endpoint/generic.js",
+							"params": [],
+							"pathname": "/_image",
+							"pattern": "^\\/_image\\/?$",
+							"segments": [
+								[
+									{
+										"content": "_image",
+										"dynamic": false,
+										"spread": false
+									}
+								]
+							],
+							"type": "endpoint",
+							"prerender": false,
+							"fallbackRoutes": [],
+							"distURL": [],
+							"isIndex": false,
+							"origin": "internal",
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						},
+						{
+							"route": "/one",
+							"isIndex": false,
+							"type": "endpoint",
+							"pattern": "^\\/one\\/?$",
+							"segments": [
+								[
+									{
+										"content": "one",
+										"dynamic": false,
+										"spread": false
+									}
+								]
+							],
+							"params": [],
+							"component": "src/pages/one.ts",
+							"pathname": "/one",
+							"prerender": false,
+							"fallbackRoutes": [],
+							"distURL": [],
+							"origin": "project",
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						},
+						{
+							"route": "/two",
+							"isIndex": false,
+							"type": "endpoint",
+							"pattern": "^\\/two\\/?$",
+							"segments": [
+								[
+									{
+										"content": "two",
+										"dynamic": false,
+										"spread": false
+									}
+								]
+							],
+							"params": [],
+							"component": "src/pages/two.ts",
+							"pathname": "/two",
+							"prerender": false,
+							"fallbackRoutes": [],
+							"distURL": [],
+							"origin": "project",
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						}
+					],
+					"functions": [
+						{
+							"selected": "one",
+							"directory": "/tmp/isolated-endpoints-one-hO7k4T",
+							"files": [
+								{
+									"file": "index.mjs",
+									"bytes": 6398,
+									"sha256": "f38d211bb10424e5c27ca6513cdfb930ffea6642e7bcfedb29ea20fc35531439",
+									"edges": ["runtime.mjs", "one.mjs"]
+								},
+								{
+									"file": "chunks/entrypoints_BKnemY9v.mjs",
+									"bytes": 255276,
+									"sha256": "c9de11a48609bb8e1abf044a0797e62e2a9dc13e0da7bc808fe79eb6127dd292",
+									"edges": [
+										"chunks/server_BZ9ndAew.mjs",
+										"chunks/remote_C3XTqZZR.mjs"
+									]
+								},
+								{
+									"file": "chunks/one_BZK1b8Xr.mjs",
+									"bytes": 324,
+									"sha256": "e271848058a0f366d864acd807aad7ca8066ccbb87da637ffda9ec3a107dacdf",
+									"edges": [
+										"chunks/rolldown-runtime_BMI-E3GI.mjs"
+									]
+								},
+								{
+									"file": "chunks/remote_C3XTqZZR.mjs",
+									"bytes": 28533,
+									"sha256": "447396a7d122a5c84f3b1352d2df21ccaa85d684b7d3df42b4faa36b67ba0fc7",
+									"edges": []
+								},
+								{
+									"file": "chunks/rolldown-runtime_BMI-E3GI.mjs",
+									"bytes": 1928,
+									"sha256": "efc57dcff870d1e3f2f361b3ba80eb84330c649bef8f1529736019ea7e961346",
+									"edges": ["node:module"]
+								},
+								{
+									"file": "chunks/server_BZ9ndAew.mjs",
+									"bytes": 230177,
+									"sha256": "b1c5e503c135c8cd241c10aa9c68a3c4946befa84332ba7945849a273e08f100",
+									"edges": ["chunks/remote_C3XTqZZR.mjs"]
+								},
+								{
+									"file": "one.mjs",
+									"bytes": 70,
+									"sha256": "65c95ad9d89bf726c8b6053c58cdddad4a532ac07c65ec4a536a9d54c339b7be",
+									"edges": ["chunks/one_BZK1b8Xr.mjs"]
+								},
+								{
+									"file": "runtime.mjs",
+									"bytes": 125,
+									"sha256": "02fca8c9b13675c5b77efe9636b9cc27051abb7a7d5a6fdab535d80054603ea8",
+									"edges": ["chunks/entrypoints_BKnemY9v.mjs"]
+								}
+							],
+							"external": ["node:module"],
+							"containsOwnMarker": true,
+							"containsForeignMarker": false,
+							"finalNativeBytesUnchanged": true,
+							"runtime": {
+								"responses": [
+									{
+										"path": "/one",
+										"own": true,
+										"marker": "PROBE_ONE_ONLY",
+										"matched": "/one",
+										"status": 200,
+										"body": "PROBE_ONE_ONLY"
+									},
+									{
+										"path": "/two",
+										"own": false,
+										"marker": "PROBE_TWO_ONLY",
+										"matched": "/two",
+										"status": 404,
+										"body": "Not Found"
+									}
+								],
+								"unguardedResult": {
+									"status": 500,
+									"body": ""
+								}
+							}
+						},
+						{
+							"selected": "two",
+							"directory": "/tmp/isolated-endpoints-two-TQDgQh",
+							"files": [
+								{
+									"file": "index.mjs",
+									"bytes": 6398,
+									"sha256": "b4f86a39b861b47d0c31c03c9887976ddef3f4b094d7185ef6a92c2d982c9dd0",
+									"edges": ["runtime.mjs", "two.mjs"]
+								},
+								{
+									"file": "chunks/entrypoints_BKnemY9v.mjs",
+									"bytes": 255276,
+									"sha256": "c9de11a48609bb8e1abf044a0797e62e2a9dc13e0da7bc808fe79eb6127dd292",
+									"edges": [
+										"chunks/server_BZ9ndAew.mjs",
+										"chunks/remote_C3XTqZZR.mjs"
+									]
+								},
+								{
+									"file": "chunks/remote_C3XTqZZR.mjs",
+									"bytes": 28533,
+									"sha256": "447396a7d122a5c84f3b1352d2df21ccaa85d684b7d3df42b4faa36b67ba0fc7",
+									"edges": []
+								},
+								{
+									"file": "chunks/rolldown-runtime_BMI-E3GI.mjs",
+									"bytes": 1928,
+									"sha256": "efc57dcff870d1e3f2f361b3ba80eb84330c649bef8f1529736019ea7e961346",
+									"edges": ["node:module"]
+								},
+								{
+									"file": "chunks/server_BZ9ndAew.mjs",
+									"bytes": 230177,
+									"sha256": "b1c5e503c135c8cd241c10aa9c68a3c4946befa84332ba7945849a273e08f100",
+									"edges": ["chunks/remote_C3XTqZZR.mjs"]
+								},
+								{
+									"file": "chunks/two_CbT0BtXd.mjs",
+									"bytes": 324,
+									"sha256": "67c5f31ecc50355f848feb0c08e7d83268287ac0e145e97bd1ff6676ed424935",
+									"edges": [
+										"chunks/rolldown-runtime_BMI-E3GI.mjs"
+									]
+								},
+								{
+									"file": "runtime.mjs",
+									"bytes": 125,
+									"sha256": "02fca8c9b13675c5b77efe9636b9cc27051abb7a7d5a6fdab535d80054603ea8",
+									"edges": ["chunks/entrypoints_BKnemY9v.mjs"]
+								},
+								{
+									"file": "two.mjs",
+									"bytes": 70,
+									"sha256": "101d7a12f74f05ad7f97af592d1c3cad1498de6aac7862d27585eb176912e496",
+									"edges": ["chunks/two_CbT0BtXd.mjs"]
+								}
+							],
+							"external": ["node:module"],
+							"containsOwnMarker": true,
+							"containsForeignMarker": false,
+							"finalNativeBytesUnchanged": true,
+							"runtime": {
+								"responses": [
+									{
+										"path": "/one",
+										"own": false,
+										"marker": "PROBE_ONE_ONLY",
+										"matched": "/one",
+										"status": 404,
+										"body": "Not Found"
+									},
+									{
+										"path": "/two",
+										"own": true,
+										"marker": "PROBE_TWO_ONLY",
+										"matched": "/two",
+										"status": 200,
+										"body": "PROBE_TWO_ONLY"
+									}
+								],
+								"unguardedResult": {
+									"status": 500,
+									"body": ""
+								}
+							}
+						}
+					]
+				},
+				{
+					"name": "page-base-precedence",
+					"base": "/nested/",
+					"events": [
+						"astro:build:setup",
+						"ssr:buildStart",
+						"ssr:generateBundle",
+						"astro:build:ssr",
+						"astro:build:done"
+					],
+					"sources": [
+						{
+							"name": "specific",
+							"file": "specific.astro",
+							"path": "/specific",
+							"marker": "PROBE_PAGE_ONLY",
+							"component": "src/pages/specific.astro",
+							"moduleSpecifier": "/src/pages/specific.astro",
+							"facadeModuleId": "/tmp/native-app-isolation-Jor6dA/page-base-precedence/fixture/src/pages/specific.astro"
+						},
+						{
+							"name": "rest",
+							"file": "[...rest].ts",
+							"path": "/anything",
+							"marker": "PROBE_REST_ONLY",
+							"component": "src/pages/[...rest].ts",
+							"moduleSpecifier": "/src/pages/[...rest].ts",
+							"facadeModuleId": "/tmp/native-app-isolation-Jor6dA/page-base-precedence/fixture/src/pages/[...rest].ts"
+						}
+					],
+					"routeMetadata": [
+						{
+							"type": "page",
+							"component": "_server-islands.astro",
+							"params": ["name"],
+							"segments": [
+								[
+									{
+										"content": "_server-islands",
+										"dynamic": false,
+										"spread": false
+									}
+								],
+								[
+									{
+										"content": "name",
+										"dynamic": true,
+										"spread": false
+									}
+								]
+							],
+							"pattern": "^\\/_server-islands\\/([^/]+?)\\/?$",
+							"prerender": false,
+							"isIndex": false,
+							"fallbackRoutes": [],
+							"route": "/_server-islands/[name]",
+							"origin": "internal",
+							"distURL": [],
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						},
+						{
+							"route": "/_image",
+							"component": "../../../../home/artemi1/Dev/astro-yandex-cloud-adapter/node_modules/.pnpm/astro@7.1.6_@emnapi+core@1.11.1_@emnapi+runtime@1.11.3_@types+node@24.13.3_jiti@2.7.0_rollup@4.62.4/node_modules/astro/dist/assets/endpoint/generic.js",
+							"params": [],
+							"pathname": "/_image",
+							"pattern": "^\\/_image\\/?$",
+							"segments": [
+								[
+									{
+										"content": "_image",
+										"dynamic": false,
+										"spread": false
+									}
+								]
+							],
+							"type": "endpoint",
+							"prerender": false,
+							"fallbackRoutes": [],
+							"distURL": [],
+							"isIndex": false,
+							"origin": "internal",
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						},
+						{
+							"route": "/specific",
+							"isIndex": false,
+							"type": "page",
+							"pattern": "^\\/specific\\/?$",
+							"segments": [
+								[
+									{
+										"content": "specific",
+										"dynamic": false,
+										"spread": false
+									}
+								]
+							],
+							"params": [],
+							"component": "src/pages/specific.astro",
+							"pathname": "/specific",
+							"prerender": false,
+							"fallbackRoutes": [],
+							"distURL": [],
+							"origin": "project",
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						},
+						{
+							"route": "/[...rest]",
+							"isIndex": false,
+							"type": "endpoint",
+							"pattern": "^(?:\\/(.*?))?\\/?$",
+							"segments": [
+								[
+									{
+										"content": "...rest",
+										"dynamic": true,
+										"spread": true
+									}
+								]
+							],
+							"params": ["...rest"],
+							"component": "src/pages/[...rest].ts",
+							"prerender": false,
+							"fallbackRoutes": [],
+							"distURL": [],
+							"origin": "project",
+							"_meta": {
+								"trailingSlash": "ignore"
+							}
+						}
+					],
+					"functions": [
+						{
+							"selected": "specific",
+							"directory": "/tmp/isolated-page-base-precedence-specific-UaD4q2",
+							"files": [
+								{
+									"file": "index.mjs",
+									"bytes": 6747,
+									"sha256": "ce9af7917fb04397498048c2d0b79214464aa3748a6a14f196aa43a9853ba45f",
+									"edges": ["runtime.mjs", "specific.mjs"]
+								},
+								{
+									"file": "chunks/compiler_DBGFrkaR.mjs",
+									"bytes": 1304,
+									"sha256": "594fc913344c4c5d8050f6a67d3cfbda99de32e7c1515c2fc67242d014ed3974",
+									"edges": [
+										"chunks/server_CUXlE85c.mjs",
+										"chunks/errors_Cmx71fxh.mjs"
+									]
+								},
+								{
+									"file": "chunks/entrypoints_C8Dq-Is8.mjs",
+									"bytes": 255316,
+									"sha256": "615685a54bc03678b24cf6db5c668753ce4e9ffc6d34a8a0ab233ea8722191cd",
+									"edges": [
+										"chunks/server_CUXlE85c.mjs",
+										"chunks/remote_x4dWgqmH.mjs",
+										"chunks/errors_Cmx71fxh.mjs"
+									]
+								},
+								{
+									"file": "chunks/errors_Cmx71fxh.mjs",
+									"bytes": 22820,
+									"sha256": "86697681a1970906a419cdd04ec835915ff6e9adbb604910f280f009b75a54ce",
+									"edges": []
+								},
+								{
+									"file": "chunks/remote_x4dWgqmH.mjs",
+									"bytes": 5708,
+									"sha256": "71ec96b09473a5fe287c17605161c98e15c21d36ebf26533853d3660de0c6fdc",
+									"edges": []
+								},
+								{
+									"file": "chunks/rolldown-runtime_BMI-E3GI.mjs",
+									"bytes": 1928,
+									"sha256": "efc57dcff870d1e3f2f361b3ba80eb84330c649bef8f1529736019ea7e961346",
+									"edges": ["node:module"]
+								},
+								{
+									"file": "chunks/server_CUXlE85c.mjs",
+									"bytes": 230271,
+									"sha256": "e84b2e72de7aef3c569a064965105adcd285f00ab64d4838a35facd7dcade235",
+									"edges": ["chunks/errors_Cmx71fxh.mjs"]
+								},
+								{
+									"file": "chunks/specific_CqR7LPv6.mjs",
+									"bytes": 972,
+									"sha256": "3f8c1b1669c5de597861a250cb4adea8022f64a13b7d631fa88ba85f70bc397b",
+									"edges": [
+										"chunks/rolldown-runtime_BMI-E3GI.mjs",
+										"chunks/server_CUXlE85c.mjs",
+										"chunks/compiler_DBGFrkaR.mjs"
+									]
+								},
+								{
+									"file": "runtime.mjs",
+									"bytes": 125,
+									"sha256": "f548e532eac343f136f5a1413910abaeae10234e59427fd9bc8ecb54f1f40b54",
+									"edges": ["chunks/entrypoints_C8Dq-Is8.mjs"]
+								},
+								{
+									"file": "specific.mjs",
+									"bytes": 155,
+									"sha256": "fa3d754d5239261698c2f354846f16c3f0fe3a9c42db6a23926b31579d0a6268",
+									"edges": ["chunks/specific_CqR7LPv6.mjs"]
+								}
+							],
+							"external": ["node:module"],
+							"containsOwnMarker": true,
+							"containsForeignMarker": false,
+							"finalNativeBytesUnchanged": true,
+							"runtime": {
+								"responses": [
+									{
+										"path": "/nested/specific",
+										"own": true,
+										"marker": "PROBE_PAGE_ONLY",
+										"matched": "/specific",
+										"status": 200,
+										"body": "<!DOCTYPE html><html><head><title>probe</title></head><body><h1>PROBE_PAGE_ONLY</h1></body></html>"
+									},
+									{
+										"path": "/nested/anything",
+										"own": false,
+										"marker": "PROBE_REST_ONLY",
+										"matched": "/[...rest]",
+										"status": 404,
+										"body": "Not Found"
+									}
+								],
+								"unguardedResult": {
+									"error": "Unexpectedly unable to find a component instance for route /[...rest]"
+								}
+							}
+						},
+						{
+							"selected": "rest",
+							"directory": "/tmp/isolated-page-base-precedence-rest-VmJ3Y8",
+							"files": [
+								{
+									"file": "index.mjs",
+									"bytes": 6741,
+									"sha256": "bcc042829ad86ddf749985f755550ed601281799f69f5002e5738a8ed2fdc4ec",
+									"edges": ["runtime.mjs", "rest.mjs"]
+								},
+								{
+									"file": "chunks/_...rest__DYwjlM7n.mjs",
+									"bytes": 379,
+									"sha256": "40af3003c923099ce6e15eba7a6b42d3931a6d812f8d7606c27229a6fbcf9fd2",
+									"edges": [
+										"chunks/rolldown-runtime_BMI-E3GI.mjs"
+									]
+								},
+								{
+									"file": "chunks/entrypoints_C8Dq-Is8.mjs",
+									"bytes": 255316,
+									"sha256": "615685a54bc03678b24cf6db5c668753ce4e9ffc6d34a8a0ab233ea8722191cd",
+									"edges": [
+										"chunks/server_CUXlE85c.mjs",
+										"chunks/remote_x4dWgqmH.mjs",
+										"chunks/errors_Cmx71fxh.mjs"
+									]
+								},
+								{
+									"file": "chunks/errors_Cmx71fxh.mjs",
+									"bytes": 22820,
+									"sha256": "86697681a1970906a419cdd04ec835915ff6e9adbb604910f280f009b75a54ce",
+									"edges": []
+								},
+								{
+									"file": "chunks/remote_x4dWgqmH.mjs",
+									"bytes": 5708,
+									"sha256": "71ec96b09473a5fe287c17605161c98e15c21d36ebf26533853d3660de0c6fdc",
+									"edges": []
+								},
+								{
+									"file": "chunks/rolldown-runtime_BMI-E3GI.mjs",
+									"bytes": 1928,
+									"sha256": "efc57dcff870d1e3f2f361b3ba80eb84330c649bef8f1529736019ea7e961346",
+									"edges": ["node:module"]
+								},
+								{
+									"file": "chunks/server_CUXlE85c.mjs",
+									"bytes": 230271,
+									"sha256": "e84b2e72de7aef3c569a064965105adcd285f00ab64d4838a35facd7dcade235",
+									"edges": ["chunks/errors_Cmx71fxh.mjs"]
+								},
+								{
+									"file": "rest.mjs",
+									"bytes": 76,
+									"sha256": "8ff1939e1ac7679d8d939f4ec4cef6a71cd89c009a3889e1c010f3cd148098a9",
+									"edges": ["chunks/_...rest__DYwjlM7n.mjs"]
+								},
+								{
+									"file": "runtime.mjs",
+									"bytes": 125,
+									"sha256": "f548e532eac343f136f5a1413910abaeae10234e59427fd9bc8ecb54f1f40b54",
+									"edges": ["chunks/entrypoints_C8Dq-Is8.mjs"]
+								}
+							],
+							"external": ["node:module"],
+							"containsOwnMarker": true,
+							"containsForeignMarker": false,
+							"finalNativeBytesUnchanged": true,
+							"runtime": {
+								"responses": [
+									{
+										"path": "/nested/specific",
+										"own": false,
+										"marker": "PROBE_PAGE_ONLY",
+										"matched": "/specific",
+										"status": 404,
+										"body": "Not Found"
+									},
+									{
+										"path": "/nested/anything",
+										"own": true,
+										"marker": "PROBE_REST_ONLY",
+										"matched": "/[...rest]",
+										"status": 200,
+										"body": "PROBE_REST_ONLY:anything"
+									}
+								],
+								"unguardedResult": {
+									"status": 200,
+									"body": "PROBE_REST_ONLY:specific"
+								}
+							}
+						}
+					]
+				}
+			]
+		}
+	]
+}
