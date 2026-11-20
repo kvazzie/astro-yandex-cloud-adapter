@@ -31,16 +31,16 @@ it.each(["/", "/docs"])(
 			Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]),
 		);
 		await writeFile(
-			new URL("robots.txt", client),
-			"User-agent: *",
-		);
-		await writeFile(
 			new URL("secret.html", outDir),
 			"outside secret",
 		);
 		await writeFile(
 			new URL("404.html", client),
 			"safe fallback",
+		);
+		await writeFile(
+			new URL("robots.txt", client),
+			"User-agent: *",
 		);
 		const prefix = base === "/" ? "" : `${base.slice(1)}/`;
 		const url = `${base === "/" ? "" : base}/404/`;
@@ -120,12 +120,25 @@ it.each(["/", "/docs"])(
 					expect(loaded.instance).toBeInstanceOf(
 						WebAssembly.Instance,
 					);
-					for (const path of ["missing", "robots.txt/missing"]) {
-						const response = await fetch(
-							`http://127.0.0.1:${server.port}/${prefix}${path}`,
-						);
-						expect(response.status).toBe(404);
-						expect(await response.text()).toBe(expected);
+					const response = await fetch(
+						`http://127.0.0.1:${server.port}/${prefix}missing`,
+					);
+					expect(response.status).toBe(404);
+					expect(await response.text()).toBe(expected);
+					for (const method of ["GET", "HEAD"]) {
+						for (const path of [
+							"robots.txt/child",
+							"robots.txt/",
+						]) {
+							const miss = await fetch(
+								`http://127.0.0.1:${server.port}/${prefix}${path}`,
+								{ method },
+							);
+							expect(miss.status).toBe(404);
+							expect(await miss.text()).toBe(
+								method === "HEAD" ? "" : expected,
+							);
+						}
 					}
 				} finally {
 					await server.stop();
