@@ -68,15 +68,16 @@ export async function resolvePinnedRuntimeDependencies(
 	const lock = await readLocalLock(appDirectory);
 	const application =
 		await readJsonFile<PackageJson>(appManifestPath);
-	const overrides = new ApplicationOverrides(
-		(await readWorkspaceOverrideManifest(
-			lock,
-			appDirectory,
-			application?.name,
-		)) ??
-			application ??
-			{},
+	const overrideOwner = await readWorkspaceOverrideManifest(
+		lock,
+		appDirectory,
+		application?.name,
 	);
+	const overrides = new ApplicationOverrides(
+		overrideOwner?.manifest ?? application ?? {},
+	);
+	const overrideDirectory =
+		overrideOwner?.directory ?? appDirectory;
 	const developmentFirst =
 		await readRootRequirementPrecedence(appManifestPath);
 	const provenance = await readInstalledProvenance(
@@ -84,12 +85,12 @@ export async function resolvePinnedRuntimeDependencies(
 		developmentFirst,
 		overrides,
 	);
-	const findInstalledPackage = (
+	const findInstalledPackage = async (
 		base: string,
 		name: string,
 		runtimeRequirement?: string,
-	) =>
-		readInstalledSource(
+	) => {
+		const installed = await readInstalledSource(
 			base,
 			name,
 			includeLocal,
@@ -97,6 +98,52 @@ export async function resolvePinnedRuntimeDependencies(
 			provenance,
 			appRoot,
 		);
+		if (!installed || installed.local || !lock) return installed;
+		const entry =
+			lock.packages?.[lockKey(lock, installed.location)];
+		if (
+			!entry ||
+			!hasLocalLockOrigin(entry) ||
+			!(await matchesLockedInstallation(lock, entry, installed))
+		)
+			return installed;
+		if (!includeLocal) throw localRuntimeSourceRequired(name);
+		return { ...installed, local: true };
+	};
+	const selectLockedChild = async (
+		locked: LockedSelection,
+		childBase: string,
+		name: string,
+	): Promise<DependencySource> => {
+		const { location, metadata } = locked;
+		if (hasLocalLockOrigin(metadata)) {
+			if (!includeLocal || !lock)
+				throw localRuntimeSourceRequired(name);
+			const installed = await findInstalledPackage(
+				childBase,
+				name,
+			);
+			if (
+				!installed ||
+				installed.location !== location ||
+				!(await matchesLockedInstallation(
+					lock,
+					metadata,
+					installed,
+				))
+			)
+				throw localRuntimeSourceRequired(name);
+			return { ...installed, local: true };
+		}
+		return {
+			version: metadata.version,
+			...(metadata.name && metadata.name !== name
+				? { registryName: metadata.name }
+				: {}),
+			metadata,
+			lockLocation: location,
+		};
+	};
 	const nodes = new Map<
 		string,
 		{
@@ -336,7 +383,13 @@ export async function resolvePinnedRuntimeDependencies(
 							selected &&
 							!(await ownsLockOnlyLocalChild(
 								lock,
-								source.lockLocation,
+								override.replacement
+									? overrideDirectory
+									: localDependencyBase(
+											lock,
+											source,
+											packageName,
+										),
 								name,
 								override.spec,
 								selected,
@@ -347,15 +400,7 @@ export async function resolvePinnedRuntimeDependencies(
 					}
 					let child: DependencySource | undefined =
 						locked && !requirement.local
-							? {
-									version: locked.metadata.version!,
-									...(locked.metadata.name &&
-									locked.metadata.name !== name
-										? { registryName: locked.metadata.name }
-										: {}),
-									metadata: locked.metadata,
-									lockLocation: locked.location,
-								}
+							? await selectLockedChild(locked, childBase, name)
 							: installed?.version &&
 								  (!installed.local || includeLocal || inBundle)
 								? { ...installed, version: installed.version }
@@ -374,11 +419,13 @@ export async function resolvePinnedRuntimeDependencies(
 						requirement.local &&
 						(!includeLocal || !child)
 					)
-						throw new Error(
-							`Local runtime package "${name}" requires includeLocal and an installed local source.`,
-						);
+						throw localRuntimeSourceRequired(name);
 					if (child && !compatible(child)) {
-						if (source.directory || requirement.local)
+						if (
+							source.directory ||
+							requirement.local ||
+							child.local
+						)
 							throw unresolved(name, packageName, range);
 						child = undefined;
 					}
@@ -401,43 +448,49 @@ export async function resolvePinnedRuntimeDependencies(
 						if (
 							locked &&
 							!compatible({
-								version: locked.metadata.version!,
+								version: locked.metadata.version,
 								registryName: locked.metadata.name,
 							})
 						)
 							locked = undefined;
-						const childMetadata =
-							locked?.metadata ??
-							(await registry.resolve(
+						if (locked)
+							child = await selectLockedChild(
+								locked,
+								childBase,
+								name,
+							);
+						else {
+							const childMetadata = await registry.resolve(
 								requirement.name,
 								requirement.requirement,
-							));
-						const version =
-							childMetadata.version ??
-							semver.valid(requirement.requirement);
-						if (!version)
-							throw new Error(
-								`The "install" dependency strategy cannot pin ${name}@${range} to an exact version.`,
 							);
-						if (
-							!isRegistryTag(requirement.requirement) &&
-							!semver.satisfies(version, requirement.requirement)
-						)
-							throw unresolved(name, packageName, range);
-						child = {
-							version,
-							...((childMetadata.name ?? requirement.name) !==
-							name
-								? {
-										registryName:
-											childMetadata.name ?? requirement.name,
-									}
-								: {}),
-							metadata: childMetadata,
-							...(locked
-								? { lockLocation: locked.location }
-								: {}),
-						};
+							const version =
+								childMetadata.version ??
+								semver.valid(requirement.requirement);
+							if (!version)
+								throw new Error(
+									`The "install" dependency strategy cannot pin ${name}@${range} to an exact version.`,
+								);
+							if (
+								!compatible({
+									version,
+									registryName:
+										childMetadata.name ?? requirement.name,
+								})
+							)
+								throw unresolved(name, packageName, range);
+							child = {
+								version,
+								...((childMetadata.name ?? requirement.name) !==
+								name
+									? {
+											registryName:
+												childMetadata.name ?? requirement.name,
+										}
+									: {}),
+								metadata: childMetadata,
+							};
+						}
 					}
 					children.push({
 						name,
@@ -879,7 +932,9 @@ async function readWorkspaceOverrideManifest(
 	lock: LocalLock | undefined,
 	applicationDirectory: string,
 	name: string | undefined,
-): Promise<PackageJson | undefined> {
+): Promise<
+	{ manifest: PackageJson; directory: string } | undefined
+> {
 	if (
 		!lock?.packages ||
 		!name ||
@@ -903,7 +958,8 @@ async function readWorkspaceOverrideManifest(
 	const patterns = Array.isArray(workspaces)
 		? workspaces
 		: workspaces?.packages;
-	let matches = false;
+	const included: string[] = [];
+	let excluded: string[] = [];
 	for (const raw of patterns ?? []) {
 		if (typeof raw !== "string") continue;
 		const negation = raw.match(/^!+/)?.[0].length ?? 0;
@@ -911,10 +967,30 @@ async function readWorkspaceOverrideManifest(
 			.slice(negation)
 			.replaceAll("\\", "/")
 			.replace(/^\.?\/+|\/+$/g, "");
-		if (pattern && posix.matchesGlob(member, pattern))
-			matches = negation % 2 === 0;
+		if (!pattern) continue;
+		if (negation % 2 === 1) excluded.push(pattern);
+		else {
+			// npm restores a whole earlier exclusion when a later include matches it.
+			excluded = excluded.filter(
+				(negative) => !posix.matchesGlob(pattern, negative),
+			);
+			included.push(pattern);
+		}
 	}
-	return matches ? owner : undefined;
+	const matches =
+		!excluded.some((pattern) =>
+			posix.matchesGlob(member, pattern),
+		) &&
+		included.some(
+			(pattern) =>
+				posix.matchesGlob(member, pattern) &&
+				!excluded.some((negative) =>
+					posix.matchesGlob(pattern, negative),
+				),
+		);
+	return matches && owner
+		? { manifest: owner, directory: lock.directory }
+		: undefined;
 }
 
 function localRequestPath(
@@ -955,45 +1031,94 @@ async function existingRealPath(
 	}
 }
 
+function localDependencyBase(
+	lock: LocalLock | undefined,
+	source: DependencySource,
+	name: string,
+): string | undefined {
+	const located =
+		lock && source.metadata?.resolved
+			? localRequestPath(
+					name,
+					source.metadata.resolved,
+					lock.directory,
+				)
+			: undefined;
+	return located?.type === "file"
+		? dirname(located.path)
+		: source.lockLocation;
+}
+
+function hasLocalLockOrigin(entry: LockedPackage): boolean {
+	return (
+		entry.link === true ||
+		/^(file|link|workspace):/.test(entry.resolved ?? "")
+	);
+}
+
+function localRuntimeSourceRequired(name: string): Error {
+	return new Error(
+		`Local runtime package "${name}" requires includeLocal and an installed local source.`,
+	);
+}
+
+function lockedLinkTarget(
+	lock: LocalLock,
+	entry: LockedPackage,
+) {
+	if (!entry.link || !entry.resolved) return undefined;
+	const location = resolve(lock.directory, entry.resolved);
+	const metadata = lock.packages?.[lockKey(lock, location)];
+	if (metadata?.version)
+		return { location, metadata, version: metadata.version };
+	return undefined;
+}
+
+async function matchesLockedInstallation(
+	lock: LocalLock,
+	entry: LockedPackage,
+	installed: InstalledSource,
+): Promise<boolean> {
+	if (entry.link) {
+		const target = lockedLinkTarget(lock, entry);
+		return Boolean(
+			target &&
+			target.version === installed.version &&
+			(await existingRealPath(target.location)) ===
+				installed.directory &&
+			(!target.metadata.name ||
+				target.metadata.name === installed.manifest.name),
+		);
+	}
+	return (
+		entry.version === installed.version &&
+		(!entry.name || entry.name === installed.manifest.name)
+	);
+}
+
 async function ownsLockOnlyLocalChild(
 	lock: LocalLock | undefined,
-	parent: string | undefined,
+	specBase: string | undefined,
 	name: string,
 	requirement: string,
 	installed: InstalledSource,
 ): Promise<boolean> {
-	if (
-		parent &&
-		installed.location === join(parent, "node_modules", name) &&
-		installed.directory === installed.location
-	)
-		return true;
-	const requested =
-		parent && localRequestPath(name, requirement, parent);
-	if (
-		requested &&
-		requested.type === "directory" &&
-		(await existingRealPath(requested.path)) ===
-			installed.directory
-	)
-		return true;
 	if (!lock) return false;
 	const entry =
 		lock.packages?.[lockKey(lock, installed.location)];
-	if (!entry?.resolved) return false;
 	if (
-		entry.link &&
-		requirement.startsWith("workspace:") &&
-		!requested
-	) {
-		const target = resolve(lock.directory, entry.resolved);
-		return Boolean(
-			lock.packages?.[lockKey(lock, target)] &&
-			(await existingRealPath(target)) === installed.directory,
-		);
-	}
-	if (entry.link || entry.version !== installed.version)
+		!entry?.resolved ||
+		!(await matchesLockedInstallation(lock, entry, installed))
+	)
 		return false;
+	const requested =
+		specBase && localRequestPath(name, requirement, specBase);
+	if (entry.link)
+		return requested
+			? requested.type === "directory" &&
+					(await existingRealPath(requested.path)) ===
+						installed.directory
+			: requirement.startsWith("workspace:");
 	if (requested)
 		return (
 			requested.path ===
@@ -1006,19 +1131,36 @@ async function ownsLockOnlyLocalChild(
 	);
 }
 
+interface LockedSelection {
+	location: string;
+	metadata: LockedPackage & { version: string };
+}
+
 function findLockedPackage(
 	lock: LocalLock,
 	directory: string,
 	name: string,
-):
-	| { location: string; metadata: RegistryVersionMetadata }
-	| undefined {
+): LockedSelection | undefined {
 	for (const modules of createRequire(
 		join(directory, "package.json"),
 	).resolve.paths(`${name}/package.json`) ?? []) {
 		const location = join(modules, name);
 		const metadata = lock.packages?.[lockKey(lock, location)];
-		if (metadata?.version) return { location, metadata };
+		if (metadata?.version)
+			return {
+				location,
+				metadata: { ...metadata, version: metadata.version },
+			};
+		const target = metadata && lockedLinkTarget(lock, metadata);
+		if (target)
+			return {
+				location,
+				metadata: {
+					...target.metadata,
+					...metadata,
+					version: target.version,
+				},
+			};
 	}
 	return undefined;
 }

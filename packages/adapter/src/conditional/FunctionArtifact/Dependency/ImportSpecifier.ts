@@ -102,7 +102,9 @@ export function findRuntimePackageImports(
 					"module.exports",
 					seen,
 				);
-				return interop ? interop.role : namespace;
+				return interop && interop !== ambiguousExport
+					? interop.role
+					: namespace;
 			},
 		);
 		modules.set(url.href, {
@@ -786,9 +788,12 @@ function visitSyntax(
 }
 
 interface ExportBinding {
+	origin?: object;
 	role?: LoaderRole;
 	isDefined?: () => boolean;
 }
+
+const ambiguousExport: ExportBinding = {};
 
 interface EmittedNamespace {
 	exportNames(seen: Set<EmittedNamespace>): Set<string>;
@@ -821,9 +826,10 @@ function emittedNamespace(
 	for (const statement of program.body as SyntaxNode[]) {
 		const { declaration, source } = statement;
 		if (statement.type === "ExportDefaultDeclaration") {
-			exports.set("default", (seen) =>
-				bindingValue(declaration, seen),
-			);
+			exports.set("default", (seen) => ({
+				...bindingValue(declaration, seen),
+				origin: undefined,
+			}));
 			continue;
 		}
 		if (
@@ -837,10 +843,14 @@ function emittedNamespace(
 		if (statement.type === "ExportAllDeclaration") {
 			const name = exportName(statement.exported);
 			if (name)
-				exports.set(name, () => ({
-					role: imported(),
-					isDefined: () => true,
-				}));
+				exports.set(name, () => {
+					const role = imported();
+					return {
+						role,
+						origin: typeof role === "object" ? role : undefined,
+						isDefined: () => true,
+					};
+				});
 			else stars.push(imported);
 			continue;
 		}
@@ -912,16 +922,27 @@ function emittedNamespace(
 			keys.set(name, key);
 			const path = new Set(seen).add(key);
 			const explicit = exports.get(name);
-			if (explicit) return explicit(path);
-			if (name !== "default")
-				for (const target of stars) {
-					const namespace = target();
-					if (typeof namespace === "object") {
-						const selected = namespace.resolve(name, path);
-						if (selected) return selected;
-					}
-				}
-			return undefined;
+			if (explicit) {
+				const selected = explicit(path);
+				return selected === ambiguousExport || selected.origin
+					? selected
+					: { ...selected, origin: key };
+			}
+			if (name === "default") return undefined;
+			let result: ExportBinding | undefined;
+			for (const target of stars) {
+				const namespace = target();
+				if (typeof namespace !== "object") continue;
+				const selected = namespace.resolve(name, path);
+				if (!selected) continue;
+				if (
+					selected === ambiguousExport ||
+					(result && result.origin !== selected.origin)
+				)
+					return ambiguousExport;
+				result = selected;
+			}
+			return result;
 		},
 	};
 }
@@ -1366,6 +1387,81 @@ function runtimeLoaderBindings(
 		}
 		return !writtenBindings.has(binding);
 	};
+	let escapedRestBindings: Set<Binding> | undefined;
+	const restMayChange = (binding: Binding): boolean => {
+		if (!escapedRestBindings) {
+			const escaped = new Set<Binding>();
+			visitSyntax(program, (node, ancestors) => {
+				if (node.type !== "Identifier") return;
+				const entry = lookup(node);
+				if (!entry?.restExcludes) return;
+				const parent = ancestors.at(-1);
+				if (!parent) return;
+				if (
+					parent.type === "RestElement" &&
+					parent.argument === node
+				) {
+					if (
+						ancestors.some(
+							(ancestor) =>
+								ancestor.type === "ExportNamedDeclaration",
+						)
+					)
+						escaped.add(entry);
+					return;
+				}
+				if (
+					(parent.type === "Property" &&
+						parent.key === node &&
+						parent.value !== node &&
+						!parent.computed) ||
+					(parent.type === "MemberExpression" &&
+						parent.property === node &&
+						!parent.computed)
+				)
+					return;
+				if (
+					(parent.type === "VariableDeclarator" &&
+						parent.init === node &&
+						isSyntaxNode(parent.id) &&
+						parent.id.type === "ObjectPattern") ||
+					(parent.type === "AssignmentPattern" &&
+						parent.right === node &&
+						isSyntaxNode(parent.left) &&
+						parent.left.type === "ObjectPattern")
+				)
+					return;
+				if (
+					parent.type === "MemberExpression" &&
+					parent.object === node
+				) {
+					const observed = !ancestors.some((ancestor, index) => {
+						const child = ancestors[index + 1] ?? node;
+						return (
+							([
+								"AssignmentExpression",
+								"ForInStatement",
+								"ForOfStatement",
+							].includes(ancestor.type) &&
+								ancestor.left === child) ||
+							((ancestor.type === "UpdateExpression" ||
+								(ancestor.type === "UnaryExpression" &&
+									ancestor.operator === "delete")) &&
+								ancestor.argument === child) ||
+							(ancestor.type === "CallExpression" &&
+								ancestor.callee === child) ||
+							(ancestor.type === "TaggedTemplateExpression" &&
+								ancestor.tag === child)
+						);
+					});
+					if (observed) return;
+				}
+				escaped.add(entry);
+			});
+			escapedRestBindings = escaped;
+		}
+		return escapedRestBindings.has(binding);
+	};
 	const roleOf = (
 		value: unknown,
 		seen = new Set<unknown>(),
@@ -1443,10 +1539,16 @@ function runtimeLoaderBindings(
 										names.delete(name);
 									return names;
 								},
-								resolve: (name, path) =>
-									excluded.has(name)
-										? undefined
-										: role.resolve(name, path),
+								resolve: (name, path) => {
+									if (excluded.has(name)) return undefined;
+									const selected = role.resolve(name, path);
+									if (
+										selected?.isDefined &&
+										restMayChange(record)
+									)
+										return { ...selected, isDefined: undefined };
+									return selected;
+								},
 							};
 							copies.set(role, copy);
 						}
@@ -1576,10 +1678,20 @@ function runtimeLoaderBindings(
 	return {
 		bindingRole: roleOf,
 		bindingValue(value, seen) {
+			const origin =
+				isSyntaxNode(value) && value.type === "Identifier"
+					? lookup(value)
+					: undefined;
+			const imported = origin?.importValue?.(new Set(seen));
+			if (imported === ambiguousExport || imported?.origin)
+				return imported;
 			const role = roleOf(value, new Set(seen));
 			return role
-				? { role }
-				: { isDefined: () => isDefinitelyDefined(value, seen) };
+				? { role, origin }
+				: {
+						origin,
+						isDefined: () => isDefinitelyDefined(value, seen),
+					};
 		},
 		isUnbound,
 		sameBinding,

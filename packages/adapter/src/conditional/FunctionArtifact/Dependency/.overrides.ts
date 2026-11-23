@@ -71,7 +71,11 @@ export class ApplicationOverrides {
 	forDependency(
 		name: string,
 		requested: string,
-	): { spec: string; context: ApplicationOverrides } {
+	): {
+		spec: string;
+		context: ApplicationOverrides;
+		replacement?: true;
+	} {
 		const rules = new Map<string, ApplicationOverrides>();
 		const contexts: ApplicationOverrides[] = [this];
 		for (
@@ -113,8 +117,9 @@ export class ApplicationOverrides {
 			);
 		});
 		if (!rule) return { spec: requested, context: this };
-		let spec =
-			rule.value && rule.value !== "*" ? rule.value : requested;
+		const replacement =
+			rule.value !== "*" ? rule.value : undefined;
+		let spec = replacement ?? requested;
 		if (spec.startsWith("$")) {
 			const reference = spec.slice(1);
 			const value = applicationDependencyRequirement(
@@ -127,6 +132,12 @@ export class ApplicationOverrides {
 				);
 			spec = value;
 		}
-		return { spec, context: rule };
+		return {
+			spec,
+			context: rule,
+			...(replacement !== undefined
+				? { replacement: true }
+				: {}),
+		};
 	}
 }
