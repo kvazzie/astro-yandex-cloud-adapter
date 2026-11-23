@@ -158,6 +158,229 @@ const settings = {
 } as const;
 
 describe("Function Artifact mutation plans", () => {
+	it.each([
+		{
+			resolved: "https://registry.example.test/child.tgz",
+			owned: false,
+		},
+		{ resolved: "file:node_modules/other.tgz", owned: false },
+		{ resolved: "file:node_modules/fork.tgz", owned: true },
+		{ resolved: undefined, owned: false },
+	])(
+		"packs hoisted tarballs for a lock-only parent only with matching source evidence: %j",
+		async ({ resolved, owned }) => {
+			const f = await fixture();
+			const plugin = {
+				name: "plugin",
+				version: "1.0.0",
+				optionalDependencies: { helper: "^1" },
+			};
+			const helper = {
+				name: "helper",
+				version: "1.0.0",
+				dependencies: { child: "file:../fork.tgz" },
+			};
+			const pluginPath = new URL("node_modules/plugin/", f.root);
+			const childPath = new URL("node_modules/child/", f.root);
+			await mkdir(pluginPath, { recursive: true });
+			await mkdir(childPath, { recursive: true });
+			await writeFile(
+				new URL("package.json", pluginPath),
+				JSON.stringify(plugin),
+			);
+			await writeFile(
+				new URL("package.json", childPath),
+				JSON.stringify({ name: "child", version: "1.0.0" }),
+			);
+			await writeFile(
+				new URL("index.js", childPath),
+				'module.exports = "installed child";',
+			);
+			await writeFile(
+				new URL("package-lock.json", f.root),
+				JSON.stringify({
+					lockfileVersion: 3,
+					packages: {
+						"node_modules/plugin": plugin,
+						"node_modules/helper": helper,
+						...(resolved
+							? {
+									"node_modules/child": {
+										version: "1.0.0",
+										resolved,
+									},
+								}
+							: {}),
+					},
+				}),
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`import "plugin";${f.index}`,
+			);
+			const before = await snapshot(f.directory);
+			const resolve = vi.fn(() =>
+				Promise.reject(new Error("Unexpected registry lookup")),
+			);
+			const result = await Effect.runPromise(
+				Effect.either(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						{
+							...settings,
+							dependencyStrategy: "install",
+							includeLocal: true,
+						},
+						{ resolve },
+					),
+				),
+			);
+			expect(await snapshot(f.directory)).toEqual(before);
+			expect(resolve).not.toHaveBeenCalled();
+			expect(result._tag).toBe(owned ? "Right" : "Left");
+			if (result._tag === "Left") return;
+			const lock = result.right.mutations.find(
+				(mutation) =>
+					mutation.kind === "writeFile" &&
+					mutation.path.pathname.endsWith("package-lock.json"),
+			);
+			if (lock?.kind !== "writeFile")
+				throw new Error("Expected lockfile");
+			expect(lock.contents).toContain(".yandex/dependencies/");
+			expect(lock.contents).not.toContain(resolved);
+		},
+	);
+
+	it.each([
+		"workspace",
+		"standalone",
+		"local reference",
+	] as const)(
+		"uses the verified npm workspace root's overrides and the member's requirements: %s",
+		async (mode) => {
+			const workspace = await mkdtemp(
+				join(tmpdir(), "yandex-npm-workspace-"),
+			);
+			directories.push(workspace);
+			const f = await fixture(workspace);
+			const member = relative(workspace, f.directory).replaceAll(
+				"\\",
+				"/",
+			);
+			const rootManifest = {
+				name: "workspace-root",
+				workspaces: [
+					mode === "standalone"
+						? "some-other-directory/*"
+						: "astro-function-plan-*",
+				],
+				dependencies: {
+					carrier: "^2",
+					replacement:
+						mode === "local reference"
+							? "file:../leaf.tgz"
+							: "2.0.0",
+				},
+				overrides: { "carrier@^1": { leaf: "$replacement" } },
+			};
+			const application = {
+				name: "workspace-member",
+				dependencies: { carrier: "^1", replacement: "1.0.0" },
+				overrides: { "carrier@^1": { leaf: "$replacement" } },
+			};
+			const carrier = {
+				name: "carrier",
+				version: "1.0.0",
+				dependencies: { leaf: "^1" },
+			};
+			const leaf = {
+				name: "leaf",
+				version: mode === "workspace" ? "2.0.0" : "1.0.0",
+			};
+			await writeFile(
+				join(workspace, "package.json"),
+				JSON.stringify(rootManifest),
+			);
+			await writeFile(
+				new URL("package.json", f.root),
+				JSON.stringify(application),
+			);
+			await mkdir(new URL("node_modules/carrier/", f.root), {
+				recursive: true,
+			});
+			await mkdir(new URL("node_modules/leaf/", f.root), {
+				recursive: true,
+			});
+			await writeFile(
+				new URL("node_modules/carrier/package.json", f.root),
+				JSON.stringify(carrier),
+			);
+			await writeFile(
+				new URL("node_modules/leaf/package.json", f.root),
+				JSON.stringify(leaf),
+			);
+			await writeFile(
+				join(workspace, "package-lock.json"),
+				JSON.stringify({
+					lockfileVersion: 3,
+					packages: {
+						"": rootManifest,
+						[member]: application,
+						"node_modules/workspace-member": {
+							link: true,
+							resolved: member,
+						},
+						[`${member}/node_modules/carrier`]: carrier,
+						[`${member}/node_modules/leaf`]: leaf,
+					},
+				}),
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`import "carrier";${f.index}`,
+			);
+			const before = await snapshot(workspace);
+			const resolve = vi.fn(() =>
+				Promise.reject(new Error("Unexpected registry lookup")),
+			);
+			const result = await Effect.runPromise(
+				Effect.either(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						{
+							...settings,
+							dependencyStrategy: "install",
+						},
+						{ resolve },
+					),
+				),
+			);
+			expect(await snapshot(workspace)).toEqual(before);
+			expect(resolve).not.toHaveBeenCalled();
+			if (mode === "local reference") {
+				expect(result._tag).toBe("Left");
+				if (result._tag === "Left")
+					expect(result.left.message).toContain("includeLocal");
+				return;
+			}
+			if (result._tag === "Left") throw result.left;
+			const lock = result.right.mutations.find(
+				(mutation) =>
+					mutation.kind === "writeFile" &&
+					mutation.path.pathname.endsWith("package-lock.json"),
+			);
+			if (lock?.kind !== "writeFile")
+				throw new Error("Expected lockfile");
+			expect(JSON.parse(lock.contents)).toMatchObject({
+				packages: {
+					"node_modules/leaf": { version: leaf.version },
+				},
+			});
+		},
+	);
+
 	it.each(
 		["file:../local-child", "link:../local-child"].flatMap(
 			(spec) =>
@@ -436,18 +659,16 @@ describe("Function Artifact mutation plans", () => {
 		"tracks process bindings across emitted modules: %j",
 		async ({ bridge, consumer, file, dependencyStrategy }) => {
 			const f = await fixture();
+			const bridgeFile = file ?? "bridge.js";
 			await writeFile(
 				new URL("origin.js", f.server),
-				"export * from './bridge.js';export const runtime=process;",
+				`export * from './${bridgeFile}';export const runtime=process;`,
 			);
-			await writeFile(
-				new URL(file ?? "bridge.js", f.server),
-				bridge,
-			);
+			await writeFile(new URL(bridgeFile, f.server), bridge);
 			await writeFile(
 				new URL("index.js", f.server),
 				consumer +
-					"proc.getBuiltinModule('module').createRequire(import.meta.url)('example');" +
+					"export const packageValue=proc.getBuiltinModule('module').createRequire(import.meta.url)('example');" +
 					f.index,
 			);
 			await mkdir(new URL("node_modules/example/", f.root), {
@@ -457,6 +678,22 @@ describe("Function Artifact mutation plans", () => {
 				new URL("node_modules/example/package.json", f.root),
 				'{"name":"example","version":"1.2.3"}',
 			);
+			if (bridge.includes('from "./origin.js"')) {
+				await writeFile(
+					new URL("node_modules/example/index.js", f.root),
+					'module.exports = "interop fixture";',
+				);
+				const { stdout } = await promisify(execFile)(
+					process.execPath,
+					[
+						"--input-type=module",
+						"--eval",
+						`const m=await import(${JSON.stringify(new URL("index.js", f.server).href)});process.stdout.write(m.packageValue);`,
+					],
+					{ cwd: f.directory },
+				);
+				expect(stdout).toBe("interop fixture");
+			}
 			const before = await snapshot(f.directory);
 			const result = await Effect.runPromise(
 				Effect.either(
@@ -547,6 +784,108 @@ describe("Function Artifact mutation plans", () => {
 			);
 			expect(resolve).not.toHaveBeenCalled();
 			expect(await snapshot(f.directory)).toEqual(before);
+		},
+	);
+
+	it.each(
+		(
+			[
+				{
+					bridge:
+						"export const runtime=process;export const label='fixture';",
+					read: "import * as ns from './bridge.mjs';const proc=ns[process.env.RUNTIME_EXPORT];",
+					reject: true,
+				},
+				{
+					bridge:
+						"export const runtime=process;export const label='fixture';",
+					read: "import {createRequire} from 'node:module';const ns=createRequire(import.meta.url)('./bridge.mjs');const proc=ns[process.env.RUNTIME_EXPORT];",
+					reject: true,
+				},
+				{
+					bridge:
+						"export const runtime=process;export const label='fixture';",
+					read: "import * as ns from './bridge.mjs';const {...copy}=ns;const proc=copy[process.env.RUNTIME_EXPORT];",
+					reject: true,
+				},
+				{
+					bridge:
+						"export const runtime=process;export const label='fixture';",
+					read: "import * as ns from './bridge.mjs';const {[process.env.RUNTIME_EXPORT]:proc}=ns;",
+					reject: true,
+				},
+				{
+					bridge:
+						"export const runtime=process;export const label='fixture';",
+					read: "import * as ns from './bridge.mjs';const {runtime,...copy}=ns;export const data=copy[process.env.RUNTIME_EXPORT];",
+					reject: false,
+				},
+				{
+					bridge:
+						"export const runtime=process;export const label='fixture';",
+					read: "import * as ns from './bridge.mjs';export const data=ns['label'];",
+					reject: false,
+				},
+				{
+					bridge: "export * from './other.mjs';",
+					read: "import * as ns from './bridge.mjs';const proc=ns[process.env.RUNTIME_EXPORT];",
+					reject: true,
+				},
+				{
+					bridge: "export * as group from './other.mjs';",
+					read: "import * as ns from './bridge.mjs';const proc=ns[process.env.RUNTIME_EXPORT].runtime;",
+					reject: true,
+				},
+				{
+					bridge: "export const label='fixture';",
+					read: "import * as ns from './bridge.mjs';export const data=ns[process.env.RUNTIME_EXPORT];",
+					reject: false,
+				},
+			] as const
+		).flatMap((example) =>
+			(["bundle", "install"] as const).map(
+				(dependencyStrategy) => ({
+					...example,
+					dependencyStrategy,
+				}),
+			),
+		),
+	)(
+		"guards unresolved computed reads of module namespaces: %j",
+		async ({ bridge, read, reject, dependencyStrategy }) => {
+			const f = await fixture();
+			await writeFile(new URL("bridge.mjs", f.server), bridge);
+			await writeFile(
+				new URL("other.mjs", f.server),
+				"export * from './bridge.mjs';export const runtime=process;",
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				read +
+					(reject
+						? "proc.getBuiltinModule('module').createRequire(import.meta.url)('example');"
+						: "") +
+					f.index,
+			);
+			const before = await snapshot(f.directory);
+			const result = await Effect.runPromise(
+				Effect.either(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						{
+							...settings,
+							dependencyStrategy,
+						},
+					),
+				),
+			);
+			expect(await snapshot(f.directory)).toEqual(before);
+			expect(result._tag).toBe(reject ? "Left" : "Right");
+			if (result._tag === "Left")
+				expect(result.left.message).toContain(
+					"namespace lookup must use a fixed property",
+				);
 		},
 	);
 
@@ -1844,6 +2183,100 @@ describe("Function Artifact mutation plans", () => {
 				{ cwd: f.server },
 			);
 			expect(stdout).toBe("local parent");
+		},
+	);
+
+	it.each([
+		{
+			requirement: "file:../child.tgz",
+			version: "1.0.0-beta.1",
+			accepted: true,
+		},
+		{
+			requirement: "file:../child.tgz",
+			version: "1.0.0",
+			accepted: true,
+		},
+		{
+			requirement: "workspace:^1",
+			version: "1.0.0-beta.1",
+			accepted: false,
+		},
+	])(
+		"pins exact local versions under the declared constraint: %j",
+		async ({ requirement, version, accepted }) => {
+			const f = await fixture();
+			const parent = new URL("node_modules/parent/", f.root);
+			const child = new URL("node_modules/child/", parent);
+			await mkdir(child, { recursive: true });
+			await writeFile(
+				new URL("package.json", f.root),
+				JSON.stringify({
+					dependencies: { parent: "file:../parent.tgz" },
+				}),
+			);
+			await writeFile(
+				new URL("package.json", parent),
+				JSON.stringify({
+					name: "parent",
+					version: "1.0.0",
+					dependencies: { child: requirement },
+				}),
+			);
+			await writeFile(
+				new URL("package.json", child),
+				JSON.stringify({ name: "child", version }),
+			);
+			await writeFile(
+				new URL("index.js", child),
+				'module.exports = "local";',
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`import "parent";${f.index}`,
+			);
+			const before = await snapshot(f.directory);
+			const resolve = vi.fn(() =>
+				Promise.reject(new Error("Unexpected registry lookup")),
+			);
+			const result = await Effect.runPromise(
+				Effect.either(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						{
+							...settings,
+							dependencyStrategy: "install",
+							includeLocal: true,
+						},
+						{ resolve },
+					),
+				),
+			);
+			expect(await snapshot(f.directory)).toEqual(before);
+			expect(resolve).not.toHaveBeenCalled();
+			expect(result._tag).toBe(accepted ? "Right" : "Left");
+			if (!accepted || result._tag === "Left") return;
+			const lock = result.right.mutations.find(
+				(mutation) =>
+					mutation.kind === "writeFile" &&
+					mutation.path.pathname.endsWith("package-lock.json"),
+			);
+			if (lock?.kind !== "writeFile")
+				throw new Error("Expected lockfile");
+			const { packages } = JSON.parse(lock.contents) as {
+				packages: Record<
+					string,
+					{ version: string; resolved?: string }
+				>;
+			};
+			const local = Object.entries(packages).find(([path]) =>
+				path.endsWith("node_modules/child"),
+			);
+			expect(local?.[1].version).toBe(version);
+			expect(local?.[1].resolved).toContain(
+				".yandex/dependencies/",
+			);
 		},
 	);
 

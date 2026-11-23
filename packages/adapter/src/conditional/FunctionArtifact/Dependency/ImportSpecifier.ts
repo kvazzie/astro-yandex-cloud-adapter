@@ -352,16 +352,56 @@ function findImportedPackageNames(
 			rejectDynamicImport(
 				"process parameter destructuring changes a loader binding",
 			);
-		// A process object is ordinary runtime data; its extracted getter is the loader.
+		// Process is ordinary data until a property can select its builtin loader.
 		if (
 			node.type === "MemberExpression" &&
-			bindingRole(node.object) === "process" &&
 			node.computed &&
 			getStaticString(node.property) === undefined
-		)
-			rejectDynamicImport(
-				"process builtin lookup must use a fixed property",
+		) {
+			const owner = bindingRole(node.object);
+			if (owner === "process")
+				rejectDynamicImport(
+					"process builtin lookup must use a fixed property",
+				);
+			if (
+				typeof owner === "object" &&
+				namespaceExposesLoader(owner)
+			)
+				rejectDynamicImport(
+					"namespace lookup must use a fixed property",
+				);
+		}
+		const pattern =
+			node.type === "VariableDeclarator"
+				? node.id
+				: node.type === "AssignmentPattern" ||
+					  node.type === "AssignmentExpression"
+					? node.left
+					: undefined;
+		if (
+			isSyntaxNode(pattern) &&
+			pattern.type === "ObjectPattern" &&
+			Array.isArray(pattern.properties) &&
+			pattern.properties.some(
+				(property: unknown) =>
+					isSyntaxNode(property) &&
+					property.computed &&
+					getStaticString(property.key) === undefined,
+			)
+		) {
+			const owner = bindingRole(
+				node.type === "VariableDeclarator"
+					? node.init
+					: node.right,
 			);
+			if (
+				typeof owner === "object" &&
+				namespaceExposesLoader(owner)
+			)
+				rejectDynamicImport(
+					"namespace lookup must use a fixed property",
+				);
+		}
 		if (
 			node.type === "VariableDeclarator" &&
 			isSyntaxNode(node.id) &&
@@ -751,6 +791,7 @@ interface ExportBinding {
 }
 
 interface EmittedNamespace {
+	exportNames(seen: Set<EmittedNamespace>): Set<string>;
 	resolve(
 		name: string,
 		seen: Set<unknown>,
@@ -853,6 +894,18 @@ function emittedNamespace(
 	}
 	const keys = new Map<string, object>();
 	return {
+		exportNames(seen) {
+			if (seen.has(this)) return new Set();
+			const path = new Set(seen).add(this);
+			const names = new Set(exports.keys());
+			for (const target of stars) {
+				const namespace = target();
+				if (typeof namespace === "object")
+					for (const name of namespace.exportNames(path))
+						if (name !== "default") names.add(name);
+			}
+			return names;
+		},
 		resolve(name, seen) {
 			const key = keys.get(name) ?? {};
 			if (seen.has(key)) return undefined;
@@ -883,6 +936,24 @@ type LoaderRole =
 	| "process"
 	| "builtin"
 	| "register";
+
+function namespaceExposesLoader(
+	namespace: EmittedNamespace,
+	seen = new Set<EmittedNamespace>(),
+): boolean {
+	if (seen.has(namespace)) return false;
+	seen.add(namespace);
+	for (const name of namespace.exportNames(new Set())) {
+		const role = namespace.resolve(name, new Set())?.role;
+		if (
+			typeof role === "object"
+				? namespaceExposesLoader(role, seen)
+				: role !== undefined
+		)
+			return true;
+	}
+	return false;
+}
 
 function builtinModuleRole(
 	specifier: string | undefined,
@@ -993,6 +1064,7 @@ function runtimeLoaderBindings(
 		property?: string;
 		fallback?: unknown;
 		restExcludes?: ReadonlySet<string>;
+		restNamespaces?: WeakMap<EmittedNamespace, EmittedNamespace>;
 		previous?: Binding;
 		declaration?: SyntaxNode;
 		bodyScope?: Scope;
@@ -1358,15 +1430,27 @@ function runtimeLoaderBindings(
 						record.role ??
 						roleOf(record.value, new Set(seen));
 					if (record.restExcludes) {
+						if (typeof role !== "object") return undefined;
 						const excluded = record.restExcludes;
-						return typeof role === "object"
-							? {
-									resolve: (name, path) =>
-										excluded.has(name)
-											? undefined
-											: role.resolve(name, path),
-								}
-							: undefined;
+						const copies = (record.restNamespaces ??=
+							new WeakMap());
+						let copy = copies.get(role);
+						if (!copy) {
+							copy = {
+								exportNames: (seen) => {
+									const names = role.exportNames(seen);
+									for (const name of excluded)
+										names.delete(name);
+									return names;
+								},
+								resolve: (name, path) =>
+									excluded.has(name)
+										? undefined
+										: role.resolve(name, path),
+							};
+							copies.set(role, copy);
+						}
+						return copy;
 					}
 					if (record.property === undefined) return role;
 					const selected = loaderPropertyValue(

@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import type { PackageJson } from "pkg-types";
 import semver from "semver";
 import {
-	ApplicationOverrides,
+	type ApplicationOverrides,
 	applicationDependencyRequirement,
 } from "./.overrides.ts";
 import {
@@ -24,6 +24,7 @@ export interface InstalledSource {
 	version: string;
 	registryName?: string;
 	directory: string;
+	location: string;
 	local: boolean;
 	manifest: PackageJson;
 }
@@ -129,12 +130,9 @@ interface BindingProvenance {
 export async function readInstalledProvenance(
 	applicationRoot: URL,
 	developmentFirst: (installedDirectory: string) => boolean,
+	overrides: ApplicationOverrides,
 ): Promise<ReadonlyMap<string, BindingProvenance>> {
 	const applicationDirectory = fileURLToPath(applicationRoot);
-	const application =
-		(await readManifest(
-			join(applicationDirectory, "package.json"),
-		)) ?? {};
 	const bindings = new Map<string, BindingProvenance>();
 	const visited = new Set<string>();
 	const manifests = new Map<
@@ -251,7 +249,7 @@ export async function readInstalledProvenance(
 	};
 	await visit(
 		applicationDirectory,
-		new ApplicationOverrides(application),
+		overrides,
 		false,
 		undefined,
 		true,
@@ -285,11 +283,12 @@ export async function inspectInstalledSource(
 	for (const modules of createRequire(base).resolve.paths(
 		`${name}/package.json`,
 	) ?? []) {
+		const location = join(modules, name);
 		const manifest = await readManifest(
-			join(modules, name, "package.json"),
+			join(location, "package.json"),
 		);
 		if (!manifest) continue;
-		const directory = await realpath(join(modules, name));
+		const directory = await realpath(location);
 
 		const binding = provenance?.get(directory);
 		const effectiveRequirement =
@@ -319,6 +318,7 @@ export async function inspectInstalledSource(
 				? { registryName: manifest.name }
 				: {}),
 			directory,
+			location,
 			local,
 			manifest,
 		};
@@ -358,17 +358,18 @@ export async function readInstalledSource(
 export function parseRuntimeRequirement(
 	name: string,
 	value: string,
-): { name: string; requirement: string; local: boolean } {
-	if (/^(file|link):/.test(value))
-		return { name, requirement: "*", local: true };
+): { name: string } & (
+	| { requirement?: string; local: true }
+	| { requirement: string; local: false }
+) {
+	if (/^(file|link):/.test(value)) return { name, local: true };
 	if (value.startsWith("workspace:")) {
 		const reference = value.slice("workspace:".length);
 		if (["*", "^", "~"].includes(reference))
-			return { name, requirement: "*", local: true };
+			return { name, local: true };
 		if (semver.validRange(reference))
 			return { name, requirement: reference, local: true };
-		if (reference.startsWith("."))
-			return { name, requirement: "*", local: true };
+		if (reference.startsWith(".")) return { name, local: true };
 		const separator = reference.lastIndexOf("@");
 		if (
 			separator > 0 &&
@@ -387,7 +388,7 @@ export function parseRuntimeRequirement(
 		!value.startsWith("npm:") &&
 		(/[\\/:]/.test(value) || /\.(?:tgz|tar\.gz)$/i.test(value))
 	)
-		return { name, requirement: "*", local: true };
+		return { name, local: true };
 	return {
 		...parseRegistryRequirement(name, value),
 		local: false,

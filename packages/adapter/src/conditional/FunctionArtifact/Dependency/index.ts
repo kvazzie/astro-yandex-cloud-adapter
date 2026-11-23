@@ -4,12 +4,15 @@ import {
 	join,
 	relative,
 	isAbsolute,
+	posix,
+	resolve,
 	sep,
 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readFile, realpath } from "node:fs/promises";
 
 import type { PackageJson } from "pkg-types";
+import npa from "npm-package-arg";
 import semver from "semver";
 import {
 	readInstalledSource,
@@ -18,6 +21,7 @@ import {
 	inspectInstalledSource,
 	readInstalledBindingPath,
 	parseRuntimeRequirement,
+	type InstalledSource,
 } from "./Source.ts";
 
 import {
@@ -61,11 +65,24 @@ export async function resolvePinnedRuntimeDependencies(
 	const appDirectory = await realpath(fileURLToPath(root));
 	const appRoot = pathToFileURL(appDirectory + sep);
 	const appManifestPath = join(appDirectory, "package.json");
+	const lock = await readLocalLock(appDirectory);
+	const application =
+		await readJsonFile<PackageJson>(appManifestPath);
+	const overrides = new ApplicationOverrides(
+		(await readWorkspaceOverrideManifest(
+			lock,
+			appDirectory,
+			application?.name,
+		)) ??
+			application ??
+			{},
+	);
 	const developmentFirst =
 		await readRootRequirementPrecedence(appManifestPath);
 	const provenance = await readInstalledProvenance(
 		appRoot,
 		developmentFirst,
+		overrides,
 	);
 	const findInstalledPackage = (
 		base: string,
@@ -80,10 +97,6 @@ export async function resolvePinnedRuntimeDependencies(
 			provenance,
 			appRoot,
 		);
-	const lock = await readLocalLock(appDirectory);
-	const application =
-		await readJsonFile<PackageJson>(appManifestPath);
-	const overrides = new ApplicationOverrides(application ?? {});
 	const nodes = new Map<
 		string,
 		{
@@ -296,7 +309,8 @@ export async function resolvePinnedRuntimeDependencies(
 						version: string;
 						registryName?: string;
 					}) =>
-						(isRegistryTag(requirement.requirement) ||
+						(requirement.requirement === undefined ||
+							isRegistryTag(requirement.requirement) ||
 							semver.satisfies(
 								candidate.version,
 								requirement.requirement,
@@ -311,12 +325,26 @@ export async function resolvePinnedRuntimeDependencies(
 							override.spec,
 						);
 
-					if (!inBundle && requirement.local)
-						installed = await findInstalledPackage(
+					if (!inBundle && requirement.local) {
+						const selected = await findInstalledPackage(
 							childBase,
 							name,
 							override.spec,
 						);
+						if (
+							!source.directory &&
+							selected &&
+							!(await ownsLockOnlyLocalChild(
+								lock,
+								source.lockLocation,
+								name,
+								override.spec,
+								selected,
+							))
+						)
+							throw unresolved(name, packageName, range, peer);
+						installed = selected;
+					}
 					let child: DependencySource | undefined =
 						locked && !requirement.local
 							? {
@@ -356,7 +384,10 @@ export async function resolvePinnedRuntimeDependencies(
 					}
 					if (!child) {
 						if (peer && optional) continue;
-						if (source.directory && !optional)
+						if (
+							requirement.local ||
+							(source.directory && !optional)
+						)
 							throw unresolved(name, packageName, range, peer);
 						locked = lock
 							? findLockedPackage(
@@ -828,9 +859,151 @@ async function readJsonFile<T>(
 	}
 }
 
+type LockedPackage = RegistryVersionMetadata & {
+	link?: boolean;
+};
+
 interface LocalLock {
 	directory: string;
-	packages?: Record<string, RegistryVersionMetadata>;
+	packages?: Record<string, LockedPackage>;
+}
+
+function lockKey(lock: LocalLock, location: string): string {
+	return relative(lock.directory, location).replaceAll(
+		"\\",
+		"/",
+	);
+}
+
+async function readWorkspaceOverrideManifest(
+	lock: LocalLock | undefined,
+	applicationDirectory: string,
+	name: string | undefined,
+): Promise<PackageJson | undefined> {
+	if (
+		!lock?.packages ||
+		!name ||
+		lock.directory === applicationDirectory
+	)
+		return undefined;
+	const member = lockKey(lock, applicationDirectory);
+	const entry = lock.packages[member];
+	const link = lock.packages[`node_modules/${name}`];
+	if (
+		!entry ||
+		(entry.name && entry.name !== name) ||
+		!link?.link ||
+		link.resolved !== member
+	)
+		return undefined;
+	const owner = await readJsonFile<PackageJson>(
+		join(lock.directory, "package.json"),
+	);
+	const workspaces = owner?.workspaces;
+	const patterns = Array.isArray(workspaces)
+		? workspaces
+		: workspaces?.packages;
+	let matches = false;
+	for (const raw of patterns ?? []) {
+		if (typeof raw !== "string") continue;
+		const negation = raw.match(/^!+/)?.[0].length ?? 0;
+		const pattern = raw
+			.slice(negation)
+			.replaceAll("\\", "/")
+			.replace(/^\.?\/+|\/+$/g, "");
+		if (pattern && posix.matchesGlob(member, pattern))
+			matches = negation % 2 === 0;
+	}
+	return matches ? owner : undefined;
+}
+
+function localRequestPath(
+	name: string,
+	value: string,
+	base: string,
+) {
+	const spec = /^(link:|workspace:(?=\.))/.test(value)
+		? value.replace(/^(link|workspace):/, "file:")
+		: value;
+	try {
+		const request = npa.resolve(name, spec, base);
+		if (
+			(request.type === "file" ||
+				request.type === "directory") &&
+			typeof request.fetchSpec === "string"
+		)
+			return { path: request.fetchSpec, type: request.type };
+	} catch {
+		// Unrecognized local protocols cannot prove file or directory identity.
+	}
+	return undefined;
+}
+
+async function existingRealPath(
+	path: string,
+): Promise<string | undefined> {
+	try {
+		return await realpath(path);
+	} catch (error) {
+		if (
+			!["ENOENT", "ENOTDIR"].includes(
+				(error as NodeJS.ErrnoException).code ?? "",
+			)
+		)
+			throw error;
+		return undefined;
+	}
+}
+
+async function ownsLockOnlyLocalChild(
+	lock: LocalLock | undefined,
+	parent: string | undefined,
+	name: string,
+	requirement: string,
+	installed: InstalledSource,
+): Promise<boolean> {
+	if (
+		parent &&
+		installed.location === join(parent, "node_modules", name) &&
+		installed.directory === installed.location
+	)
+		return true;
+	const requested =
+		parent && localRequestPath(name, requirement, parent);
+	if (
+		requested &&
+		requested.type === "directory" &&
+		(await existingRealPath(requested.path)) ===
+			installed.directory
+	)
+		return true;
+	if (!lock) return false;
+	const entry =
+		lock.packages?.[lockKey(lock, installed.location)];
+	if (!entry?.resolved) return false;
+	if (
+		entry.link &&
+		requirement.startsWith("workspace:") &&
+		!requested
+	) {
+		const target = resolve(lock.directory, entry.resolved);
+		return Boolean(
+			lock.packages?.[lockKey(lock, target)] &&
+			(await existingRealPath(target)) === installed.directory,
+		);
+	}
+	if (entry.link || entry.version !== installed.version)
+		return false;
+	if (requested)
+		return (
+			requested.path ===
+			localRequestPath(name, entry.resolved, lock.directory)
+				?.path
+		);
+	return (
+		!/^(file|link|workspace):/.test(requirement) &&
+		entry.resolved === requirement
+	);
 }
 
 function findLockedPackage(
@@ -844,10 +1017,7 @@ function findLockedPackage(
 		join(directory, "package.json"),
 	).resolve.paths(`${name}/package.json`) ?? []) {
 		const location = join(modules, name);
-		const metadata =
-			lock.packages?.[
-				relative(lock.directory, location).split("\\").join("/")
-			];
+		const metadata = lock.packages?.[lockKey(lock, location)];
 		if (metadata?.version) return { location, metadata };
 	}
 	return undefined;
