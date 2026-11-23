@@ -1,0 +1,208 @@
+/** Exact runtime dependency metadata for install Function Artifacts. */
+
+import type { PackageJson } from "pkg-types";
+
+export interface ResolvedRuntimeDependency {
+	name: string;
+	registryName?: string;
+	localDirectory?: string;
+	/** Relative npm package location, including any nested node_modules. */
+	location: string;
+	version: string;
+	optional?: boolean;
+	inBundle?: boolean;
+	bundleDependencies?: string[];
+	hasInstallScript?: boolean;
+	bin?: Record<string, string>;
+	os?: string[];
+	cpu?: string[];
+	libc?: string[];
+	resolved?: string;
+	integrity?: string;
+	license?: string;
+	engines?: Record<string, string>;
+	dependencies?: Record<string, string>;
+	optionalDependencies?: Record<string, string>;
+	peerDependencies?: Record<string, string>;
+	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+}
+
+export function exactDependencyVersion(dependency: {
+	version: string;
+	registryName?: string;
+}): string {
+	return dependency.registryName
+		? `npm:${dependency.registryName}@${dependency.version}`
+		: dependency.version;
+}
+
+export const FUNCTION_NODE_RANGE = ">=22.12.0";
+export const NPM_LOCKFILE_VERSION = 3;
+
+export function compareNames(a: string, b: string): number {
+	return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function sortedDependencies(
+	dependencies: ResolvedRuntimeDependency[],
+): ResolvedRuntimeDependency[] {
+	return dependencies.toSorted((a, b) =>
+		compareNames(a.location, b.location),
+	);
+}
+
+function exactDependencies(
+	dependencies: ResolvedRuntimeDependency[],
+): Record<string, string> {
+	const exact: Record<string, string> = {};
+	for (const dependency of sortedDependencies(dependencies)) {
+		if (
+			dependency.location === `node_modules/${dependency.name}`
+		)
+			exact[dependency.name] =
+				exactDependencyVersion(dependency);
+	}
+	return exact;
+}
+
+function sortedRecord(
+	record: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+	if (!record) return undefined;
+	const sorted: Record<string, string> = {};
+	for (const key of Object.keys(record).sort(compareNames)) {
+		const value = record[key];
+		if (value !== undefined) sorted[key] = value;
+	}
+	return sorted;
+}
+
+/** Formats the Function Artifact package.json with exact dependency versions. */
+export function formatFunctionPackageJson(
+	dependencies: ResolvedRuntimeDependency[],
+): string {
+	const packageJson: PackageJson = {
+		private: true,
+		type: "module",
+		engines: { node: FUNCTION_NODE_RANGE },
+		dependencies: exactDependencies(
+			dependencies.filter((entry) => !entry.optional),
+		),
+		...(dependencies.some((entry) => entry.optional)
+			? {
+					optionalDependencies: exactDependencies(
+						dependencies.filter((entry) => entry.optional),
+					),
+				}
+			: {}),
+	};
+	return `${JSON.stringify(packageJson, null, 2)}\n`;
+}
+
+interface NpmLockPackageEntry {
+	name?: string;
+	optional?: boolean;
+	inBundle?: boolean;
+	bundleDependencies?: string[];
+	hasInstallScript?: boolean;
+	bin?: Record<string, string>;
+	os?: string[];
+	cpu?: string[];
+	libc?: string[];
+	version?: string;
+	resolved?: string;
+	integrity?: string;
+	license?: string;
+	engines?: Record<string, string>;
+	dependencies?: Record<string, string>;
+	optionalDependencies?: Record<string, string>;
+	peerDependencies?: Record<string, string>;
+	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+}
+
+function lockPackageEntry(
+	dependency: ResolvedRuntimeDependency,
+): NpmLockPackageEntry {
+	const entry: NpmLockPackageEntry = {
+		version: dependency.version,
+		...(dependency.registryName
+			? { name: dependency.registryName }
+			: {}),
+	};
+	if (dependency.optional) entry.optional = true;
+	if (dependency.inBundle) entry.inBundle = true;
+	if (dependency.bundleDependencies !== undefined)
+		entry.bundleDependencies = dependency.bundleDependencies;
+	if (dependency.bin !== undefined)
+		entry.bin = sortedRecord(dependency.bin);
+	if (dependency.hasInstallScript !== undefined)
+		entry.hasInstallScript = dependency.hasInstallScript;
+	if (dependency.os !== undefined) entry.os = dependency.os;
+	if (dependency.cpu !== undefined) entry.cpu = dependency.cpu;
+	if (dependency.libc !== undefined)
+		entry.libc = dependency.libc;
+	if (dependency.resolved !== undefined)
+		entry.resolved = dependency.resolved;
+	if (dependency.integrity !== undefined)
+		entry.integrity = dependency.integrity;
+	if (dependency.license !== undefined)
+		entry.license = dependency.license;
+	if (dependency.engines !== undefined)
+		entry.engines = sortedRecord(dependency.engines);
+	const dependencies = sortedRecord(dependency.dependencies);
+	if (dependencies !== undefined)
+		entry.dependencies = dependencies;
+	const optionalDependencies = sortedRecord(
+		dependency.optionalDependencies,
+	);
+	if (optionalDependencies !== undefined)
+		entry.optionalDependencies = optionalDependencies;
+	if (dependency.peerDependencies !== undefined)
+		entry.peerDependencies = sortedRecord(
+			dependency.peerDependencies,
+		);
+	if (dependency.peerDependenciesMeta !== undefined)
+		entry.peerDependenciesMeta = Object.fromEntries(
+			Object.entries(dependency.peerDependenciesMeta).sort(
+				([a], [b]) => compareNames(a, b),
+			),
+		);
+	return entry;
+}
+
+/** Formats a deterministic npm lockfileVersion 3 for install artifacts. */
+export function formatNpmLockfile(
+	dependencies: ResolvedRuntimeDependency[],
+): string {
+	const sorted = sortedDependencies(dependencies);
+	const direct = exactDependencies(
+		sorted.filter((entry) => !entry.optional),
+	);
+	const optional = exactDependencies(
+		sorted.filter((entry) => entry.optional),
+	);
+	const lockPackages: Record<string, NpmLockPackageEntry> = {
+		"": {
+			version: "1.0.0",
+			dependencies: direct,
+			...(Object.keys(optional).length
+				? { optionalDependencies: optional }
+				: {}),
+		},
+	};
+	for (const dependency of sorted) {
+		lockPackages[dependency.location] =
+			lockPackageEntry(dependency);
+	}
+	return `${JSON.stringify(
+		{
+			name: "function",
+			version: "1.0.0",
+			lockfileVersion: NPM_LOCKFILE_VERSION,
+			requires: true,
+			packages: lockPackages,
+		},
+		null,
+		2,
+	)}\n`;
+}

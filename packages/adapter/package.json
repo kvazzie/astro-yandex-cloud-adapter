@@ -55,6 +55,8 @@
 		"acorn": "^8.18.0",
 		"effect": "^3.22.2",
 		"effectify": "^0.3.1",
+		"libnpmpack": "^9.1.15",
+		"npm-package-arg": "^13.0.2",
 		"semver": "^7.8.5",
 		"tinyglobby": "^0.2.17"
 	},
@@ -67,15 +69,16 @@
 		"astro": "^7.1.0"
 	},
 	"devDependencies": {
+		"@astro-yandex-cloud/deployment-manifest": "workspace:*",
 		"@astro-yandex-cloud/function-runtime-bridge": "workspace:*",
 		"@astro-yandex-cloud/package-info": "workspace:*",
+		"@types/npm-package-arg": "^6.1.4",
 		"@types/semver": "^7.8.0",
 		"astro": "^7.1.0",
 		"pkg-types": "^2.3.3",
 		"tsdown": "^0.15.1",
 		"typescript": "^5.9.2",
-		"vite": "^8.0.13",
-		"@astro-yandex-cloud/deployment-manifest": "workspace:*"
+		"vite": "^8.0.13"
 	},
 	"publishConfig": {
 		"access": "public",

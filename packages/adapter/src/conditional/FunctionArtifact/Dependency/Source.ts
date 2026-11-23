@@ -1,0 +1,334 @@
+import { readFile, realpath } from "node:fs/promises";
+import { createRequire } from "node:module";
+import {
+	basename,
+	dirname,
+	join,
+	relative,
+	isAbsolute,
+} from "node:path";
+import { fileURLToPath } from "node:url";
+
+import type { PackageJson } from "pkg-types";
+import semver from "semver";
+import { ApplicationOverrides } from "./.overrides.ts";
+import {
+	normalizeBundleDependencies,
+	parseRegistryRequirement,
+} from "./Registry.ts";
+
+export interface InstalledSource {
+	version: string;
+	registryName?: string;
+	directory: string;
+	local: boolean;
+	manifest: PackageJson;
+}
+
+async function readManifest(
+	path: string,
+): Promise<PackageJson | undefined> {
+	try {
+		return JSON.parse(
+			await readFile(path, "utf8"),
+		) as PackageJson;
+	} catch (cause) {
+		if (
+			["ENOENT", "ENOTDIR"].includes(
+				(cause as NodeJS.ErrnoException).code ?? "",
+			)
+		)
+			return undefined;
+		throw new Error(
+			`Cannot read dependency metadata at ${path}.`,
+			{ cause },
+		);
+	}
+}
+
+/** Inspects a placement constraint without selecting or validating runtime package contents. */
+export async function readInstalledBindingPath(
+	base: URL | string,
+	name: string,
+): Promise<string | undefined> {
+	for (const modules of createRequire(base).resolve.paths(
+		`${name}/package.json`,
+	) ?? []) {
+		try {
+			return await realpath(join(modules, name));
+		} catch (cause) {
+			if (
+				!["ENOENT", "ENOTDIR"].includes(
+					(cause as NodeJS.ErrnoException).code ?? "",
+				)
+			)
+				throw cause;
+		}
+	}
+	return undefined;
+}
+
+interface BindingProvenance {
+	local: boolean;
+	rootRequirements: Record<string, string>;
+}
+
+/** Reads installed ownership evidence only; version selection and placement stay in the resolver. */
+export async function readInstalledProvenance(
+	applicationRoot: URL,
+): Promise<ReadonlyMap<string, BindingProvenance>> {
+	const applicationDirectory = fileURLToPath(applicationRoot);
+	const application =
+		(await readManifest(
+			join(applicationDirectory, "package.json"),
+		)) ?? {};
+	const bindings = new Map<string, BindingProvenance>();
+	const visited = new Set<string>();
+	const manifests = new Map<
+		string,
+		Promise<PackageJson | undefined>
+	>();
+	const visit = async (
+		directory: string,
+		context: ApplicationOverrides,
+		inBundle = false,
+		bundleRoot?: string,
+		root = false,
+	): Promise<void> => {
+		const key = JSON.stringify([
+			directory,
+			context.identity,
+			inBundle,
+			bundleRoot,
+			root,
+		]);
+		if (visited.has(key)) return;
+		visited.add(key);
+		let promise = manifests.get(directory);
+		if (!promise) {
+			promise = readManifest(join(directory, "package.json"));
+			manifests.set(directory, promise);
+		}
+		const manifest = await promise;
+		if (!manifest) return;
+		const ranges = new Map<
+			string,
+			{ requested: string; peer: boolean }
+		>();
+		for (const [name, requested] of Object.entries(
+			manifest.peerDependencies ?? {},
+		))
+			ranges.set(name, { requested, peer: true });
+		if (root)
+			for (const [name, requested] of Object.entries(
+				manifest.devDependencies ?? {},
+			))
+				ranges.set(name, { requested, peer: false });
+		for (const [name, requested] of Object.entries(
+			manifest.dependencies ?? {},
+		))
+			ranges.set(name, { requested, peer: false });
+		for (const [name, requested] of Object.entries(
+			manifest.optionalDependencies ?? {},
+		))
+			ranges.set(name, { requested, peer: false });
+		const bundled = normalizeBundleDependencies(
+			manifest.bundleDependencies ??
+				manifest.bundledDependencies,
+			manifest.dependencies,
+			manifest.optionalDependencies,
+		);
+		for (const [name, { requested, peer }] of ranges) {
+			if (typeof requested !== "string") continue;
+			const selected = await readInstalledBindingPath(
+				join(directory, "package.json"),
+				name,
+			);
+			if (!selected) continue;
+			const selectedRelative = bundleRoot
+				? relative(bundleRoot, selected)
+				: undefined;
+			const insideBundle =
+				selectedRelative !== undefined &&
+				!isAbsolute(selectedRelative) &&
+				selectedRelative !== ".." &&
+				!selectedRelative.startsWith("../") &&
+				!selectedRelative.startsWith("..\\");
+			const childInBundle =
+				!root &&
+				!peer &&
+				(bundled?.includes(name) === true ||
+					(inBundle && insideBundle));
+			const override = context.forDependency(name, requested);
+			const requirement = childInBundle
+				? requested
+				: override.spec;
+			if (!childInBundle && (!peer || root)) {
+				const provenance = bindings.get(selected) ?? {
+					local: false,
+					rootRequirements: Object.create(null) as Record<
+						string,
+						string
+					>,
+				};
+				provenance.local ||= parseRuntimeRequirement(
+					name,
+					requirement,
+				).local;
+				if (root)
+					provenance.rootRequirements[name] = requirement;
+				bindings.set(selected, provenance);
+			}
+			await visit(
+				selected,
+				override.context,
+				childInBundle,
+				childInBundle ? (bundleRoot ?? directory) : undefined,
+			);
+		}
+	};
+	await visit(
+		applicationDirectory,
+		new ApplicationOverrides(application),
+		false,
+		undefined,
+		true,
+	);
+	return bindings;
+}
+
+/** Reads installation identity without loading package code or resolving exports. */
+export async function inspectInstalledSource(
+	base: URL | string,
+	name: string,
+	runtimeRequirement?: string,
+	provenance?: ReadonlyMap<string, BindingProvenance>,
+	applicationRoot?: URL,
+): Promise<
+	| (Omit<InstalledSource, "version"> & { version?: string })
+	| undefined
+> {
+	const owner = await readManifest(
+		base instanceof URL ? fileURLToPath(base) : base,
+	);
+	const requirement =
+		runtimeRequirement ??
+		owner?.optionalDependencies?.[name] ??
+		owner?.dependencies?.[name] ??
+		owner?.devDependencies?.[name] ??
+		owner?.peerDependencies?.[name];
+	for (const modules of createRequire(base).resolve.paths(
+		`${name}/package.json`,
+	) ?? []) {
+		const manifest = await readManifest(
+			join(modules, name, "package.json"),
+		);
+		if (!manifest) continue;
+		const directory = await realpath(join(modules, name));
+
+		const binding = provenance?.get(directory);
+		const bindingRequirement = binding?.rootRequirements[name];
+
+		const effectiveRequirement =
+			runtimeRequirement ??
+			(applicationRoot &&
+			(base instanceof URL ? fileURLToPath(base) : base) ===
+				fileURLToPath(new URL("package.json", applicationRoot))
+				? bindingRequirement
+				: undefined) ??
+			requirement;
+		const parent = dirname(directory);
+		const container = basename(parent).startsWith("@")
+			? dirname(parent)
+			: parent;
+		// Registry-managed virtual stores still end in node_modules/name (or @scope/name).
+		const local =
+			basename(container) !== "node_modules" ||
+			(typeof effectiveRequirement === "string" &&
+				parseRuntimeRequirement(name, effectiveRequirement)
+					.local) ||
+			binding?.local === true;
+		return {
+			version:
+				typeof manifest.version === "string" &&
+				semver.valid(manifest.version)
+					? manifest.version
+					: undefined,
+			...(manifest.name && manifest.name !== name
+				? { registryName: manifest.name }
+				: {}),
+			directory,
+			local,
+			manifest,
+		};
+	}
+	return undefined;
+}
+
+/** Selects runtime contents only after enforcing exact versions and the local-source boundary. */
+export async function readInstalledSource(
+	base: URL | string,
+	name: string,
+	includeLocal = false,
+	runtimeRequirement?: string,
+	provenance?: ReadonlyMap<string, BindingProvenance>,
+	applicationRoot?: URL,
+): Promise<InstalledSource | undefined> {
+	const source = await inspectInstalledSource(
+		base,
+		name,
+		runtimeRequirement,
+		provenance,
+		applicationRoot,
+	);
+	if (!source) return undefined;
+	if (!source.version)
+		throw new Error(
+			`Cannot read an exact version for runtime package "${name}".`,
+		);
+	if (source.local && !includeLocal)
+		throw new Error(
+			`The "install" dependency strategy cannot pin the linked local runtime package "${name}" to registry code. Enable includeLocal to deliver its local contents, or install a registry dependency.`,
+		);
+	return { ...source, version: source.version };
+}
+
+/** Local protocols select installed content, never registry versions. */
+export function parseRuntimeRequirement(
+	name: string,
+	value: string,
+): { name: string; requirement: string; local: boolean } {
+	if (/^(file|link):/.test(value))
+		return { name, requirement: "*", local: true };
+	if (value.startsWith("workspace:")) {
+		const reference = value.slice("workspace:".length);
+		if (["*", "^", "~"].includes(reference))
+			return { name, requirement: "*", local: true };
+		if (semver.validRange(reference))
+			return { name, requirement: reference, local: true };
+		if (reference.startsWith("."))
+			return { name, requirement: "*", local: true };
+		const separator = reference.lastIndexOf("@");
+		if (
+			separator > 0 &&
+			semver.validRange(reference.slice(separator + 1))
+		)
+			return {
+				name: reference.slice(0, separator),
+				requirement: reference.slice(separator + 1),
+				local: true,
+			};
+		throw new Error(
+			`Unsupported workspace requirement for runtime package "${name}": ${value}`,
+		);
+	}
+	if (
+		!value.startsWith("npm:") &&
+		(/[\\/:]/.test(value) || /\.(?:tgz|tar\.gz)$/i.test(value))
+	)
+		return { name, requirement: "*", local: true };
+	return {
+		...parseRegistryRequirement(name, value),
+		local: false,
+	};
+}
