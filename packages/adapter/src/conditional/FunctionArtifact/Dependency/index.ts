@@ -110,6 +110,38 @@ export async function resolvePinnedRuntimeDependencies(
 		if (!includeLocal) throw localRuntimeSourceRequired(name);
 		return { ...installed, local: true };
 	};
+	const lockedInstallation = async (
+		locked: LockedSelection,
+		base: string,
+		name: string,
+	): Promise<InstalledSource | undefined> => {
+		if (!lock || !hasLocalLockOrigin(locked.metadata))
+			return undefined;
+		const installed = await inspectInstalledSource(
+			base,
+			name,
+			undefined,
+			provenance,
+			appRoot,
+		);
+		if (
+			!installed?.version ||
+			installed.location !== locked.location
+		)
+			return undefined;
+		const source = {
+			...installed,
+			version: installed.version,
+			local: true,
+		};
+		return (await matchesLockedInstallation(
+			lock,
+			locked.metadata,
+			source,
+		))
+			? source
+			: undefined;
+	};
 	const selectLockedChild = async (
 		locked: LockedSelection,
 		childBase: string,
@@ -117,23 +149,14 @@ export async function resolvePinnedRuntimeDependencies(
 	): Promise<DependencySource> => {
 		const { location, metadata } = locked;
 		if (hasLocalLockOrigin(metadata)) {
-			if (!includeLocal || !lock)
-				throw localRuntimeSourceRequired(name);
-			const installed = await findInstalledPackage(
+			if (!includeLocal) throw localRuntimeSourceRequired(name);
+			const installed = await lockedInstallation(
+				locked,
 				childBase,
 				name,
 			);
-			if (
-				!installed ||
-				installed.location !== location ||
-				!(await matchesLockedInstallation(
-					lock,
-					metadata,
-					installed,
-				))
-			)
-				throw localRuntimeSourceRequired(name);
-			return { ...installed, local: true };
+			if (!installed) throw localRuntimeSourceRequired(name);
+			return installed;
 		}
 		return {
 			version: metadata.version,
@@ -383,7 +406,7 @@ export async function resolvePinnedRuntimeDependencies(
 							selected &&
 							!(await ownsLockOnlyLocalChild(
 								lock,
-								override.replacement
+								override.useOverrideBase
 									? overrideDirectory
 									: localDependencyBase(
 											lock,
@@ -584,18 +607,23 @@ export async function resolvePinnedRuntimeDependencies(
 					!owner?.directory && owner?.lockLocation && lock
 						? findLockedPackage(lock, owner.lockLocation, name)
 						: undefined;
-				if (locked) return locked.location;
-				return readInstalledBindingPath(
-					scope
-						? join(
-								owner?.directory ??
-									owner?.lockLocation ??
-									appDirectory,
-								"package.json",
-							)
-						: appManifestPath,
-					name,
-				);
+				const base = scope
+					? join(
+							owner?.directory ??
+								owner?.lockLocation ??
+								appDirectory,
+							"package.json",
+						)
+					: appManifestPath;
+				if (locked) {
+					const installed = await lockedInstallation(
+						locked,
+						base,
+						name,
+					);
+					return installed?.directory ?? locked.location;
+				}
+				return readInstalledBindingPath(base, name);
 			})();
 			installedBindings.set(location, result);
 		}

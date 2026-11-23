@@ -74,7 +74,7 @@ export class ApplicationOverrides {
 	): {
 		spec: string;
 		context: ApplicationOverrides;
-		replacement?: true;
+		useOverrideBase?: true;
 	} {
 		const rules = new Map<string, ApplicationOverrides>();
 		const contexts: ApplicationOverrides[] = [this];
@@ -135,9 +135,8 @@ export class ApplicationOverrides {
 		return {
 			spec,
 			context: rule,
-			...(replacement !== undefined
-				? { replacement: true }
-				: {}),
+			// npm uses the override root for matched edges, including * rules.
+			useOverrideBase: true,
 		};
 	}
 }

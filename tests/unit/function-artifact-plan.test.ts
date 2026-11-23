@@ -111,6 +111,7 @@ async function seedFixtureTarballCache(
 				resolved,
 				"--cache",
 				cache,
+				"--offline=false",
 				"--ignore-scripts",
 			],
 			{ cwd: directory },
@@ -251,6 +252,16 @@ describe("Function Artifact mutation plans", () => {
 		},
 		{
 			resolved: "file:fork.tgz",
+			owned: true,
+			wildcardOverride: true,
+		},
+		{
+			resolved: "file:node_modules/helper/fork.tgz",
+			owned: false,
+			wildcardOverride: true,
+		},
+		{
+			resolved: "file:fork.tgz",
 			owned: false,
 			registryRange: true,
 			includeLocal: false,
@@ -273,6 +284,7 @@ describe("Function Artifact mutation plans", () => {
 			owned,
 			nested,
 			replacement,
+			wildcardOverride,
 			lockVersion = "1.0.0",
 			registryRange,
 			includeLocal = true,
@@ -291,7 +303,9 @@ describe("Function Artifact mutation plans", () => {
 					child:
 						replacement || registryRange
 							? "^1"
-							: "file:../fork.tgz",
+							: wildcardOverride
+								? "file:./fork.tgz"
+								: "file:../fork.tgz",
 				},
 			};
 			const pluginPath = new URL("node_modules/plugin/", f.root);
@@ -299,11 +313,13 @@ describe("Function Artifact mutation plans", () => {
 				? "node_modules/helper/node_modules/child"
 				: "node_modules/child";
 			const childPath = new URL(childSlot + "/", f.root);
-			if (replacement)
+			if (replacement || wildcardOverride)
 				await writeFile(
 					new URL("package.json", f.root),
 					JSON.stringify({
-						overrides: { child: "file:./fork.tgz" },
+						overrides: {
+							child: wildcardOverride ? "*" : "file:./fork.tgz",
+						},
 					}),
 				);
 			await mkdir(pluginPath, { recursive: true });
@@ -792,6 +808,14 @@ describe("Function Artifact mutation plans", () => {
 					"import * as ns from './bridge.js';const {runtime:proc=process}=ns;",
 				],
 				[
+					"export * from './ordinary-a.mjs?one';export * from './ordinary-a.mjs?two';",
+					"import * as ns from './bridge.js';const {runtime:proc=process}=ns;",
+				],
+				[
+					"export * from './ordinary-a.mjs#one';export * from './ordinary-a.mjs#two';",
+					"import * as ns from './bridge.js';const {runtime:proc=process}=ns;",
+				],
+				[
 					"export const runtime={};",
 					"import * as ns from './bridge.js';const {...copy}=ns;copy.runtime=undefined;const {runtime:proc=process}=copy;",
 				],
@@ -841,7 +865,11 @@ describe("Function Artifact mutation plans", () => {
 				new URL("node_modules/example/package.json", f.root),
 				'{"name":"example","version":"1.2.3"}',
 			);
-			if (bridge.includes('from "./origin.js"')) {
+			if (
+				bridge.includes('from "./origin.js"') ||
+				bridge.includes("./ordinary-a.mjs?") ||
+				bridge.includes("./ordinary-a.mjs#")
+			) {
 				await writeFile(
 					new URL("node_modules/example/index.js", f.root),
 					'module.exports = "interop fixture";',
@@ -903,6 +931,7 @@ describe("Function Artifact mutation plans", () => {
 				"import * as ns from './origin.mjs';",
 				"import * as ns from './imported.mjs';",
 				"import * as ns from './diamond.mjs';",
+				"import * as ns from './same-instance.mjs';",
 			] as const
 		).flatMap((consumer) =>
 			(["bundle", "install"] as const).map(
@@ -935,6 +964,10 @@ describe("Function Artifact mutation plans", () => {
 			await writeFile(
 				new URL("diamond.mjs", f.server),
 				"export * from './bridge.mjs';export * from './origin.mjs';export * from './forward.mjs';",
+			);
+			await writeFile(
+				new URL("same-instance.mjs", f.server),
+				"export * from './bridge.mjs?one#same';export * from '././br%69dge.mjs?one#same';",
 			);
 			await writeFile(
 				new URL("index.js", f.server),
@@ -1137,9 +1170,13 @@ describe("Function Artifact mutation plans", () => {
 		},
 	);
 
-	it.each(["1.0.0", "2.1.0"])(
-		"uses only compatible workspace children of a lock-only optional parent (%s)",
-		async (version) => {
+	it.each([
+		{ version: "1.0.0", shared: false },
+		{ version: "2.1.0", shared: false },
+		{ version: "2.1.0", shared: true },
+	])(
+		"uses only compatible workspace children of a lock-only optional parent: %j",
+		async ({ version, shared }) => {
 			const f = await fixture();
 			await mkdir(new URL("node_modules/plugin/", f.root), {
 				recursive: true,
@@ -1159,12 +1196,12 @@ describe("Function Artifact mutation plans", () => {
 			);
 			const childRoot = new URL("packages/child/", f.root);
 			await mkdir(childRoot, { recursive: true });
+			const childSlot = shared
+				? "node_modules/child"
+				: "node_modules/helper/node_modules/child";
 			await symlink(
 				childRoot,
-				new URL(
-					"node_modules/helper/node_modules/child",
-					f.root,
-				),
+				new URL(childSlot, f.root),
 				"dir",
 			);
 			await writeFile(
@@ -1185,9 +1222,11 @@ describe("Function Artifact mutation plans", () => {
 							name: "helper",
 							version: "1.0.0",
 							optional: true,
-							dependencies: { child: "workspace:^2" },
+							dependencies: {
+								child: shared ? "^2" : "workspace:^2",
+							},
 						},
-						"node_modules/helper/node_modules/child": {
+						[childSlot]: {
 							link: true,
 							resolved: "packages/child",
 						},
@@ -1197,7 +1236,9 @@ describe("Function Artifact mutation plans", () => {
 			);
 			await writeFile(
 				new URL("index.js", f.server),
-				"import 'plugin';" + f.index,
+				"import 'plugin';" +
+					(shared ? "import 'child';" : "") +
+					f.index,
 			);
 			const before = await snapshot(f.directory);
 			const resolve = vi.fn(() =>
@@ -1238,6 +1279,16 @@ describe("Function Artifact mutation plans", () => {
 			expect(lock.contents).not.toContain(
 				"https://example.test/child.tgz",
 			);
+			if (shared) {
+				expect(
+					JSON.parse(lock.contents) as unknown,
+				).toMatchObject({
+					packages: { "node_modules/child": { version } },
+				});
+				expect(lock.contents).not.toContain(
+					"node_modules/helper/node_modules/child",
+				);
+			}
 		},
 	);
 

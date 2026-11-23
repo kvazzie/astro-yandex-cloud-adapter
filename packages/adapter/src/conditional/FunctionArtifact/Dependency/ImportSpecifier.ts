@@ -30,6 +30,10 @@ export function findRuntimePackageImports(
 	const emittedFiles = new Set(
 		files.map(({ path }) => pathToFileURL(path).href),
 	);
+	const sources = new Map<
+		string,
+		{ program: SyntaxNode; path: string }
+	>();
 	const modules = new Map<
 		string,
 		{ namespace: EmittedNamespace; inspect: () => void }
@@ -59,10 +63,16 @@ export function findRuntimePackageImports(
 			}
 			if (!isRelativeSpecifier(specifier)) return undefined;
 			const local = URL.parse(specifier, url);
-			if (!local) return undefined;
-			local.hash = "";
-			local.search = "";
-			return modules.get(local.href)?.namespace;
+			if (local?.protocol !== "file:") return undefined;
+			const sourceUrl = pathToFileURL(fileURLToPath(local));
+			const source = sources.get(sourceUrl.href);
+			if (!source) return undefined;
+			// Preserve the URL suffix for ESM instance identity, including an empty query.
+			const suffix = local.href.match(/[?#].*$/)?.[0] ?? "";
+			const instance = new URL(sourceUrl.href + suffix);
+			if (!modules.has(instance.href))
+				addModule(instance, source.program, source.path);
+			return modules.get(instance.href)?.namespace;
 		};
 		const resolveRequire = (
 			specifier: string,
@@ -147,10 +157,15 @@ export function findRuntimePackageImports(
 				continue;
 			throw error;
 		}
-		addModule(pathToFileURL(file.path), program, file.path);
+		sources.set(pathToFileURL(file.path).href, {
+			program,
+			path: file.path,
+		});
 	}
+	for (const [href, source] of sources)
+		addModule(new URL(href), source.program, source.path);
 	// Linking is lazy so imports can refer to later files or to cyclic re-exports.
-	// Map iteration also inspects any JavaScript data modules discovered by the visitor.
+	// Map iteration also inspects module instances discovered by the visitor.
 	for (const module of modules.values()) module.inspect();
 	return names;
 }
