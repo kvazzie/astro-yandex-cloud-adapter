@@ -61,9 +61,9 @@ async function snapshot(
 	return result;
 }
 
-async function fixture() {
+async function fixture(parent = tmpdir()) {
 	const directory = await mkdtemp(
-		join(tmpdir(), "astro-function-plan-"),
+		join(parent, "astro-function-plan-"),
 	);
 	directories.push(directory);
 	const root = pathToFileURL(directory + "/");
@@ -1661,6 +1661,120 @@ describe("Function Artifact mutation plans", () => {
 		},
 	);
 
+	it.each([
+		{ includeLocal: false, ancestorPnpm: false },
+		{ includeLocal: true, ancestorPnpm: false },
+		{ includeLocal: true, ancestorPnpm: true },
+	])(
+		"honors the root dev tarball over the production range: %j",
+		async ({ includeLocal, ancestorPnpm }) => {
+			let ancestor: string | undefined;
+			if (ancestorPnpm) {
+				ancestor = await mkdtemp(
+					join(tmpdir(), "unrelated-pnpm-"),
+				);
+				directories.push(ancestor);
+				await mkdir(join(ancestor, "node_modules"));
+				await writeFile(
+					join(ancestor, "node_modules", ".modules.yaml"),
+					"layoutVersion: 5\n",
+				);
+			}
+			const f = await fixture(ancestor);
+			const parent = new URL("node_modules/parent/", f.root);
+			const resolved = "file:../parent-2.0.0.tgz";
+			await mkdir(parent, { recursive: true });
+			await writeFile(
+				new URL("package.json", parent),
+				JSON.stringify({
+					name: "parent",
+					version: "2.0.0",
+					main: "index.cjs",
+				}),
+			);
+			await writeFile(
+				new URL("index.cjs", parent),
+				'module.exports = "local parent";',
+			);
+			await writeFile(
+				new URL("package.json", f.root),
+				JSON.stringify({
+					dependencies: { parent: "^1" },
+					devDependencies: { parent: resolved },
+				}),
+			);
+			await writeFile(
+				new URL("package-lock.json", f.root),
+				JSON.stringify({
+					lockfileVersion: 3,
+					packages: {
+						"node_modules/parent": {
+							version: "2.0.0",
+							resolved,
+						},
+					},
+				}),
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`import "parent";${f.index}`,
+			);
+			const before = await snapshot(f.directory);
+			const resolve = vi.fn(() =>
+				Promise.reject(new Error("Unexpected registry lookup")),
+			);
+			const result = await Effect.runPromise(
+				Effect.either(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						{
+							...settings,
+							dependencyStrategy: "install",
+							includeLocal,
+						},
+						{ resolve },
+					),
+				),
+			);
+			expect(await snapshot(f.directory)).toEqual(before);
+			expect(resolve).not.toHaveBeenCalled();
+			if (!includeLocal) {
+				expect(result._tag).toBe("Left");
+				if (result._tag === "Left")
+					expect(result.left.message).toContain("includeLocal");
+				return;
+			}
+			if (result._tag === "Left") throw result.left;
+			await Effect.runPromise(
+				FunctionArtifact.applyPreparation(result.right),
+			);
+			const lock = await readFile(
+				new URL("package-lock.json", f.server),
+				"utf8",
+			);
+			expect(lock).toContain(".yandex/dependencies");
+			expect(lock).not.toContain(resolved);
+			await promisify(execFile)(
+				"npm",
+				[
+					"ci",
+					"--offline",
+					"--ignore-scripts",
+					"--no-audit",
+					"--no-fund",
+				],
+				{ cwd: f.server },
+			);
+			const { stdout } = await promisify(execFile)(
+				process.execPath,
+				["-e", 'process.stdout.write(require("parent"))'],
+				{ cwd: f.server },
+			);
+			expect(stdout).toBe("local parent");
+		},
+	);
+
 	it.each(
 		[
 			'import "data:text/javascript,export default 1";',
@@ -2296,6 +2410,34 @@ describe("Function Artifact mutation plans", () => {
 			allowed: true,
 		},
 		{
+			label: "active dev scope over production",
+			dependencies: "^1",
+			dev: "^2",
+			parentVersion: "2.0.0",
+			leafVersion: "2.0.0",
+			scope: "parent@^2",
+			allowed: true,
+		},
+		{
+			label: "active dev scope over optional",
+			optional: "^1",
+			dev: "^2",
+			parentVersion: "2.0.0",
+			leafVersion: "2.0.0",
+			scope: "parent@^2",
+			allowed: true,
+		},
+		{
+			label: "pnpm production scope over dev",
+			dependencies: "^1",
+			dev: "file:../parent-2.0.0.tgz",
+			pnpm: true,
+			parentVersion: "1.0.0",
+			leafVersion: "2.0.0",
+			scope: "parent@^1",
+			allowed: true,
+		},
+		{
 			label: "installed version fallback",
 			dependencies: undefined,
 			optional: undefined,
@@ -2309,6 +2451,8 @@ describe("Function Artifact mutation plans", () => {
 		async ({
 			dependencies,
 			optional,
+			dev,
+			pnpm,
 			parentVersion,
 			leafVersion,
 			scope,
@@ -2322,6 +2466,11 @@ describe("Function Artifact mutation plans", () => {
 				),
 				{ recursive: true },
 			);
+			if (pnpm)
+				await writeFile(
+					new URL("node_modules/.modules.yaml", f.root),
+					"layoutVersion: 5\n",
+				);
 			await writeFile(
 				new URL("package.json", f.root),
 				JSON.stringify({
@@ -2332,6 +2481,7 @@ describe("Function Artifact mutation plans", () => {
 					...(optional
 						? { optionalDependencies: { parent: optional } }
 						: {}),
+					...(dev ? { devDependencies: { parent: dev } } : {}),
 					overrides: { [scope]: { leaf: "2.0.0" } },
 				}),
 			);

@@ -14,6 +14,7 @@ import semver from "semver";
 import {
 	readInstalledSource,
 	readInstalledProvenance,
+	readRootRequirementPrecedence,
 	inspectInstalledSource,
 	readInstalledBindingPath,
 	parseRuntimeRequirement,
@@ -33,7 +34,10 @@ import {
 	type RegistryVersionMetadata,
 } from "./Registry.ts";
 
-import { ApplicationOverrides } from "./.overrides.ts";
+import {
+	ApplicationOverrides,
+	applicationDependencyRequirement,
+} from "./.overrides.ts";
 
 interface DependencySource {
 	inBundle?: boolean;
@@ -56,7 +60,13 @@ export async function resolvePinnedRuntimeDependencies(
 ): Promise<ResolvedRuntimeDependency[]> {
 	const appDirectory = await realpath(fileURLToPath(root));
 	const appRoot = pathToFileURL(appDirectory + sep);
-	const provenance = await readInstalledProvenance(appRoot);
+	const appManifestPath = join(appDirectory, "package.json");
+	const developmentFirst =
+		await readRootRequirementPrecedence(appManifestPath);
+	const provenance = await readInstalledProvenance(
+		appRoot,
+		developmentFirst,
+	);
 	const findInstalledPackage = (
 		base: string,
 		name: string,
@@ -70,7 +80,6 @@ export async function resolvePinnedRuntimeDependencies(
 			provenance,
 			appRoot,
 		);
-	const appManifestPath = join(appDirectory, "package.json");
 	const lock = await readLocalLock(appDirectory);
 	const application =
 		await readJsonFile<PackageJson>(appManifestPath);
@@ -679,11 +688,11 @@ export async function resolvePinnedRuntimeDependencies(
 				...source,
 				overrides: overrides.forDependency(
 					name,
-					application?.optionalDependencies?.[name] ??
-						application?.dependencies?.[name] ??
-						application?.devDependencies?.[name] ??
-						application?.peerDependencies?.[name] ??
-						source.version,
+					applicationDependencyRequirement(
+						application,
+						name,
+						developmentFirst(source.directory),
+					) ?? source.version,
 				).context,
 			}),
 		);

@@ -1,4 +1,4 @@
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import {
 	basename,
@@ -11,7 +11,10 @@ import { fileURLToPath } from "node:url";
 
 import type { PackageJson } from "pkg-types";
 import semver from "semver";
-import { ApplicationOverrides } from "./.overrides.ts";
+import {
+	ApplicationOverrides,
+	applicationDependencyRequirement,
+} from "./.overrides.ts";
 import {
 	normalizeBundleDependencies,
 	parseRegistryRequirement,
@@ -68,6 +71,55 @@ export async function readInstalledBindingPath(
 	return undefined;
 }
 
+/** Prefer the nearest installation's metadata over the manifest's package manager hint. */
+export async function readRootRequirementPrecedence(
+	appManifestPath: string,
+): Promise<(installedDirectory: string) => boolean> {
+	const rootModules = join(
+		dirname(appManifestPath),
+		"node_modules",
+	);
+	const inherited = new Map<string, boolean>();
+	for (const modules of createRequire(
+		appManifestPath,
+	).resolve.paths("package.json") ?? []) {
+		for (const [marker, developmentFirst] of [
+			[".modules.yaml", false],
+			[".package-lock.json", true],
+		] as const) {
+			try {
+				if (!(await stat(join(modules, marker))).isFile())
+					continue;
+				if (modules === rootModules)
+					return () => developmentFirst;
+				inherited.set(modules, developmentFirst);
+				break;
+			} catch (cause) {
+				if (
+					!["ENOENT", "ENOTDIR"].includes(
+						(cause as NodeJS.ErrnoException).code ?? "",
+					)
+				)
+					throw cause;
+			}
+		}
+	}
+	return (installedDirectory) => {
+		for (const [modules, developmentFirst] of inherited) {
+			const path = relative(modules, installedDirectory);
+			if (
+				path &&
+				path !== ".." &&
+				!path.startsWith("../") &&
+				!path.startsWith("..\\") &&
+				!isAbsolute(path)
+			)
+				return developmentFirst;
+		}
+		return true;
+	};
+}
+
 interface BindingProvenance {
 	local: boolean;
 	rootRequirements: Record<string, string>;
@@ -76,6 +128,7 @@ interface BindingProvenance {
 /** Reads installed ownership evidence only; version selection and placement stay in the resolver. */
 export async function readInstalledProvenance(
 	applicationRoot: URL,
+	developmentFirst: (installedDirectory: string) => boolean,
 ): Promise<ReadonlyMap<string, BindingProvenance>> {
 	const applicationDirectory = fileURLToPath(applicationRoot);
 	const application =
@@ -138,13 +191,22 @@ export async function readInstalledProvenance(
 			manifest.dependencies,
 			manifest.optionalDependencies,
 		);
-		for (const [name, { requested, peer }] of ranges) {
-			if (typeof requested !== "string") continue;
+		for (const [name, edge] of ranges) {
+			if (typeof edge.requested !== "string") continue;
 			const selected = await readInstalledBindingPath(
 				join(directory, "package.json"),
 				name,
 			);
 			if (!selected) continue;
+			const requested = root
+				? applicationDependencyRequirement(
+						manifest,
+						name,
+						developmentFirst(selected),
+					)
+				: edge.requested;
+			if (typeof requested !== "string") continue;
+			const { peer } = edge;
 			const selectedRelative = bundleRoot
 				? relative(bundleRoot, selected)
 				: undefined;
@@ -208,11 +270,14 @@ export async function inspectInstalledSource(
 	| (Omit<InstalledSource, "version"> & { version?: string })
 	| undefined
 > {
-	const owner = await readManifest(
-		base instanceof URL ? fileURLToPath(base) : base,
-	);
+	const ownerPath =
+		base instanceof URL ? fileURLToPath(base) : base;
+	const owner = await readManifest(ownerPath);
+	const isApplication =
+		applicationRoot !== undefined &&
+		ownerPath ===
+			fileURLToPath(new URL("package.json", applicationRoot));
 	const requirement =
-		runtimeRequirement ??
 		owner?.optionalDependencies?.[name] ??
 		owner?.dependencies?.[name] ??
 		owner?.devDependencies?.[name] ??
@@ -227,14 +292,10 @@ export async function inspectInstalledSource(
 		const directory = await realpath(join(modules, name));
 
 		const binding = provenance?.get(directory);
-		const bindingRequirement = binding?.rootRequirements[name];
-
 		const effectiveRequirement =
 			runtimeRequirement ??
-			(applicationRoot &&
-			(base instanceof URL ? fileURLToPath(base) : base) ===
-				fileURLToPath(new URL("package.json", applicationRoot))
-				? bindingRequirement
+			(isApplication
+				? binding?.rootRequirements[name]
 				: undefined) ??
 			requirement;
 		const parent = dirname(directory);
