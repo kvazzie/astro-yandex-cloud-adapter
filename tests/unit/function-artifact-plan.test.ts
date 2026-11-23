@@ -11,6 +11,7 @@ import {
 	readFile,
 	readlink,
 	readdir,
+	realpath,
 	rm,
 	symlink,
 	writeFile,
@@ -7088,7 +7089,7 @@ ${f.index}`,
 			);
 			if (pattern)
 				expect(require.resolve(specifier)).toBe(
-					fileURLToPath(new URL("src/features/a.js", linked)),
+					await realpath(new URL("src/features/a.js", linked)),
 				);
 			else expect(require(specifier)).toBe("selected main");
 			await writeFile(
@@ -7111,6 +7112,217 @@ ${f.index}`,
 				expect(
 					(await planning).plannedOutput.functions,
 				).toHaveLength(1);
+			expect(await snapshot(f.directory)).toEqual(before);
+		},
+	);
+
+	type ArchiveResolutionCase = {
+		name: string;
+		files: Record<string, string>;
+		pattern?: unknown;
+		omitted?: string;
+		omissionAllowed?: boolean;
+		required: string;
+		imported?: string;
+	};
+	it.each<ArchiveResolutionCase>([
+		{
+			name: "decodes the directory of an export pattern",
+			pattern: "./src/my%20features/*.cjs",
+			files: {
+				"src/my features/a.cjs": 'module.exports = "encoded";',
+			},
+			omitted: "src/my features/a.cjs",
+			required: "encoded",
+		},
+		{
+			name: "retains the decoded export target",
+			pattern: "./src/my%20features/*.cjs",
+			files: {
+				"src/my features/a.cjs": 'module.exports = "encoded";',
+			},
+			required: "encoded",
+		},
+		{
+			name: "ignores a default export shadowed by the node condition",
+			pattern: {
+				node: "./node/*.cjs",
+				default: "./fallback/*.cjs",
+			},
+			files: {
+				"node/a.cjs": 'module.exports = "node";',
+				"fallback/a.cjs": 'module.exports = "default";',
+			},
+			omitted: "fallback/a.cjs",
+			omissionAllowed: true,
+			required: "node",
+			imported: "node",
+		},
+		{
+			name: "probes the next condition if the selected condition has no matching child",
+			pattern: {
+				node: { browser: "./browser/*.cjs" },
+				default: "./fallback/*.cjs",
+			},
+			files: {
+				"browser/a.cjs": 'module.exports = "browser";',
+				"fallback/a.cjs": 'module.exports = "default";',
+			},
+			omitted: "browser/a.cjs",
+			omissionAllowed: true,
+			required: "default",
+			imported: "default",
+		},
+		...(["esm/a.mjs", "cjs/a.cjs"] as const).map((omitted) => ({
+			name: `checks both Node loaders when ${omitted} is omitted`,
+			pattern: { import: "./esm/*.mjs", require: "./cjs/*.cjs" },
+			files: {
+				"esm/a.mjs": 'export default "import";',
+				"cjs/a.cjs": 'module.exports = "require";',
+			},
+			omitted,
+			required: "require",
+			imported: "import",
+		})),
+		{
+			name: "requires the fallback index's format-defining package scope",
+			files: {
+				"index.cjs":
+					'module.exports = require("./nested").default;',
+				"nested/index.js": 'export default "module index";',
+				"nested/package.json": '{"type":"module"}',
+			},
+			omitted: "nested/package.json",
+			required: "module index",
+		},
+		{
+			name: "accepts a fallback index without a separate package scope",
+			files: {
+				"index.cjs": 'module.exports = require("./nested");',
+				"nested/index.js": 'module.exports = "regular index";',
+			},
+			required: "regular index",
+		},
+		{
+			name: "follows require in an extensionless file",
+			files: {
+				"index.cjs": 'module.exports = require("./run");',
+				run: 'module.exports = require("./helper.cjs");',
+				"helper.cjs": 'module.exports = "helper";',
+			},
+			omitted: "helper.cjs",
+			required: "helper",
+		},
+		{
+			name: "follows require before a CommonJS top-level return",
+			files: {
+				"index.cjs":
+					'module.exports = require("./helper.cjs"); return;',
+				"helper.cjs": 'module.exports = "wrapped";',
+			},
+			omitted: "helper.cjs",
+			required: "wrapped",
+		},
+		...(["./nested/.", "./nested/", "./nested"] as const).map(
+			(specifier) => ({
+				name: `preserves CommonJS lookup intent for ${specifier}`,
+				files: {
+					"index.cjs": `module.exports = require(${JSON.stringify(specifier)});`,
+					"nested.js": 'module.exports = "file";',
+					"nested/package.json": '{"main":"main.cjs"}',
+					"nested/main.cjs": 'module.exports = "directory";',
+				},
+				omitted: "nested/main.cjs",
+				omissionAllowed: specifier === "./nested",
+				required:
+					specifier === "./nested" ? "file" : "directory",
+			}),
+		),
+	])(
+		"validates Node archive resolution ($name)",
+		async ({
+			files,
+			pattern,
+			omitted,
+			omissionAllowed,
+			required,
+			imported,
+		}) => {
+			const f = await fixture();
+			const linked = new URL("packages/linked/", f.root);
+			for (const [path, contents] of Object.entries(files)) {
+				const file = new URL(path, linked);
+				await mkdir(new URL(".", file), { recursive: true });
+				await writeFile(file, contents);
+			}
+			await writeFile(
+				new URL("package.json", linked),
+				JSON.stringify({
+					name: "linked",
+					version: "1.0.0",
+					type: "commonjs",
+					exports: pattern
+						? { "./features/*": pattern }
+						: "./index.cjs",
+					files: Object.keys(files).filter(
+						(path) => path !== omitted,
+					),
+				}),
+			);
+			await mkdir(new URL("node_modules/", f.root));
+			await symlink(
+				linked,
+				new URL("node_modules/linked", f.root),
+				"dir",
+			);
+			const specifier = pattern ? "linked/features/a" : "linked";
+			const require = createRequire(
+				new URL("package.json", f.root),
+			);
+			expect(require(specifier)).toBe(required);
+			if (imported !== undefined) {
+				const result = await promisify(execFile)(
+					process.execPath,
+					[
+						"--input-type=module",
+						"-e",
+						`import value from ${JSON.stringify(specifier)}; console.log(value);`,
+					],
+					{ cwd: fileURLToPath(f.root) },
+				);
+				expect(result.stdout.trim()).toBe(imported);
+			}
+			await writeFile(
+				new URL("index.js", f.server),
+				`import '${specifier}';${f.index}`,
+			);
+			const before = await snapshot(f.directory);
+			const outcome = await Effect.runPromise(
+				Effect.either(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						{
+							...settings,
+							includeLocal: true,
+							dependencyStrategy: "install",
+						},
+					),
+				),
+			);
+			const missing = omissionAllowed ? undefined : omitted;
+			if (missing) {
+				expect(outcome._tag).toBe("Left");
+				if (outcome._tag === "Left")
+					expect(String(outcome.left)).toContain(
+						`omits ${missing}`,
+					);
+			} else {
+				if (outcome._tag === "Left") throw outcome.left;
+				expect(
+					outcome.right.plannedOutput.functions,
+				).toHaveLength(1);
+			}
 			expect(await snapshot(f.directory)).toEqual(before);
 		},
 	);

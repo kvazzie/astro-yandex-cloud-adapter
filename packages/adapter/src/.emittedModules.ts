@@ -7,12 +7,15 @@ export interface SyntaxNode {
 	[property: string]: unknown;
 }
 
-/** Parses emitted ESM without running application code during Artifact Generation. */
-export function parseModule(source: string): SyntaxNode {
+/** Parses runtime syntax without running application code during Artifact Generation. */
+export function parseModule(
+	source: string,
+	sourceType: "module" | "commonjs" = "module",
+): SyntaxNode {
 	return parse(source, {
 		allowHashBang: true,
 		ecmaVersion: "latest",
-		sourceType: "module",
+		sourceType,
 	}) as unknown as SyntaxNode;
 }
 
@@ -259,9 +262,13 @@ export function getStaticString(
 }
 
 /** Collects the fixed local module and asset edges of Astro's emitted graph. */
-export function localModuleReferences(source: string): string[] {
+export function localModuleReferences(
+	source: string | SyntaxNode,
+): string[] {
 	const references = new Set<string>();
-	visitSyntax(parseModule(source), (node) => {
+	const syntax =
+		typeof source === "string" ? parseModule(source) : source;
+	visitSyntax(syntax, (node) => {
 		if (
 			node.type === "ImportDeclaration" ||
 			node.type === "ExportNamedDeclaration" ||

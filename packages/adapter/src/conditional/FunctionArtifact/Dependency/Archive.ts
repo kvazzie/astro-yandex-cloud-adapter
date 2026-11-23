@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import {
+	basename,
 	dirname,
 	extname,
 	isAbsolute,
@@ -23,6 +24,7 @@ import {
 	localModuleReferences,
 	parseModule,
 	visitSyntax,
+	type SyntaxNode,
 } from "../../../.emittedModules.ts";
 import type { PlannedFile } from "../.types.ts";
 import type { ResolvedRuntimeDependency } from "./Metadata.ts";
@@ -95,15 +97,57 @@ function packedFiles(bytes: Buffer): Map<string, Buffer> {
 	throw new Error("Invalid npm tarball end marker.");
 }
 
+type ArchiveLookup = "exact" | "commonjs" | "directory";
+type ArchiveRequest = { target: string; lookup: ArchiveLookup };
+
+// Validate the default Node conditions for both runtime loaders.
+const nodeExportConditions = [
+	new Set(["node", "node-addons", "module-sync", "import"]),
+	new Set(["node", "node-addons", "module-sync", "require"]),
+];
+
+function selectedExportTarget(
+	target: unknown,
+	conditions: ReadonlySet<string>,
+): string | null | false | undefined {
+	if (target === null) return null;
+	if (typeof target === "string")
+		return target.startsWith("./") ? target : false;
+	if (Array.isArray(target)) {
+		let fallback: null | false | undefined = target.length
+			? undefined
+			: null;
+		for (const item of target as unknown[]) {
+			const selected = selectedExportTarget(item, conditions);
+			if (typeof selected === "string") return selected;
+			if (selected !== undefined) fallback = selected;
+		}
+		return fallback;
+	}
+	if (!target || typeof target !== "object") return false;
+	for (const [key, value] of Object.entries(target)) {
+		if (key !== "default" && !conditions.has(key)) continue;
+		const selected = selectedExportTarget(value, conditions);
+		if (selected !== undefined) return selected;
+	}
+	return undefined;
+}
+
 async function manifestEntrypoints(
 	directory: string,
 	manifest: Record<string, unknown>,
-): Promise<string[]> {
-	const entries = new Set<string>();
+): Promise<ArchiveRequest[]> {
+	const entries = new Map<string, ArchiveLookup>();
+	const packageURL = pathToFileURL(directory + sep);
 	const exportMap =
-		manifest.exports && typeof manifest.exports === "object"
+		manifest.exports &&
+		typeof manifest.exports === "object" &&
+		!Array.isArray(manifest.exports) &&
+		Object.keys(manifest.exports).some((key) =>
+			key.startsWith("."),
+		)
 			? Object.entries(manifest.exports)
-			: [];
+			: [[".", manifest.exports] as const];
 	const patterns = exportMap
 		.flatMap(([key]) => {
 			const match = /^(\.\/[^*]*)\*([^*]*)$/.exec(key);
@@ -118,44 +162,71 @@ async function manifestEntrypoints(
 		);
 	const exactExports = new Set(exportMap.map(([key]) => key));
 	const targets: { key: string; match: RegExp }[] = [];
-	const add = (value: unknown, pattern?: string) => {
-		if (typeof value === "string") {
+	const addExport = (value: string, key: string) => {
+		try {
+			const url = new URL(value, packageURL);
+			if (!url.pathname.startsWith(packageURL.pathname)) return;
+			const subpath = url.pathname.slice(
+				packageURL.pathname.length,
+			);
+			if (/%2f|%5c/i.test(subpath)) return;
 			if (
-				!pattern ||
-				!value.startsWith("./") ||
-				!value.includes("*")
+				!patterns.some((pattern) => pattern.key === key) ||
+				!subpath.includes("*")
 			) {
-				entries.add(value);
+				entries.set(fileURLToPath(url), "exact");
 				return;
 			}
-			const parts = value
-				.slice(2)
+			const parts = subpath
 				.split("*")
 				.map((part) =>
-					part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+					decodeURIComponent(part).replace(
+						/[.*+?^${}()|[\]\\]/g,
+						"\\$&",
+					),
 				);
 			// All target stars substitute the same (possibly nested) subpath.
 			const match = new RegExp(
 				`^${parts[0]}([\\s\\S]+?)${parts.slice(1).join("(?:\\1)")}$`,
 			);
-			targets.push({ key: pattern, match });
-		} else if (value && typeof value === "object") {
-			for (const [condition, target] of Object.entries(value))
-				if (condition !== "types") add(target, pattern);
+			targets.push({ key, match });
+		} catch (error) {
+			if (!(
+				error instanceof URIError || error instanceof TypeError
+			))
+				throw error;
 		}
 	};
-	if (manifest.exports === undefined)
-		add(manifest.main ?? "index.js");
-	else if (exportMap.some(([key]) => key.startsWith("."))) {
-		for (const [key, target] of exportMap)
-			add(
-				target,
-				patterns.some((pattern) => pattern.key === key)
-					? key
-					: undefined,
+	if (
+		manifest.exports === undefined ||
+		manifest.exports === null
+	) {
+		const main = manifest.main;
+		entries.set(
+			join(
+				directory,
+				typeof main === "string" ? main : "index.js",
+			),
+			"commonjs",
+		);
+	} else {
+		for (const [key, target] of exportMap) {
+			const selected = new Set(
+				nodeExportConditions.map((conditions) =>
+					selectedExportTarget(target, conditions),
+				),
 			);
-	} else add(manifest.exports);
-	add(manifest.bin);
+			for (const value of selected)
+				if (typeof value === "string") addExport(value, key);
+		}
+	}
+	const bins =
+		typeof manifest.bin === "object" && manifest.bin !== null
+			? (Object.values(manifest.bin) as unknown[])
+			: [manifest.bin];
+	for (const bin of bins)
+		if (typeof bin === "string")
+			entries.set(join(directory, bin), "commonjs");
 
 	if (targets.length) {
 		for (const file of await glob("**/*", {
@@ -175,11 +246,15 @@ async function manifestEntrypoints(
 						subpath.endsWith(suffix) &&
 						subpath.length > prefix.length + suffix.length,
 				);
-				if (selected?.key === key) entries.add(file);
+				if (selected?.key === key)
+					entries.set(join(directory, file), "exact");
 			}
 		}
 	}
-	return [...entries];
+	return [...entries].map(([target, lookup]) => ({
+		target,
+		lookup,
+	}));
 }
 
 const commonJsExtensions = [".js", ".json", ".node"];
@@ -197,12 +272,7 @@ async function verifyLocalRuntimeFiles(
 	const manifest = JSON.parse(
 		files.get("package.json")?.toString("utf8") ?? "{}",
 	) as Record<string, unknown>;
-	const pending = (
-		await manifestEntrypoints(directory, manifest)
-	).map((file) => ({
-		target: join(directory, file),
-		extensionLookup: true,
-	}));
+	const pending = await manifestEntrypoints(directory, manifest);
 	const archivePath = (
 		candidate: string,
 	): string | undefined => {
@@ -248,32 +318,85 @@ async function verifyLocalRuntimeFiles(
 		commonJsExtensions.map((extension) =>
 			join(base, "index" + extension),
 		);
+	const installedManifests = new Map<
+		string,
+		Promise<Record<string, unknown> | undefined>
+	>();
+	const installedManifest = (location: string) => {
+		let loaded = installedManifests.get(location);
+		if (!loaded) {
+			loaded = readFile(location, "utf8").then(
+				(source) =>
+					JSON.parse(source) as
+						Record<string, unknown> | undefined,
+				(error: NodeJS.ErrnoException) => {
+					if (!missingPath(error)) throw error;
+					return undefined;
+				},
+			);
+			installedManifests.set(location, loaded);
+		}
+		return loaded;
+	};
+	const moduleType = (metadata?: Record<string, unknown>) =>
+		metadata?.type === "module" || metadata?.type === "commonjs"
+			? metadata.type
+			: undefined;
+	const selectedModuleType = async (candidate: string) => {
+		let installed:
+			| { path: string; type: ReturnType<typeof moduleType> }
+			| undefined;
+		let archivedType: ReturnType<typeof moduleType>;
+		for (
+			let scope = dirname(candidate);
+			scope === directory || archivePath(scope);
+			scope = dirname(scope)
+		) {
+			if (basename(scope) === "node_modules") break;
+			const path = join(scope, "package.json");
+			const packed = files.get(archivePath(path)!);
+			if (!installed) {
+				const metadata = await installedManifest(path);
+				if (metadata)
+					installed = { path, type: moduleType(metadata) };
+			}
+			if (packed) {
+				archivedType = moduleType(
+					JSON.parse(packed.toString("utf8")) as Record<
+						string,
+						unknown
+					>,
+				);
+				break;
+			}
+			if (scope === directory) break;
+		}
+		if (installed && installed.type !== archivedType)
+			requirePacked(installed.path);
+		return installed?.type;
+	};
 	const visited = new Set<string>();
 	while (pending.length) {
-		const { target, extensionLookup } = pending.pop()!;
-		const key = JSON.stringify([target, extensionLookup]);
+		const { target, lookup } = pending.pop()!;
+		const key = JSON.stringify([target, lookup]);
 		if (visited.has(key)) continue;
 		visited.add(key);
-		let candidate = await findFile(
-			extensionLookup ? fileCandidates(target) : [target],
-		);
+		let candidate =
+			lookup === "directory"
+				? undefined
+				: await findFile(
+						lookup === "commonjs"
+							? fileCandidates(target)
+							: [target],
+					);
 		let directoryManifest: string | undefined;
 		if (
 			!candidate &&
-			extensionLookup &&
+			lookup !== "exact" &&
 			(target === directory || archivePath(target))
 		) {
 			const manifestPath = join(target, "package.json");
-			const source = await readFile(manifestPath, "utf8").catch(
-				(error: NodeJS.ErrnoException) => {
-					if (!missingPath(error)) throw error;
-				},
-			);
-			const localManifest =
-				source === undefined
-					? undefined
-					: (JSON.parse(source) as { main?: unknown } | null);
-			const main = localManifest?.main;
+			const main = (await installedManifest(manifestPath))?.main;
 			if (typeof main === "string" && main) {
 				const entry = resolve(target, main);
 				candidate = await findFile([
@@ -287,46 +410,68 @@ async function verifyLocalRuntimeFiles(
 		if (!candidate) continue;
 		const contents = requirePacked(candidate);
 		if (directoryManifest) requirePacked(directoryManifest);
-		if (![".js", ".mjs", ".cjs"].includes(extname(candidate)))
+		const extension = extname(candidate);
+		if (
+			![".js", ".mjs", ".cjs"].includes(extension) &&
+			!(extension === "" && lookup !== "exact")
+		)
 			continue;
+		const format =
+			extension === ".mjs"
+				? "module"
+				: extension === ".cjs"
+					? "commonjs"
+					: await selectedModuleType(candidate);
 		const source = contents.toString("utf8");
-		const url = pathToFileURL(candidate);
+		let syntax: SyntaxNode;
 		try {
-			for (const reference of localModuleReferences(source)) {
-				try {
-					pending.push({
-						target: fileURLToPath(new URL(reference, url)),
-						extensionLookup: false,
-					});
-				} catch (error) {
-					if (!(
-						error instanceof URIError ||
-						error instanceof TypeError
-					))
-						throw error;
-				}
+			try {
+				syntax = parseModule(source, format ?? "commonjs");
+			} catch (error) {
+				if (format || !(error instanceof SyntaxError))
+					throw error;
+				syntax = parseModule(source);
 			}
-			visitSyntax(parseModule(source), (node) => {
-				if (
-					node.type !== "CallExpression" ||
-					!isSyntaxNode(node.callee) ||
-					node.callee.name !== "require" ||
-					!Array.isArray(node.arguments)
-				)
-					return;
-				const reference = getStaticString(node.arguments[0]);
-				if (
-					reference?.startsWith("./") ||
-					reference?.startsWith("../")
-				)
-					pending.push({
-						target: join(dirname(candidate), reference),
-						extensionLookup: true,
-					});
-			});
 		} catch (error) {
 			if (!(error instanceof SyntaxError)) throw error;
+			continue;
 		}
+		const url = pathToFileURL(candidate);
+		for (const reference of localModuleReferences(syntax)) {
+			try {
+				pending.push({
+					target: fileURLToPath(new URL(reference, url)),
+					lookup: "exact",
+				});
+			} catch (error) {
+				if (!(
+					error instanceof URIError || error instanceof TypeError
+				))
+					throw error;
+			}
+		}
+		visitSyntax(syntax, (node) => {
+			if (
+				node.type !== "CallExpression" ||
+				!isSyntaxNode(node.callee) ||
+				node.callee.name !== "require" ||
+				!Array.isArray(node.arguments)
+			)
+				return;
+			const reference = getStaticString(node.arguments[0]);
+			if (
+				reference === "." ||
+				reference === ".." ||
+				reference?.startsWith("./") ||
+				reference?.startsWith("../")
+			)
+				pending.push({
+					target: resolve(dirname(candidate), reference),
+					lookup: /(?:\/(?:\.{1,2})?|^\.{1,2})$/.test(reference)
+						? "directory"
+						: "commonjs",
+				});
+		});
 	}
 }
 
