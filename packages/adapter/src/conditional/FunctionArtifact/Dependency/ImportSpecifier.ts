@@ -64,12 +64,23 @@ export function findRuntimePackageImports(
 			if (!isRelativeSpecifier(specifier)) return undefined;
 			const local = URL.parse(specifier, url);
 			if (local?.protocol !== "file:") return undefined;
-			const sourceUrl = pathToFileURL(fileURLToPath(local));
-			const source = sources.get(sourceUrl.href);
+			let sourcePath: string;
+			try {
+				sourcePath = fileURLToPath(local);
+			} catch (error) {
+				if (
+					error instanceof URIError ||
+					error instanceof TypeError
+				)
+					return undefined;
+				throw error;
+			}
+			const instance = pathToFileURL(sourcePath);
+			const source = sources.get(instance.href);
 			if (!source) return undefined;
-			// Preserve the URL suffix for ESM instance identity, including an empty query.
-			const suffix = local.href.match(/[?#].*$/)?.[0] ?? "";
-			const instance = new URL(sourceUrl.href + suffix);
+			// Match Node's file resolution by retaining only nonempty query and fragment values.
+			instance.search = local.search;
+			instance.hash = local.hash;
 			if (!modules.has(instance.href))
 				addModule(instance, source.program, source.path);
 			return modules.get(instance.href)?.namespace;

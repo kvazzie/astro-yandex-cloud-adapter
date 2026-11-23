@@ -932,6 +932,8 @@ describe("Function Artifact mutation plans", () => {
 				"import * as ns from './imported.mjs';",
 				"import * as ns from './diamond.mjs';",
 				"import * as ns from './same-instance.mjs';",
+				"import * as ns from './empty-query.mjs';",
+				"import * as ns from './empty-fragment.mjs';",
 			] as const
 		).flatMap((consumer) =>
 			(["bundle", "install"] as const).map(
@@ -970,10 +972,62 @@ describe("Function Artifact mutation plans", () => {
 				"export * from './bridge.mjs?one#same';export * from '././br%69dge.mjs?one#same';",
 			);
 			await writeFile(
+				new URL("empty-query.mjs", f.server),
+				"export * from './bridge.mjs';export * from './bridge.mjs?';",
+			);
+			await writeFile(
+				new URL("empty-fragment.mjs", f.server),
+				"export * from './bridge.mjs';export * from './bridge.mjs#';",
+			);
+			await writeFile(
 				new URL("index.js", f.server),
 				consumer +
 					'const {runtime: proc = process}=ns; const name="custom";export const value=proc.getBuiltinModule(name);' +
 					f.index,
+			);
+			const before = await snapshot(f.directory);
+			const resolve = vi.fn(() =>
+				Promise.reject(new Error("Unexpected registry lookup")),
+			);
+			await Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					{ ...settings, dependencyStrategy },
+					{ resolve },
+				),
+			);
+			expect(resolve).not.toHaveBeenCalled();
+			expect(await snapshot(f.directory)).toEqual(before);
+		},
+	);
+
+	it.each(
+		["./optional%zz.mjs", "./optional%2Fmodule.mjs"].flatMap(
+			(specifier) =>
+				(["bundle", "install"] as const).map(
+					(dependencyStrategy) => ({
+						specifier,
+						dependencyStrategy,
+					}),
+				),
+		),
+	)(
+		"leaves undecodable optional local imports unresolved: %j",
+		async ({ specifier, dependencyStrategy }) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				`async function loadOptional() {
+				try {
+					const optional = await import(${JSON.stringify(specifier)});
+					return optional.runtime;
+				} catch {
+					return undefined;
+				}
+			}
+			export const optional = loadOptional();
+			${f.index}`,
 			);
 			const before = await snapshot(f.directory);
 			const resolve = vi.fn(() =>
