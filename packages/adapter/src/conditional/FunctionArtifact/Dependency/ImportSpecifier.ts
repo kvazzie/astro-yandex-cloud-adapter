@@ -108,7 +108,7 @@ export function findRuntimePackageImports(
 		modules.set(url.href, {
 			namespace: emittedNamespace(
 				program,
-				bindings.bindingRole,
+				bindings.bindingValue,
 				resolveImport,
 			),
 			inspect: () => {
@@ -745,11 +745,16 @@ function visitSyntax(
 	}
 }
 
+interface ExportBinding {
+	role?: LoaderRole;
+	isDefined?: () => boolean;
+}
+
 interface EmittedNamespace {
 	resolve(
 		name: string,
 		seen: Set<unknown>,
-	): { role: LoaderRole | undefined } | undefined;
+	): ExportBinding | undefined;
 }
 
 function exportName(value: unknown): string | undefined {
@@ -761,20 +766,22 @@ function exportName(value: unknown): string | undefined {
 /** Resolve a static export back to its lexical binding without evaluating either module. */
 function emittedNamespace(
 	program: SyntaxNode,
-	bindingRole: (
+	bindingValue: (
 		value: unknown,
-		seen?: Set<unknown>,
-	) => LoaderRole | undefined,
+		seen: Set<unknown>,
+	) => ExportBinding,
 	resolveImport: (specifier: string) => LoaderRole | undefined,
 ): EmittedNamespace {
-	type ReadRole = (seen: Set<unknown>) => LoaderRole | undefined;
-	const exports = new Map<string, ReadRole>();
+	const exports = new Map<
+		string,
+		(seen: Set<unknown>) => ExportBinding
+	>();
 	const stars: Array<() => LoaderRole | undefined> = [];
 	for (const statement of program.body as SyntaxNode[]) {
 		const { declaration, source } = statement;
 		if (statement.type === "ExportDefaultDeclaration") {
 			exports.set("default", (seen) =>
-				bindingRole(declaration, seen),
+				bindingValue(declaration, seen),
 			);
 			continue;
 		}
@@ -788,7 +795,11 @@ function emittedNamespace(
 			specifier ? resolveImport(specifier) : undefined;
 		if (statement.type === "ExportAllDeclaration") {
 			const name = exportName(statement.exported);
-			if (name) exports.set(name, imported);
+			if (name)
+				exports.set(name, () => ({
+					role: imported(),
+					isDefined: () => true,
+				}));
 			else stars.push(imported);
 			continue;
 		}
@@ -801,7 +812,7 @@ function emittedNamespace(
 						typeof id.name === "string"
 					)
 						exports.set(id.name, (seen) =>
-							bindingRole(id, seen),
+							bindingValue(id, seen),
 						);
 					else if (
 						id.type === "ObjectPattern" &&
@@ -825,7 +836,7 @@ function emittedNamespace(
 					bindPattern(d.id);
 			} else {
 				const name = exportName(declaration.id);
-				if (name) exports.set(name, () => undefined);
+				if (name) exports.set(name, () => ({}));
 			}
 		}
 		for (const item of statement.specifiers as SyntaxNode[]) {
@@ -834,8 +845,9 @@ function emittedNamespace(
 			if (name && local)
 				exports.set(name, (seen) =>
 					specifier
-						? loaderPropertyRole(imported(), local, seen)
-						: bindingRole(item.local, seen),
+						? (loaderPropertyValue(imported(), local, seen) ??
+							{})
+						: bindingValue(item.local, seen),
 				);
 		}
 	}
@@ -847,7 +859,7 @@ function emittedNamespace(
 			keys.set(name, key);
 			const path = new Set(seen).add(key);
 			const explicit = exports.get(name);
-			if (explicit) return { role: explicit(path) };
+			if (explicit) return explicit(path);
 			if (name !== "default")
 				for (const target of stars) {
 					const namespace = target();
@@ -904,6 +916,17 @@ function loaderPropertyRole(
 	return undefined;
 }
 
+function loaderPropertyValue(
+	role: LoaderRole | undefined,
+	property: unknown,
+	seen: Set<unknown>,
+): ExportBinding | undefined {
+	if (typeof role === "object" && typeof property === "string")
+		return role.resolve(property, seen);
+	const selectedRole = loaderPropertyRole(role, property, seen);
+	return selectedRole ? { role: selectedRole } : undefined;
+}
+
 function isLoaderPattern(
 	value: unknown,
 	role?: LoaderRole,
@@ -952,13 +975,20 @@ function runtimeLoaderBindings(
 		value: unknown,
 		seen?: Set<unknown>,
 	) => LoaderRole | undefined;
+	bindingValue: (
+		value: unknown,
+		seen: Set<unknown>,
+	) => ExportBinding;
 	isUnbound: (value: unknown) => boolean;
 	sameBinding: (a: unknown, b: unknown) => boolean;
 	isStableBinding: (value: SyntaxNode) => boolean;
 } {
 	interface Binding {
 		value?: unknown;
-		importRole?: (seen: Set<unknown>) => LoaderRole | undefined;
+		importValue?: (
+			seen: Set<unknown>,
+		) => ExportBinding | undefined;
+		lexicalInitializer?: boolean;
 		role?: LoaderRole;
 		property?: string;
 		fallback?: unknown;
@@ -1149,7 +1179,10 @@ function runtimeLoaderBindings(
 								scope === target &&
 								ancestors.at(-2)?.type === "BlockStatement",
 						}
-					: { value: node.init },
+					: {
+							value: node.init,
+							lexicalInitializer: parent?.kind !== "var",
+						},
 			);
 		}
 		if (
@@ -1160,11 +1193,11 @@ function runtimeLoaderBindings(
 			if (!source) return;
 			for (const item of node.specifiers as SyntaxNode[]) {
 				declarePattern(item.local, scope, {
-					importRole: (seen) => {
+					importValue: (seen) => {
 						const imported = resolveImport(source);
 						if (item.type === "ImportNamespaceSpecifier")
-							return imported;
-						return loaderPropertyRole(
+							return { role: imported, isDefined: () => true };
+						return loaderPropertyValue(
 							imported,
 							item.type === "ImportDefaultSpecifier"
 								? "default"
@@ -1321,7 +1354,7 @@ function runtimeLoaderBindings(
 							return "process";
 					}
 					const role =
-						record.importRole?.(seen) ??
+						record.importValue?.(seen)?.role ??
 						record.role ??
 						roleOf(record.value, new Set(seen));
 					if (record.restExcludes) {
@@ -1335,10 +1368,21 @@ function runtimeLoaderBindings(
 								}
 							: undefined;
 					}
-					return record.property !== undefined
-						? (loaderPropertyRole(role, record.property, seen) ??
-								roleOf(record.fallback, new Set(seen)))
-						: role;
+					if (record.property === undefined) return role;
+					const selected = loaderPropertyValue(
+						role,
+						record.property,
+						seen,
+					);
+					if (selected?.role) return selected.role;
+					// An ordinary defined value does not take the initializer.
+					const fallback = roleOf(
+						record.fallback,
+						new Set(seen),
+					);
+					return fallback && !selected?.isDefined?.()
+						? fallback
+						: undefined;
 				};
 				return read(binding);
 			}
@@ -1413,8 +1457,46 @@ function runtimeLoaderBindings(
 			return "process";
 		return undefined;
 	};
+	const isDefinitelyDefined = (
+		value: unknown,
+		seen: Set<unknown>,
+	): boolean => {
+		if (!isSyntaxNode(value) || seen.has(value)) return false;
+		const path = new Set(seen).add(value);
+		if (
+			[
+				"Literal",
+				"TemplateLiteral",
+				"ObjectExpression",
+				"ArrayExpression",
+				"ArrowFunctionExpression",
+				"FunctionExpression",
+				"ClassExpression",
+			].includes(value.type)
+		)
+			return true;
+		if (value.type !== "Identifier") return false;
+		const binding = lookup(value);
+		if (!binding || path.has(binding) || !isStableBinding(value))
+			return false;
+		path.add(binding);
+		if (binding.importValue)
+			return binding.importValue(path)?.isDefined?.() === true;
+		return Boolean(
+			binding.lexicalInitializer &&
+			binding.property === undefined &&
+			!binding.restExcludes &&
+			isDefinitelyDefined(binding.value, path),
+		);
+	};
 	return {
 		bindingRole: roleOf,
+		bindingValue(value, seen) {
+			const role = roleOf(value, new Set(seen));
+			return role
+				? { role }
+				: { isDefined: () => isDefinitelyDefined(value, seen) };
+		},
 		isUnbound,
 		sameBinding,
 		isStableBinding,

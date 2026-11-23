@@ -405,6 +405,22 @@ describe("Function Artifact mutation plans", () => {
 					"export const label='fixture';",
 					"import * as ns from './bridge.js';const {missing:proc=process}=ns;",
 				],
+				[
+					"export const runtime=undefined;",
+					"import * as ns from './bridge.js';const {runtime:proc=process}=ns;",
+				],
+				[
+					"export const runtime=void 0;",
+					"import * as ns from './bridge.js';const {runtime:proc=process}=ns;",
+				],
+				[
+					"export let runtime={};runtime=undefined;",
+					"import * as ns from './bridge.js';const {runtime:proc=process}=ns;",
+				],
+				[
+					"if(false){var runtime={}}export {runtime};",
+					"import * as ns from './bridge.js';const {runtime:proc=process}=ns;",
+				],
 			] as const
 		).flatMap(([bridge, consumer, file]) =>
 			(["bundle", "install"] as const).map(
@@ -475,6 +491,62 @@ describe("Function Artifact mutation plans", () => {
 					"node_modules/example": { version: "1.2.3" },
 				},
 			});
+		},
+	);
+
+	it.each(
+		(
+			[
+				"import * as ns from './bridge.mjs';",
+				"import {createRequire} from 'node:module';const ns=createRequire(import.meta.url)('./bridge.mjs');",
+				"import * as bridge from './bridge.mjs';const {...ns}=bridge;",
+				"import * as ns from './origin.mjs';",
+				"import * as ns from './imported.mjs';",
+			] as const
+		).flatMap((consumer) =>
+			(["bundle", "install"] as const).map(
+				(dependencyStrategy) => ({
+					consumer,
+					dependencyStrategy,
+				}),
+			),
+		),
+	)(
+		"keeps a defined ordinary export instead of its loader default: %j",
+		async ({ consumer, dependencyStrategy }) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("bridge.mjs", f.server),
+				'const ordinary={getBuiltinModule(name){return "ordinary:"+name}};export {ordinary as runtime};',
+			);
+			await writeFile(
+				new URL("origin.mjs", f.server),
+				"export {runtime} from './bridge.mjs';",
+			);
+			await writeFile(
+				new URL("imported.mjs", f.server),
+				"import {runtime as imported} from './bridge.mjs';export const runtime=imported;",
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				consumer +
+					'const {runtime: proc = process}=ns; const name="custom";export const value=proc.getBuiltinModule(name);' +
+					f.index,
+			);
+			const before = await snapshot(f.directory);
+			const resolve = vi.fn(() =>
+				Promise.reject(new Error("Unexpected registry lookup")),
+			);
+			await Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					{ ...settings, dependencyStrategy },
+					{ resolve },
+				),
+			);
+			expect(resolve).not.toHaveBeenCalled();
+			expect(await snapshot(f.directory)).toEqual(before);
 		},
 	);
 
