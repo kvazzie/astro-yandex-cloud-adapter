@@ -10,6 +10,7 @@ import {
 	isSyntaxNode,
 	localModuleReferences,
 	parseModule,
+	readIdentifierBindings,
 	visitSyntax,
 	type SyntaxNode,
 } from "../../.emittedModules.ts";
@@ -311,7 +312,10 @@ export async function hasRuntimeImageCalls(
 		let imageCall = false;
 		const bindings = new Set(localImageExports.get(url));
 		const imports = new Set<string>();
-		const namespaces = new Map<string, ReadonlySet<string>>();
+		const namespaces = new Map<
+			SyntaxNode,
+			ReadonlySet<string>
+		>();
 		visitSyntax(module.syntax, (node) => {
 			if (
 				node.type !== "ImportDeclaration" ||
@@ -342,7 +346,7 @@ export async function hasRuntimeImageCalls(
 				)
 					continue;
 				if (specifier.type === "ImportNamespaceSpecifier") {
-					namespaces.set(specifier.local.name, exported);
+					namespaces.set(specifier.local, exported);
 					continue;
 				}
 				if (!isSyntaxNode(specifier.imported)) continue;
@@ -353,6 +357,9 @@ export async function hasRuntimeImageCalls(
 					bindings.add(specifier.local.name);
 			}
 		});
+		const identifierBinding = namespaces.size
+			? readIdentifierBindings(module.syntax)
+			: undefined;
 		visitSyntax(module.syntax, (node) => {
 			if (
 				node.type !== "CallExpression" ||
@@ -378,9 +385,11 @@ export async function hasRuntimeImageCalls(
 				isSyntaxNode(callee.property) &&
 				typeof callee.property.name === "string"
 			) {
+				const declaration = identifierBinding?.(callee.object);
 				imageCall ||=
+					declaration !== undefined &&
 					namespaces
-						.get(callee.object.name)
+						.get(declaration)
 						?.has(callee.property.name) === true;
 			}
 		});

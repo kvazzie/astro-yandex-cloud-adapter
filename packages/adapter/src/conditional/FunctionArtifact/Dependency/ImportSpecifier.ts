@@ -1,6 +1,12 @@
 import {
 	getStaticString,
+	isSyntaxNode,
+	lookupLexicalBinding,
 	parseModule,
+	readLexicalScopes,
+	visitSyntax,
+	type LexicalScope,
+	type SyntaxNode,
 } from "../../../.emittedModules.ts";
 import { isBuiltin } from "node:module";
 import { basename, dirname, extname, resolve } from "node:path";
@@ -781,39 +787,6 @@ function isIdentifier(value: unknown, name: string): boolean {
 	);
 }
 
-interface SyntaxNode {
-	type: string;
-	[property: string]: unknown;
-}
-
-function isSyntaxNode(value: unknown): value is SyntaxNode {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		"type" in value &&
-		typeof value.type === "string"
-	);
-}
-
-function visitSyntax(
-	node: SyntaxNode,
-	visitor: (node: SyntaxNode, ancestors: SyntaxNode[]) => void,
-	ancestors: SyntaxNode[] = [],
-): void {
-	visitor(node, ancestors);
-	const nextAncestors = [...ancestors, node];
-	for (const value of Object.values(node)) {
-		if (isSyntaxNode(value))
-			visitSyntax(value, visitor, nextAncestors);
-		else if (Array.isArray(value)) {
-			for (const child of value) {
-				if (isSyntaxNode(child))
-					visitSyntax(child, visitor, nextAncestors);
-			}
-		}
-	}
-}
-
 interface ExportBinding {
 	origin?: object;
 	role?: LoaderRole;
@@ -1119,13 +1092,7 @@ function runtimeLoaderBindings(
 		bodyScope?: Scope;
 		direct?: boolean;
 	}
-	interface Scope {
-		parent?: Scope;
-		varScope: boolean;
-		bindings: Map<string, Binding>;
-		parameters?: Map<string, Binding>;
-	}
-	const scopes = new Map<SyntaxNode, Scope>();
+	type Scope = LexicalScope<Binding>;
 	const declarePattern = (
 		value: unknown,
 		scope: Scope,
@@ -1186,160 +1153,98 @@ function runtimeLoaderBindings(
 			}
 		}
 	};
-	visitSyntax(program, (node, ancestors) => {
-		const parent = ancestors.at(-1);
-		const outer =
-			parent?.type === "SwitchStatement" &&
-			parent.discriminant === node
-				? scopes.get(parent)?.parent
-				: parent
-					? scopes.get(parent)
-					: undefined;
-		const isFunction =
-			/^(?:FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(
-				node.type,
-			);
-		// Parameter expressions cannot observe the separate body var environment.
-		const separatesParameters =
-			node.type === "BlockStatement" &&
-			parent?.body === node &&
-			Array.isArray(parent.params) &&
-			parent.params.some((param: unknown) => {
-				if (!isSyntaxNode(param)) return false;
-				let expression = false;
-				visitSyntax(param, (child) => {
-					if (
-						child.type === "AssignmentPattern" ||
-						(child.type === "Property" && child.computed)
-					)
-						expression = true;
-				});
-				return expression;
-			});
-		const isVarScope =
-			isFunction ||
-			node.type === "StaticBlock" ||
-			separatesParameters;
-		if (
-			(node.type === "FunctionDeclaration" ||
-				node.type === "ClassDeclaration") &&
-			outer
-		)
-			declarePattern(node.id, outer);
-		const scope: Scope =
-			!outer ||
-			isVarScope ||
-			[
-				"BlockStatement",
-				"ClassDeclaration",
-				"ClassExpression",
-				"CatchClause",
-				"ForStatement",
-				"ForInStatement",
-				"ForOfStatement",
-				"SwitchStatement",
-			].includes(node.type)
-				? {
-						parent: outer,
-						varScope: !outer || isVarScope,
-						parameters: separatesParameters
-							? outer?.bindings
-							: undefined,
-						bindings: separatesParameters
-							? new Map(outer?.bindings)
-							: new Map<string, Binding>(),
-					}
-				: outer;
-		scopes.set(node, scope);
-		if (
-			node.type === "ClassDeclaration" ||
-			node.type === "ClassExpression"
-		)
-			declarePattern(node.id, scope);
-		if (isFunction) {
-			declarePattern(node.id, scope);
-			if (Array.isArray(node.params))
-				for (const param of node.params)
-					declarePattern(param, scope);
-		}
-		if (node.type === "CatchClause")
-			declarePattern(node.param, scope);
-		if (node.type === "VariableDeclarator") {
-			let target = scope;
-			if (parent?.kind === "var")
-				while (!target.varScope && target.parent)
-					target = target.parent;
+	const scopes = readLexicalScopes<Binding>(
+		program,
+		(node, scope, outer, ancestors, isFunction) => {
+			const parent = ancestors.at(-1);
 			if (
-				parent?.kind === "var" &&
-				node.init === null &&
-				isSyntaxNode(node.id) &&
-				node.id.type === "Identifier" &&
-				typeof node.id.name === "string" &&
-				target.bindings.has(node.id.name)
+				(node.type === "FunctionDeclaration" ||
+					node.type === "ClassDeclaration") &&
+				outer
 			)
-				return;
-			const name = isSyntaxNode(node.id)
-				? node.id.name
-				: undefined;
-			const previous =
-				parent?.kind === "var" &&
-				typeof name === "string" &&
-				target.parameters?.has(name)
-					? target.bindings.get(name)
-					: undefined;
-			declarePattern(
-				node.id,
-				target,
-				previous
-					? {
-							value: node.init,
-							previous,
-							declaration: node,
-							bodyScope: target,
-							direct:
-								scope === target &&
-								ancestors.at(-2)?.type === "BlockStatement",
-						}
-					: {
-							value: node.init,
-							lexicalInitializer: parent?.kind !== "var",
-						},
-			);
-		}
-		if (
-			node.type === "ImportDeclaration" &&
-			Array.isArray(node.specifiers)
-		) {
-			const source = getStaticString(node.source);
-			if (!source) return;
-			for (const item of node.specifiers as SyntaxNode[]) {
-				declarePattern(item.local, scope, {
-					importValue: (seen) => {
-						const imported = resolveImport(source);
-						if (item.type === "ImportNamespaceSpecifier")
-							return { role: imported, isDefined: () => true };
-						return loaderPropertyValue(
-							imported,
-							item.type === "ImportDefaultSpecifier"
-								? "default"
-								: exportName(item.imported),
-							seen,
-						);
-					},
-				});
+				declarePattern(node.id, outer);
+			if (
+				node.type === "ClassDeclaration" ||
+				node.type === "ClassExpression"
+			)
+				declarePattern(node.id, scope);
+			if (isFunction) {
+				declarePattern(node.id, scope);
+				if (Array.isArray(node.params))
+					for (const param of node.params)
+						declarePattern(param, scope);
 			}
-		}
-	});
-	const lookup = (value: SyntaxNode): Binding | undefined => {
-		if (typeof value.name !== "string") return undefined;
-		let scope = scopes.get(value);
-		while (scope) {
-			const binding = scope.bindings.get(value.name);
-			if (binding) return binding;
-			scope = scope.parent;
-		}
-		return undefined;
-	};
+			if (node.type === "CatchClause")
+				declarePattern(node.param, scope);
+			if (node.type === "VariableDeclarator") {
+				let target = scope;
+				if (parent?.kind === "var")
+					while (!target.varScope && target.parent)
+						target = target.parent;
+				if (
+					parent?.kind === "var" &&
+					node.init === null &&
+					isSyntaxNode(node.id) &&
+					node.id.type === "Identifier" &&
+					typeof node.id.name === "string" &&
+					target.bindings.has(node.id.name)
+				)
+					return;
+				const name = isSyntaxNode(node.id)
+					? node.id.name
+					: undefined;
+				const previous =
+					parent?.kind === "var" &&
+					typeof name === "string" &&
+					target.parameters?.has(name)
+						? target.bindings.get(name)
+						: undefined;
+				declarePattern(
+					node.id,
+					target,
+					previous
+						? {
+								value: node.init,
+								previous,
+								declaration: node,
+								bodyScope: target,
+								direct:
+									scope === target &&
+									ancestors.at(-2)?.type === "BlockStatement",
+							}
+						: {
+								value: node.init,
+								lexicalInitializer: parent?.kind !== "var",
+							},
+				);
+			}
+			if (
+				node.type === "ImportDeclaration" &&
+				Array.isArray(node.specifiers)
+			) {
+				const source = getStaticString(node.source);
+				if (!source) return;
+				for (const item of node.specifiers as SyntaxNode[]) {
+					declarePattern(item.local, scope, {
+						importValue: (seen) => {
+							const imported = resolveImport(source);
+							if (item.type === "ImportNamespaceSpecifier")
+								return { role: imported, isDefined: () => true };
+							return loaderPropertyValue(
+								imported,
+								item.type === "ImportDefaultSpecifier"
+									? "default"
+									: exportName(item.imported),
+								seen,
+							);
+						},
+					});
+				}
+			}
+		},
+	);
+	const lookup = (value: SyntaxNode) =>
+		lookupLexicalBinding(scopes, value);
 	const isUnbound = (value: unknown): boolean =>
 		isSyntaxNode(value) &&
 		value.type === "Identifier" &&

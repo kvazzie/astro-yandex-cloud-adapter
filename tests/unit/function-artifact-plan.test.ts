@@ -6302,19 +6302,61 @@ ${f.index}`,
 		expect(await snapshot(f.directory)).toEqual(before);
 	});
 
-	it.each([true, false])(
-		"recognizes only the Astro image wrapper through a namespace (%s)",
-		async (astroAssets) => {
+	it.each([
+		{
+			name: "Astro wrapper",
+			body: "export const image = images.renderImage({});",
+			expected: true,
+		},
+		{
+			name: "unrelated namespace",
+			body: "export const image = images.renderImage({});",
+			unrelated: true,
+			expected: false,
+		},
+		{
+			name: "shadowing parameter",
+			body: "export const image = (images) => images.renderImage({});",
+			expected: false,
+		},
+		{
+			name: "destructured parameter",
+			body: "export const image = ({images}) => images.renderImage({});",
+			expected: false,
+		},
+		{
+			name: "hoisted variable",
+			body: "export function image() { return images.renderImage({}); var images; }",
+			expected: false,
+		},
+		{
+			name: "shadowing block",
+			body: "export function image() { { const images = {}; return images.renderImage({}); } }",
+			expected: false,
+		},
+		{
+			name: "unshadowed nested call",
+			body: "export function image() { { const images = {}; } return images.renderImage({}); }",
+			expected: true,
+		},
+		{
+			name: "parameter initializer",
+			body: "export function image(value = images.renderImage({})) { var images; return value; }",
+			expected: true,
+		},
+	])(
+		"recognizes Astro image calls through the imported namespace binding: $name",
+		async ({ body, unrelated, expected }) => {
 			const f = await fixture();
 			await writeFile(
 				new URL("foo.js", f.server),
-				"import * as images from './assets.mjs'; export const image = images.renderImage({});",
+				`import * as images from './assets.mjs'; export {images}; ${body}`,
 			);
 			await writeFile(
 				new URL("assets.mjs", f.server),
-				astroAssets
-					? 'export const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function getImage(config){return service.getURL(config)} export {getImage as renderImage};'
-					: 'export function renderImage(){return "unrelated";}',
+				unrelated
+					? 'export function renderImage(){return "unrelated";}'
+					: 'export const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function getImage(config){return service.getURL(config)} export {getImage as renderImage};',
 			);
 			expect(
 				await hasRuntimeImageCalls(
@@ -6331,7 +6373,7 @@ ${f.index}`,
 					],
 					new Map(),
 				),
-			).toBe(astroAssets);
+			).toBe(expected);
 		},
 	);
 
