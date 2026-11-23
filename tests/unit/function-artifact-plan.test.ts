@@ -7120,9 +7120,10 @@ ${f.index}`,
 		name: string;
 		files: Record<string, string>;
 		pattern?: unknown;
+		manifest?: Record<string, unknown>;
 		omitted?: string;
 		omissionAllowed?: boolean;
-		required: string;
+		required?: string;
 		imported?: string;
 	};
 	it.each<ArchiveResolutionCase>([
@@ -7238,11 +7239,194 @@ ${f.index}`,
 					specifier === "./nested" ? "file" : "directory",
 			}),
 		),
+		...[
+			"./../outside.cjs",
+			"./dist/%2e%2e/invalid.cjs",
+			"./node_modules/invalid.cjs",
+		].map((invalid) => ({
+			name: "skips an invalid package export target " + invalid,
+			manifest: { exports: [invalid, "./dist/entry.cjs"] },
+			files: {
+				"dist/entry.cjs": 'module.exports = "array entry";',
+			},
+			omitted: "dist/entry.cjs",
+			required: "array entry",
+		})),
+		{
+			name: "does not fall through a valid missing export target",
+			manifest: { exports: ["./missing.cjs", "./fallback.cjs"] },
+			files: { "fallback.cjs": 'module.exports = "fallback";' },
+			omitted: "fallback.cjs",
+			omissionAllowed: true,
+		},
+		{
+			name: "checks the root index after an unresolved legacy main",
+			manifest: {
+				exports: undefined,
+				main: "./dist/missing.js",
+			},
+			files: {
+				"index.js": 'module.exports = require("./helper.cjs");',
+				"helper.cjs": 'module.exports = "legacy fallback";',
+			},
+			omitted: "helper.cjs",
+			required: "legacy fallback",
+		},
+		{
+			name: "retains Node's legacy main priority over a root index",
+			manifest: { exports: undefined, main: "./dist/entry" },
+			files: {
+				"index.js": 'module.exports = require("./unused.cjs");',
+				"unused.cjs": 'module.exports = "unused";',
+				"dist/entry.js": 'module.exports = "legacy main";',
+			},
+			omitted: "unused.cjs",
+			omissionAllowed: true,
+			required: "legacy main",
+		},
+		{
+			name: "follows an extensionless exact ESM entry",
+			manifest: { exports: "./entry", type: "module" },
+			files: {
+				entry:
+					'import value from "./helper.js"; export { value }; export default value;',
+				"helper.js": 'export default "extensionless exact";',
+			},
+			omitted: "helper.js",
+			imported: "extensionless exact",
+			required: "extensionless exact",
+		},
+		{
+			name: "treats an extensionless URL asset as payload",
+			manifest: { exports: "./index.mjs", type: "module" },
+			files: {
+				"index.mjs":
+					'export default new URL("./notes", import.meta.url).pathname.endsWith("notes") ? "asset" : "other";',
+				notes: 'require("./unused.cjs");',
+				"unused.cjs": 'module.exports = "unused";',
+			},
+			omitted: "unused.cjs",
+			omissionAllowed: true,
+			required: "asset",
+		},
+		...(["exact", "pattern", "require"] as const).map(
+			(mode) => ({
+				name: "checks a local private import using " + mode,
+				manifest:
+					mode === "require"
+						? {
+								imports: {
+									"#feature": {
+										import: "./unreachable.cjs",
+										require: "./features/actual.cjs",
+									},
+								},
+							}
+						: {
+								exports: "./index.mjs",
+								imports:
+									mode === "pattern"
+										? { "#feature/*": "./features/*.cjs" }
+										: { "#feature": "./features/actual.cjs" },
+							},
+				files: Object.fromEntries([
+					mode === "require"
+						? [
+								"index.cjs",
+								'module.exports = require("#feature");',
+							]
+						: [
+								"index.mjs",
+								"export { default } from " +
+									JSON.stringify(
+										mode === "pattern"
+											? "#feature/actual"
+											: "#feature",
+									) +
+									";",
+							],
+					[
+						"features/actual.cjs",
+						'module.exports = "private entry";',
+					],
+				]),
+				omitted: "features/actual.cjs",
+				required: "private entry",
+			}),
+		),
+		{
+			name: "uses the importing file's own package scope",
+			files: {
+				"index.cjs":
+					'module.exports = require("./nested/index.cjs");',
+				"nested/index.cjs":
+					'module.exports = require("#feature");',
+				"nested/package.json":
+					'{"imports":{"#feature":"./actual.cjs"}}',
+				"nested/actual.cjs":
+					'module.exports = "nested private entry";',
+			},
+			omitted: "nested/actual.cjs",
+			required: "nested private entry",
+		},
+		{
+			name: "preserves the manifest needed by a private import",
+			files: {
+				"index.cjs":
+					'module.exports = require("./nested/index.cjs");',
+				"nested/index.cjs":
+					'module.exports = require("#feature");',
+				"nested/package.json":
+					'{"imports":{"#feature":"./actual.cjs"}}',
+				"nested/actual.cjs":
+					'module.exports = "nested private entry";',
+			},
+			omitted: "nested/package.json",
+			required: "nested private entry",
+		},
+		{
+			name: "does not interpret an external private import as a local path",
+			manifest: {
+				exports: "./index.mjs",
+				imports: { "#os-path": ["path", "./unused.cjs"] },
+			},
+			files: {
+				"index.mjs":
+					'import value from "#os-path"; export default typeof value.join;',
+				"unused.cjs": 'module.exports = "unused";',
+			},
+			omitted: "unused.cjs",
+			omissionAllowed: true,
+			required: "function",
+		},
+		{
+			name: "ignores CommonJS loader names shadowed by parameters",
+			files: {
+				"index.cjs":
+					'function render(require) { return require("./fixture.cjs"); } module.exports = render(x => x); return;',
+				"fixture.cjs": 'module.exports = "unused";',
+			},
+			omitted: "fixture.cjs",
+			omissionAllowed: true,
+			required: "./fixture.cjs",
+		},
+		{
+			name: "retains explicit Node createRequire bindings",
+			manifest: { exports: "./index.mjs" },
+			files: {
+				"index.mjs":
+					'import { createRequire } from "node:module"; const require = createRequire(import.meta.url); export default require("./helper.cjs");',
+				"helper.cjs": 'module.exports = "explicit loader";',
+			},
+			omitted: "helper.cjs",
+			required: "explicit loader",
+		},
 	])(
 		"validates Node archive resolution ($name)",
 		async ({
 			files,
 			pattern,
+			manifest,
 			omitted,
 			omissionAllowed,
 			required,
@@ -7264,6 +7448,7 @@ ${f.index}`,
 					exports: pattern
 						? { "./features/*": pattern }
 						: "./index.cjs",
+					...manifest,
 					files: Object.keys(files).filter(
 						(path) => path !== omitted,
 					),
@@ -7279,7 +7464,20 @@ ${f.index}`,
 			const require = createRequire(
 				new URL("package.json", f.root),
 			);
-			expect(require(specifier)).toBe(required);
+			if (required === undefined) {
+				expect(() => {
+					require(specifier);
+				}).toThrow(/Cannot find module/);
+			} else {
+				const loaded: unknown = require(specifier);
+				const value =
+					loaded &&
+					typeof loaded === "object" &&
+					"default" in loaded
+						? loaded.default
+						: loaded;
+				expect(value).toBe(required);
+			}
 			if (imported !== undefined) {
 				const result = await promisify(execFile)(
 					process.execPath,

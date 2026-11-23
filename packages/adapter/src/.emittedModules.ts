@@ -261,6 +261,42 @@ export function getStaticString(
 	return typeof cooked === "string" ? cooked : undefined;
 }
 
+/** Reads the fixed specifier of a syntax-level module edge. */
+export function staticModuleReference(
+	node: SyntaxNode,
+): string | undefined {
+	if (
+		node.type === "ImportDeclaration" ||
+		node.type === "ExportNamedDeclaration" ||
+		node.type === "ExportAllDeclaration" ||
+		node.type === "ImportExpression"
+	)
+		return getStaticString(node.source);
+}
+
+export function staticLocalAssetReference(
+	node: SyntaxNode,
+): string | undefined {
+	if (
+		node.type !== "NewExpression" ||
+		!isSyntaxNode(node.callee) ||
+		node.callee.type !== "Identifier" ||
+		node.callee.name !== "URL" ||
+		!Array.isArray(node.arguments)
+	)
+		return;
+	const [source, base] = node.arguments as unknown[];
+	const reference = getStaticString(source);
+	if (
+		reference?.startsWith(".") &&
+		isSyntaxNode(base) &&
+		base.type === "MemberExpression" &&
+		isSyntaxNode(base.object) &&
+		base.object.type === "MetaProperty"
+	)
+		return reference;
+}
+
 /** Collects the fixed local module and asset edges of Astro's emitted graph. */
 export function localModuleReferences(
 	source: string | SyntaxNode,
@@ -269,33 +305,10 @@ export function localModuleReferences(
 	const syntax =
 		typeof source === "string" ? parseModule(source) : source;
 	visitSyntax(syntax, (node) => {
-		if (
-			node.type === "ImportDeclaration" ||
-			node.type === "ExportNamedDeclaration" ||
-			node.type === "ExportAllDeclaration" ||
-			node.type === "ImportExpression"
-		) {
-			const source = getStaticString(node.source);
-			if (source?.startsWith(".")) references.add(source);
-		}
-		if (
-			node.type === "NewExpression" &&
-			isSyntaxNode(node.callee) &&
-			node.callee.type === "Identifier" &&
-			node.callee.name === "URL" &&
-			Array.isArray(node.arguments)
-		) {
-			const [source, base] = node.arguments as unknown[];
-			if (
-				getStaticString(source)?.startsWith(".") &&
-				isSyntaxNode(base) &&
-				base.type === "MemberExpression" &&
-				isSyntaxNode(base.object) &&
-				base.object.type === "MetaProperty"
-			) {
-				references.add(getStaticString(source)!);
-			}
-		}
+		const module = staticModuleReference(node);
+		if (module?.startsWith(".")) references.add(module);
+		const asset = staticLocalAssetReference(node);
+		if (asset !== undefined) references.add(asset);
 	});
 	return [...references];
 }

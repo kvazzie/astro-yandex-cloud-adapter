@@ -21,12 +21,14 @@ import { glob } from "tinyglobby";
 import {
 	getStaticString,
 	isSyntaxNode,
-	localModuleReferences,
 	parseModule,
+	staticLocalAssetReference,
+	staticModuleReference,
 	visitSyntax,
 	type SyntaxNode,
 } from "../../../.emittedModules.ts";
 import type { PlannedFile } from "../.types.ts";
+import { readRuntimeRequireBindings } from "./ImportSpecifier.ts";
 import type { ResolvedRuntimeDependency } from "./Metadata.ts";
 import type { RegistryVersionMetadata } from "./Registry.ts";
 
@@ -97,29 +99,47 @@ function packedFiles(bytes: Buffer): Map<string, Buffer> {
 	throw new Error("Invalid npm tarball end marker.");
 }
 
-type ArchiveLookup = "exact" | "commonjs" | "directory";
+type ArchiveLookup =
+	"exact" | "commonjs" | "directory" | "asset";
 type ArchiveRequest = { target: string; lookup: ArchiveLookup };
 
-// Validate the default Node conditions for both runtime loaders.
-const nodeExportConditions = [
-	new Set(["node", "node-addons", "module-sync", "import"]),
-	new Set(["node", "node-addons", "module-sync", "require"]),
-];
+// The Function Artifact uses Node's default runtime loader conditions.
+const nodeConditions = {
+	import: new Set([
+		"node",
+		"node-addons",
+		"module-sync",
+		"import",
+	]),
+	require: new Set([
+		"node",
+		"node-addons",
+		"module-sync",
+		"require",
+	]),
+};
 
-function selectedExportTarget(
+type PackageTarget = URL | "external" | false;
+
+function selectedPackageTarget(
 	target: unknown,
 	conditions: ReadonlySet<string>,
-): string | null | false | undefined {
+	resolveTarget: (value: string) => PackageTarget,
+): PackageTarget | null | undefined {
 	if (target === null) return null;
-	if (typeof target === "string")
-		return target.startsWith("./") ? target : false;
+	if (typeof target === "string") return resolveTarget(target);
 	if (Array.isArray(target)) {
 		let fallback: null | false | undefined = target.length
 			? undefined
 			: null;
 		for (const item of target as unknown[]) {
-			const selected = selectedExportTarget(item, conditions);
-			if (typeof selected === "string") return selected;
+			const selected = selectedPackageTarget(
+				item,
+				conditions,
+				resolveTarget,
+			);
+			if (selected instanceof URL || selected === "external")
+				return selected;
 			if (selected !== undefined) fallback = selected;
 		}
 		return fallback;
@@ -127,10 +147,128 @@ function selectedExportTarget(
 	if (!target || typeof target !== "object") return false;
 	for (const [key, value] of Object.entries(target)) {
 		if (key !== "default" && !conditions.has(key)) continue;
-		const selected = selectedExportTarget(value, conditions);
+		const selected = selectedPackageTarget(
+			value,
+			conditions,
+			resolveTarget,
+		);
 		if (selected !== undefined) return selected;
 	}
 	return undefined;
+}
+
+function invalidPackageSegment(path: string): boolean {
+	return path.split(/[/\\]/).some((segment) => {
+		try {
+			return /^(?:\.{1,2}|node_modules)$/i.test(
+				decodeURIComponent(segment),
+			);
+		} catch (error) {
+			if (!(error instanceof URIError)) throw error;
+			return false;
+		}
+	});
+}
+
+function packageTarget(
+	value: string,
+	packageURL: URL,
+	capture?: string,
+	allowExternal = false,
+): PackageTarget {
+	if (!value.startsWith("./"))
+		return allowExternal &&
+			value.length > 0 &&
+			!value.startsWith("../") &&
+			!value.startsWith("/") &&
+			!URL.canParse(value)
+			? "external"
+			: false;
+	if (
+		invalidPackageSegment(value.slice(2)) ||
+		(capture !== undefined && invalidPackageSegment(capture))
+	)
+		return false;
+	const target = new URL(value, packageURL);
+	if (!target.pathname.startsWith(packageURL.pathname))
+		return false;
+	return capture === undefined
+		? target
+		: new URL(target.href.replaceAll("*", () => capture));
+}
+
+function packageFilePath(url: URL): string | undefined {
+	if (/%2f|%5c/i.test(url.pathname)) return undefined;
+	try {
+		return fileURLToPath(url);
+	} catch (error) {
+		if (!(
+			error instanceof URIError || error instanceof TypeError
+		))
+			throw error;
+	}
+}
+
+function packagePatterns(keys: readonly string[]) {
+	return keys
+		.flatMap((key) => {
+			const match = /^([^*]*)\*([^*]*)$/.exec(key);
+			return match
+				? [{ key, prefix: match[1]!, suffix: match[2]! }]
+				: [];
+		})
+		.sort(
+			(a, b) =>
+				b.prefix.length - a.prefix.length ||
+				b.key.length - a.key.length,
+		);
+}
+
+function patternMatches(
+	subpath: string,
+	{ prefix, suffix }: { prefix: string; suffix: string },
+): boolean {
+	return (
+		subpath.startsWith(prefix) &&
+		subpath.endsWith(suffix) &&
+		subpath.length > prefix.length + suffix.length
+	);
+}
+
+function resolvePrivateImport(
+	specifier: string,
+	imports: unknown,
+	packageURL: URL,
+	mode: keyof typeof nodeConditions,
+) {
+	if (
+		specifier === "#" ||
+		specifier.startsWith("#/") ||
+		specifier.endsWith("/") ||
+		!imports ||
+		typeof imports !== "object" ||
+		Array.isArray(imports)
+	)
+		return;
+	const map = imports as Record<string, unknown>;
+	let key = specifier;
+	let capture: string | undefined;
+	if (key.includes("*") || !Object.hasOwn(map, key)) {
+		const match = packagePatterns(Object.keys(map)).find(
+			(pattern) => patternMatches(specifier, pattern),
+		);
+		if (!match) return;
+		key = match.key;
+		capture = specifier.slice(
+			match.prefix.length,
+			specifier.length - match.suffix.length,
+		);
+	}
+	return selectedPackageTarget(
+		map[key],
+		nodeConditions[mode],
+		(value) => packageTarget(value, packageURL, capture, true),
+	);
 }
 
 async function manifestEntrypoints(
@@ -148,76 +286,66 @@ async function manifestEntrypoints(
 		)
 			? Object.entries(manifest.exports)
 			: [[".", manifest.exports] as const];
-	const patterns = exportMap
-		.flatMap(([key]) => {
-			const match = /^(\.\/[^*]*)\*([^*]*)$/.exec(key);
-			return match
-				? [{ key, prefix: match[1]!, suffix: match[2]! }]
-				: [];
-		})
-		.sort(
-			(a, b) =>
-				b.prefix.length - a.prefix.length ||
-				b.key.length - a.key.length,
-		);
+	const patterns = packagePatterns(
+		exportMap
+			.map(([key]) => key)
+			.filter((key) => key.startsWith("./")),
+	);
 	const exactExports = new Set(exportMap.map(([key]) => key));
 	const targets: { key: string; match: RegExp }[] = [];
-	const addExport = (value: string, key: string) => {
-		try {
-			const url = new URL(value, packageURL);
-			if (!url.pathname.startsWith(packageURL.pathname)) return;
-			const subpath = url.pathname.slice(
-				packageURL.pathname.length,
-			);
-			if (/%2f|%5c/i.test(subpath)) return;
-			if (
-				!patterns.some((pattern) => pattern.key === key) ||
-				!subpath.includes("*")
-			) {
-				entries.set(fileURLToPath(url), "exact");
-				return;
-			}
-			const parts = subpath
-				.split("*")
-				.map((part) =>
-					decodeURIComponent(part).replace(
-						/[.*+?^${}()|[\]\\]/g,
-						"\\$&",
-					),
-				);
-			// All target stars substitute the same (possibly nested) subpath.
-			const match = new RegExp(
-				`^${parts[0]}([\\s\\S]+?)${parts.slice(1).join("(?:\\1)")}$`,
-			);
-			targets.push({ key, match });
-		} catch (error) {
-			if (!(
-				error instanceof URIError || error instanceof TypeError
-			))
-				throw error;
+	const addExport = (url: URL, key: string) => {
+		const file = packageFilePath(url);
+		if (!file) return;
+		const subpath = url.pathname.slice(
+			packageURL.pathname.length,
+		);
+		if (
+			!patterns.some((pattern) => pattern.key === key) ||
+			!subpath.includes("*")
+		) {
+			entries.set(file, "exact");
+			return;
 		}
+		const parts = subpath
+			.split("*")
+			.map((part) =>
+				decodeURIComponent(part).replace(
+					/[.*+?^{}$()|[\]\\]/g,
+					"\\$&",
+				),
+			);
+		// All target stars substitute the same (possibly nested) subpath.
+		const match = new RegExp(
+			"^" +
+				parts[0] +
+				"([\\s\\S]+?)" +
+				parts.slice(1).join("(?:\\1)") +
+				"$",
+		);
+		targets.push({ key, match });
 	};
 	if (
 		manifest.exports === undefined ||
 		manifest.exports === null
 	) {
-		const main = manifest.main;
-		entries.set(
-			join(
-				directory,
-				typeof main === "string" ? main : "index.js",
-			),
-			"commonjs",
-		);
+		entries.set(directory, "directory");
 	} else {
 		for (const [key, target] of exportMap) {
-			const selected = new Set(
-				nodeExportConditions.map((conditions) =>
-					selectedExportTarget(target, conditions),
-				),
-			);
-			for (const value of selected)
-				if (typeof value === "string") addExport(value, key);
+			const seen = new Set<string>();
+			for (const conditions of Object.values(nodeConditions)) {
+				const selected = selectedPackageTarget(
+					target,
+					conditions,
+					(value) => packageTarget(value, packageURL),
+				);
+				if (
+					selected instanceof URL &&
+					!seen.has(selected.href)
+				) {
+					seen.add(selected.href);
+					addExport(selected, key);
+				}
+			}
 		}
 	}
 	const bins =
@@ -240,11 +368,8 @@ async function manifestEntrypoints(
 				if (!capture) continue;
 				const subpath = key.replace("*", () => capture);
 				if (exactExports.has(subpath)) continue;
-				const selected = patterns.find(
-					({ prefix, suffix }) =>
-						subpath.startsWith(prefix) &&
-						subpath.endsWith(suffix) &&
-						subpath.length > prefix.length + suffix.length,
+				const selected = patterns.find((pattern) =>
+					patternMatches(subpath, pattern),
 				);
 				if (selected?.key === key)
 					entries.set(join(directory, file), "exact");
@@ -338,28 +463,37 @@ async function verifyLocalRuntimeFiles(
 		}
 		return loaded;
 	};
-	const moduleType = (metadata?: Record<string, unknown>) =>
-		metadata?.type === "module" || metadata?.type === "commonjs"
-			? metadata.type
-			: undefined;
-	const selectedModuleType = async (candidate: string) => {
-		let installed:
-			| { path: string; type: ReturnType<typeof moduleType> }
-			| undefined;
-		let archivedType: ReturnType<typeof moduleType>;
+	function* scopeManifests(candidate: string) {
 		for (
 			let scope = dirname(candidate);
 			scope === directory || archivePath(scope);
 			scope = dirname(scope)
 		) {
-			if (basename(scope) === "node_modules") break;
-			const path = join(scope, "package.json");
+			if (
+				scope !== directory &&
+				basename(scope) === "node_modules"
+			)
+				break;
+			yield join(scope, "package.json");
+			if (scope === directory) break;
+		}
+	}
+	const sourceScope = async (candidate: string) => {
+		for (const path of scopeManifests(candidate)) {
+			const metadata = await installedManifest(path);
+			if (metadata) return { path, metadata };
+		}
+	};
+	const moduleType = (metadata?: Record<string, unknown>) =>
+		metadata?.type === "module" || metadata?.type === "commonjs"
+			? metadata.type
+			: undefined;
+	const selectedModuleType = async (candidate: string) => {
+		const installed = await sourceScope(candidate);
+		const type = moduleType(installed?.metadata);
+		let archivedType: ReturnType<typeof moduleType>;
+		for (const path of scopeManifests(candidate)) {
 			const packed = files.get(archivePath(path)!);
-			if (!installed) {
-				const metadata = await installedManifest(path);
-				if (metadata)
-					installed = { path, type: moduleType(metadata) };
-			}
 			if (packed) {
 				archivedType = moduleType(
 					JSON.parse(packed.toString("utf8")) as Record<
@@ -369,11 +503,10 @@ async function verifyLocalRuntimeFiles(
 				);
 				break;
 			}
-			if (scope === directory) break;
 		}
-		if (installed && installed.type !== archivedType)
+		if (installed && type !== archivedType)
 			requirePacked(installed.path);
-		return installed?.type;
+		return type;
 	};
 	const visited = new Set<string>();
 	while (pending.length) {
@@ -392,7 +525,7 @@ async function verifyLocalRuntimeFiles(
 		let directoryManifest: string | undefined;
 		if (
 			!candidate &&
-			lookup !== "exact" &&
+			(lookup === "commonjs" || lookup === "directory") &&
 			(target === directory || archivePath(target))
 		) {
 			const manifestPath = join(target, "package.json");
@@ -413,7 +546,7 @@ async function verifyLocalRuntimeFiles(
 		const extension = extname(candidate);
 		if (
 			![".js", ".mjs", ".cjs"].includes(extension) &&
-			!(extension === "" && lookup !== "exact")
+			!(extension === "" && lookup !== "asset")
 		)
 			continue;
 		const format =
@@ -437,20 +570,37 @@ async function verifyLocalRuntimeFiles(
 			continue;
 		}
 		const url = pathToFileURL(candidate);
-		for (const reference of localModuleReferences(syntax)) {
+		const addLocalReference = (
+			reference: string,
+			lookup: "exact" | "asset",
+		) => {
 			try {
-				pending.push({
-					target: fileURLToPath(new URL(reference, url)),
-					lookup: "exact",
-				});
+				const path = packageFilePath(new URL(reference, url));
+				if (path) pending.push({ target: path, lookup });
 			} catch (error) {
 				if (!(
 					error instanceof URIError || error instanceof TypeError
 				))
 					throw error;
 			}
-		}
+		};
+		const privateImports: {
+			specifier: string;
+			mode: keyof typeof nodeConditions;
+		}[] = [];
+		let isRuntimeRequire:
+			ReturnType<typeof readRuntimeRequireBindings> | undefined;
 		visitSyntax(syntax, (node) => {
+			const module = staticModuleReference(node);
+			if (module?.startsWith("."))
+				addLocalReference(module, "exact");
+			if (module?.startsWith("#"))
+				privateImports.push({
+					specifier: module,
+					mode: "import",
+				});
+			const asset = staticLocalAssetReference(node);
+			if (asset !== undefined) addLocalReference(asset, "asset");
 			if (
 				node.type !== "CallExpression" ||
 				!isSyntaxNode(node.callee) ||
@@ -460,18 +610,56 @@ async function verifyLocalRuntimeFiles(
 				return;
 			const reference = getStaticString(node.arguments[0]);
 			if (
+				reference === undefined ||
+				!(reference.startsWith(".") || reference.startsWith("#"))
+			)
+				return;
+			isRuntimeRequire ??= readRuntimeRequireBindings(
+				syntax,
+				syntax.sourceType === "script",
+			);
+			if (!isRuntimeRequire(node.callee)) return;
+			if (reference.startsWith("#")) {
+				privateImports.push({
+					specifier: reference,
+					mode: "require",
+				});
+			} else if (
 				reference === "." ||
 				reference === ".." ||
-				reference?.startsWith("./") ||
-				reference?.startsWith("../")
-			)
+				reference.startsWith("./") ||
+				reference.startsWith("../")
+			) {
 				pending.push({
 					target: resolve(dirname(candidate), reference),
 					lookup: /(?:\/(?:\.{1,2})?|^\.{1,2})$/.test(reference)
 						? "directory"
 						: "commonjs",
 				});
+			}
 		});
+		if (privateImports.length) {
+			const scope = await sourceScope(candidate);
+			if (!scope) continue;
+			const packageURL = pathToFileURL(
+				dirname(scope.path) + sep,
+			);
+			for (const { specifier, mode } of privateImports) {
+				const selected = resolvePrivateImport(
+					specifier,
+					scope.metadata.imports,
+					packageURL,
+					mode,
+				);
+				if (selected instanceof URL || selected === "external")
+					requirePacked(scope.path);
+				if (selected instanceof URL) {
+					const path = packageFilePath(selected);
+					if (path)
+						pending.push({ target: path, lookup: "exact" });
+				}
+			}
+		}
 	}
 }
 

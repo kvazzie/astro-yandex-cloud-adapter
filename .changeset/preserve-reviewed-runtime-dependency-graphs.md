@@ -2,4 +2,4 @@
 "@astro-yandex-cloud/adapter": patch
 ---
 
-Preserve selected installed dependency contexts, npm's wildcard choice, and optional bundled declarations. Detect local archives that omit statically referenced runtime files, including files selected by URL-decoded export patterns, Node's default import and require conditions, and CommonJS file and directory lookups. Report unpinned external peers of tarball-owned bundles during planning. Recognize fixed bracket-form loader URLs and namespace-qualified Astro image calls through their import bindings.
+Preserve selected installed dependency contexts, npm's wildcard choice, and optional bundled declarations. Detect local archives that omit statically referenced runtime files, including files selected by URL-decoded export patterns, Node's default import and require conditions, CommonJS file and directory lookups, and local package-private imports. Report unpinned external peers of tarball-owned bundles during planning. Recognize fixed bracket-form loader URLs and namespace-qualified Astro image calls through their import bindings.

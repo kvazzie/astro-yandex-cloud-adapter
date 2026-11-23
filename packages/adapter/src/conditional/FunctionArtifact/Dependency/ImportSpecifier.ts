@@ -1055,6 +1055,21 @@ function isLoaderPattern(
 	);
 }
 
+/** Distinguishes Node loaders from variables that happen to be named require. */
+export function readRuntimeRequireBindings(
+	program: SyntaxNode,
+	commonjs: boolean,
+) {
+	const { bindingRole } = runtimeLoaderBindings(
+		program,
+		builtinModuleRole,
+		() => undefined,
+		commonjs,
+	);
+	return (callee: SyntaxNode) =>
+		bindingRole(callee) === "require";
+}
+
 /** Resolve lexical bindings before inspecting calls, including declarations after a use. */
 function runtimeLoaderBindings(
 	program: SyntaxNode,
@@ -1063,6 +1078,7 @@ function runtimeLoaderBindings(
 		specifier: string,
 		seen: Set<unknown>,
 	) => LoaderRole | undefined,
+	commonjs = false,
 ): {
 	bindingRole: (
 		value: unknown,
@@ -1156,6 +1172,8 @@ function runtimeLoaderBindings(
 	const scopes = readLexicalScopes<Binding>(
 		program,
 		(node, scope, outer, ancestors, isFunction) => {
+			if (commonjs && node.type === "Program")
+				scope.bindings.set("require", { role: "require" });
 			const parent = ancestors.at(-1);
 			if (
 				(node.type === "FunctionDeclaration" ||
