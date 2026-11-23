@@ -23,8 +23,8 @@
     package = pkgs.nodejs_22;
     pnpm = {
       enable = true;
-      # Repo pins pnpm@10 via `packageManager`; keep Nix pnpm on v10.
-      package = pkgs.pnpm_10;
+      # The bootstrap pnpm selects the exact version in packageManager.
+      package = pkgs.pnpm_12;
       install.enable = true;
     };
   };
