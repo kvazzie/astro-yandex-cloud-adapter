@@ -6284,6 +6284,10 @@ ${f.index}`,
 				throw new Error(`Expected ${name} under ${owner}`);
 			return location;
 		};
+		for (const owner of ["node_modules/a", "node_modules/b"])
+			expect(packages[owner]?.dependencies?.shared).toBe(
+				"1.0.0",
+			);
 		const sharedA = lookup("node_modules/a", "shared");
 		const sharedB = lookup("node_modules/b", "shared");
 		expect(sharedA).not.toBe(sharedB);
@@ -7004,6 +7008,113 @@ ${f.index}`,
 		},
 	);
 
+	it.each([
+		{
+			mode: "pattern target omitted",
+			excluded: "src/features/a.js",
+		},
+		{
+			mode: "pattern import omitted",
+			excluded: "src/helper.js",
+		},
+		{ mode: "pattern complete" },
+		{
+			mode: "directory main omitted",
+			excluded: "nested/main.cjs",
+		},
+		{
+			mode: "directory manifest omitted",
+			excluded: "nested/package.json",
+		},
+		{ mode: "directory complete" },
+	])(
+		"validates resolver-selected local archive files ($mode)",
+		async ({ mode, excluded }) => {
+			const f = await fixture();
+			const linked = new URL("packages/linked/", f.root);
+			const pattern = mode.startsWith("pattern");
+			const files: Record<string, string> = pattern
+				? {
+						"src/features/a.js":
+							'export { default } from "../helper.js";',
+						"src/features/internal/private.js":
+							'export default "private";',
+						"src/helper.js": 'export default "pattern helper";',
+					}
+				: {
+						"index.cjs": 'module.exports = require("./nested");',
+						"nested/package.json": '{"main":"main.cjs"}',
+						"nested/main.cjs":
+							'module.exports = "selected main";',
+						"nested/index.js":
+							'module.exports = "fallback index";',
+					};
+			for (const [path, contents] of Object.entries(files)) {
+				await mkdir(new URL(".", new URL(path, linked)), {
+					recursive: true,
+				});
+				await writeFile(new URL(path, linked), contents);
+			}
+			await writeFile(
+				new URL("package.json", linked),
+				JSON.stringify({
+					name: "linked",
+					version: "1.0.0",
+					type: pattern ? "module" : "commonjs",
+					exports: pattern
+						? {
+								"./features/*": {
+									default: "./src/features/*.js",
+								},
+								"./features/internal/*": null,
+							}
+						: "./index.cjs",
+					files: Object.keys(files).filter(
+						(path) =>
+							path !== excluded &&
+							path !== "src/features/internal/private.js",
+					),
+				}),
+			);
+			await mkdir(new URL("node_modules/", f.root));
+			await symlink(
+				linked,
+				new URL("node_modules/linked", f.root),
+				"dir",
+			);
+			const specifier = pattern ? "linked/features/a" : "linked";
+			const require = createRequire(
+				new URL("package.json", f.root),
+			);
+			if (pattern)
+				expect(require.resolve(specifier)).toBe(
+					fileURLToPath(new URL("src/features/a.js", linked)),
+				);
+			else expect(require(specifier)).toBe("selected main");
+			await writeFile(
+				new URL("index.js", f.server),
+				`import '${specifier}';${f.index}`,
+			);
+			const before = await snapshot(f.directory);
+			const planning = Effect.runPromise(
+				FunctionArtifact.planPreparation(f.build, f.routePlan, {
+					...settings,
+					dependencyStrategy: "install",
+					includeLocal: true,
+				}),
+			);
+			if (excluded)
+				await expect(planning).rejects.toThrow(
+					`omits ${excluded}`,
+				);
+			else
+				expect(
+					(await planning).plannedOutput.functions,
+				).toHaveLength(1);
+			expect(await snapshot(f.directory)).toEqual(before);
+		},
+	);
+
 	it.each(["ancestor marker", "empty shadow"] as const)(
 		"detects local provenance for the installed ancestor package: %s",
 		async (mode) => {
@@ -7687,13 +7798,16 @@ ${f.index}`,
 		});
 	});
 	it.each([
-		"next",
-		"npm:real-child@next",
-		"*",
-		"npm:real-child@*",
+		["next", "2.0.0-beta.2"],
+		["npm:real-child@next", "2.0.0-beta.2"],
+		["latest", "2.0.0-beta.1"],
+		["*", "2.0.0-beta.1"],
+		["npm:real-child@*", "2.0.0-beta.1"],
 	])(
 		"pins an absent optional dependency from registry tag %s",
-		async (range) => {
+		async (range, version) => {
+			const tarball = (version: string) =>
+				`https://registry.example/child-${version}.tgz`;
 			const f = await fixture();
 			await writeFile(
 				new URL("index.js", f.server),
@@ -7729,15 +7843,17 @@ ${f.index}`,
 							? "real-child"
 							: "child",
 						"dist-tags": {
-							next: "2.0.0-beta.1",
+							next: "2.0.0-beta.2",
 							latest: "2.0.0-beta.1",
 						},
 						versions: {
 							"2.0.0-beta.1": {
 								version: "2.0.0-beta.1",
-								dist: {
-									tarball: "https://registry.example/child.tgz",
-								},
+								dist: { tarball: tarball("2.0.0-beta.1") },
+							},
+							"2.0.0-beta.2": {
+								version: "2.0.0-beta.2",
+								dist: { tarball: tarball("2.0.0-beta.2") },
 							},
 							"3.0.0": { version: "3.0.0" },
 						},
@@ -7757,6 +7873,8 @@ ${f.index}`,
 				vi.stubEnv("NPM_CONFIG_REGISTRY", fixtureRegistry);
 				vi.stubEnv("npm_config_offline", "false");
 				vi.stubEnv("NPM_CONFIG_OFFLINE", "false");
+				vi.stubEnv("npm_config_tag", "latest");
+				vi.stubEnv("NPM_CONFIG_TAG", "latest");
 				await writeFile(
 					new URL(".npmrc", f.root),
 					`registry=http://127.0.0.1:${address.port}/\n`,
@@ -7791,17 +7909,17 @@ ${f.index}`,
 				expect(
 					lock.packages["node_modules/child"],
 				).toMatchObject({
-					version: "2.0.0-beta.1",
+					version,
 					optional: true,
-					resolved: "https://registry.example/child.tgz",
+					resolved: tarball(version),
 				});
 				expect(
 					lock.packages["node_modules/example"]
 						?.optionalDependencies?.child,
 				).toBe(
 					range.startsWith("npm:")
-						? "npm:real-child@2.0.0-beta.1"
-						: "2.0.0-beta.1",
+						? `npm:real-child@${version}`
+						: version,
 				);
 			} finally {
 				await new Promise<void>((resolve, reject) =>

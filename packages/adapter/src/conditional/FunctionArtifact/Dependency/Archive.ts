@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import {
 	dirname,
 	extname,
@@ -7,6 +7,7 @@ import {
 	join,
 	posix,
 	relative,
+	resolve,
 	sep,
 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -14,6 +15,7 @@ import { gunzipSync } from "node:zlib";
 
 import pack from "libnpmpack";
 import semver from "semver";
+import { glob } from "tinyglobby";
 
 import {
 	getStaticString,
@@ -93,21 +95,97 @@ function packedFiles(bytes: Buffer): Map<string, Buffer> {
 	throw new Error("Invalid npm tarball end marker.");
 }
 
-function manifestEntrypoints(
+async function manifestEntrypoints(
+	directory: string,
 	manifest: Record<string, unknown>,
-): string[] {
+): Promise<string[]> {
 	const entries = new Set<string>();
-	const add = (value: unknown) => {
-		if (typeof value === "string") entries.add(value);
-		else if (value && typeof value === "object")
+	const exportMap =
+		manifest.exports && typeof manifest.exports === "object"
+			? Object.entries(manifest.exports)
+			: [];
+	const patterns = exportMap
+		.flatMap(([key]) => {
+			const match = /^(\.\/[^*]*)\*([^*]*)$/.exec(key);
+			return match
+				? [{ key, prefix: match[1]!, suffix: match[2]! }]
+				: [];
+		})
+		.sort(
+			(a, b) =>
+				b.prefix.length - a.prefix.length ||
+				b.key.length - a.key.length,
+		);
+	const exactExports = new Set(exportMap.map(([key]) => key));
+	const targets: { key: string; match: RegExp }[] = [];
+	const add = (value: unknown, pattern?: string) => {
+		if (typeof value === "string") {
+			if (
+				!pattern ||
+				!value.startsWith("./") ||
+				!value.includes("*")
+			) {
+				entries.add(value);
+				return;
+			}
+			const parts = value
+				.slice(2)
+				.split("*")
+				.map((part) =>
+					part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+				);
+			// All target stars substitute the same (possibly nested) subpath.
+			const match = new RegExp(
+				`^${parts[0]}([\\s\\S]+?)${parts.slice(1).join("(?:\\1)")}$`,
+			);
+			targets.push({ key: pattern, match });
+		} else if (value && typeof value === "object") {
 			for (const [condition, target] of Object.entries(value))
-				if (condition !== "types") add(target);
+				if (condition !== "types") add(target, pattern);
+		}
 	};
 	if (manifest.exports === undefined)
 		add(manifest.main ?? "index.js");
-	add(manifest.exports);
+	else if (exportMap.some(([key]) => key.startsWith("."))) {
+		for (const [key, target] of exportMap)
+			add(
+				target,
+				patterns.some((pattern) => pattern.key === key)
+					? key
+					: undefined,
+			);
+	} else add(manifest.exports);
 	add(manifest.bin);
+
+	if (targets.length) {
+		for (const file of await glob("**/*", {
+			cwd: directory,
+			dot: true,
+			followSymbolicLinks: false,
+			ignore: ["**/node_modules/**"],
+		})) {
+			for (const { key, match } of targets) {
+				const capture = match.exec(file)?.[1];
+				if (!capture) continue;
+				const subpath = key.replace("*", () => capture);
+				if (exactExports.has(subpath)) continue;
+				const selected = patterns.find(
+					({ prefix, suffix }) =>
+						subpath.startsWith(prefix) &&
+						subpath.endsWith(suffix) &&
+						subpath.length > prefix.length + suffix.length,
+				);
+				if (selected?.key === key) entries.add(file);
+			}
+		}
+	}
 	return [...entries];
+}
+
+const commonJsExtensions = [".js", ".json", ".node"];
+
+function missingPath(error: NodeJS.ErrnoException): boolean {
+	return error.code === "ENOENT" || error.code === "ENOTDIR";
 }
 
 /** Stops before publication filtering can turn a statically linked local runtime file into a missing one. */
@@ -119,95 +197,135 @@ async function verifyLocalRuntimeFiles(
 	const manifest = JSON.parse(
 		files.get("package.json")?.toString("utf8") ?? "{}",
 	) as Record<string, unknown>;
-	const pending = manifestEntrypoints(manifest).map((file) => ({
+	const pending = (
+		await manifestEntrypoints(directory, manifest)
+	).map((file) => ({
 		target: join(directory, file),
 		extensionLookup: true,
 	}));
+	const archivePath = (
+		candidate: string,
+	): string | undefined => {
+		const path = relative(directory, candidate);
+		if (
+			!path ||
+			path === ".." ||
+			path.startsWith(".." + sep) ||
+			isAbsolute(path)
+		)
+			return undefined;
+		return path.split(sep).join("/");
+	};
+	const requirePacked = (candidate: string) => {
+		const path = archivePath(candidate)!;
+		const contents = files.get(path);
+		if (contents === undefined)
+			throw new Error(
+				`The npm archive of the local runtime package at ${directory} omits ${path}. Include this file in the package.`,
+			);
+		return contents;
+	};
+	const findFile = async (candidates: readonly string[]) => {
+		for (const candidate of candidates) {
+			const path = archivePath(candidate);
+			if (!path) continue;
+			if (files.has(path)) return candidate;
+			const exists = await stat(candidate).then(
+				(file) => file.isFile(),
+				(error: NodeJS.ErrnoException) => {
+					if (missingPath(error)) return false;
+					throw error;
+				},
+			);
+			if (exists) return candidate;
+		}
+	};
+	const fileCandidates = (base: string) => [
+		base,
+		...commonJsExtensions.map((extension) => base + extension),
+	];
+	const indexCandidates = (base: string) =>
+		commonJsExtensions.map((extension) =>
+			join(base, "index" + extension),
+		);
 	const visited = new Set<string>();
 	while (pending.length) {
 		const { target, extensionLookup } = pending.pop()!;
 		const key = JSON.stringify([target, extensionLookup]);
 		if (visited.has(key)) continue;
 		visited.add(key);
-		for (const candidate of [
-			target,
-			...(extensionLookup
-				? [
-						target + ".js",
-						target + ".json",
-						target + ".node",
-						join(target, "index.js"),
-					]
-				: []),
-		]) {
-			const path = relative(directory, candidate);
-			if (
-				!path ||
-				path === ".." ||
-				path.startsWith(".." + sep) ||
-				isAbsolute(path)
-			)
-				continue;
-			const contents = files.get(path.split(sep).join("/"));
-			if (contents === undefined) {
-				const exists = await stat(candidate).then(
-					(file) => file.isFile(),
-					(error: NodeJS.ErrnoException) => {
-						if (
-							error.code === "ENOENT" ||
-							error.code === "ENOTDIR"
-						)
-							return false;
+		let candidate = await findFile(
+			extensionLookup ? fileCandidates(target) : [target],
+		);
+		let directoryManifest: string | undefined;
+		if (
+			!candidate &&
+			extensionLookup &&
+			(target === directory || archivePath(target))
+		) {
+			const manifestPath = join(target, "package.json");
+			const source = await readFile(manifestPath, "utf8").catch(
+				(error: NodeJS.ErrnoException) => {
+					if (!missingPath(error)) throw error;
+				},
+			);
+			const localManifest =
+				source === undefined
+					? undefined
+					: (JSON.parse(source) as { main?: unknown } | null);
+			const main = localManifest?.main;
+			if (typeof main === "string" && main) {
+				const entry = resolve(target, main);
+				candidate = await findFile([
+					...fileCandidates(entry),
+					...indexCandidates(entry),
+				]);
+				if (candidate) directoryManifest = manifestPath;
+			}
+			candidate ??= await findFile(indexCandidates(target));
+		}
+		if (!candidate) continue;
+		const contents = requirePacked(candidate);
+		if (directoryManifest) requirePacked(directoryManifest);
+		if (![".js", ".mjs", ".cjs"].includes(extname(candidate)))
+			continue;
+		const source = contents.toString("utf8");
+		const url = pathToFileURL(candidate);
+		try {
+			for (const reference of localModuleReferences(source)) {
+				try {
+					pending.push({
+						target: fileURLToPath(new URL(reference, url)),
+						extensionLookup: false,
+					});
+				} catch (error) {
+					if (!(
+						error instanceof URIError ||
+						error instanceof TypeError
+					))
 						throw error;
-					},
-				);
-				if (exists)
-					throw new Error(
-						`The npm archive of the local runtime package at ${directory} omits ${path}. Include this file in the package.`,
-					);
-				continue;
-			}
-			if (![".js", ".mjs", ".cjs"].includes(extname(path)))
-				break;
-			const source = contents.toString("utf8");
-			const url = pathToFileURL(candidate);
-			try {
-				for (const reference of localModuleReferences(source)) {
-					try {
-						pending.push({
-							target: fileURLToPath(new URL(reference, url)),
-							extensionLookup: false,
-						});
-					} catch (error) {
-						if (!(
-							error instanceof URIError ||
-							error instanceof TypeError
-						))
-							throw error;
-					}
 				}
-				visitSyntax(parseModule(source), (node) => {
-					if (
-						node.type !== "CallExpression" ||
-						!isSyntaxNode(node.callee) ||
-						node.callee.name !== "require" ||
-						!Array.isArray(node.arguments)
-					)
-						return;
-					const reference = getStaticString(node.arguments[0]);
-					if (
-						reference?.startsWith("./") ||
-						reference?.startsWith("../")
-					)
-						pending.push({
-							target: join(dirname(candidate), reference),
-							extensionLookup: true,
-						});
-				});
-			} catch (error) {
-				if (!(error instanceof SyntaxError)) throw error;
 			}
-			break;
+			visitSyntax(parseModule(source), (node) => {
+				if (
+					node.type !== "CallExpression" ||
+					!isSyntaxNode(node.callee) ||
+					node.callee.name !== "require" ||
+					!Array.isArray(node.arguments)
+				)
+					return;
+				const reference = getStaticString(node.arguments[0]);
+				if (
+					reference?.startsWith("./") ||
+					reference?.startsWith("../")
+				)
+					pending.push({
+						target: join(dirname(candidate), reference),
+						extensionLookup: true,
+					});
+			});
+		} catch (error) {
+			if (!(error instanceof SyntaxError)) throw error;
 		}
 	}
 }
