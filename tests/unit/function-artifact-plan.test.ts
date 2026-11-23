@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import {
 	access,
@@ -24,6 +25,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as FunctionArtifact from "../../packages/adapter/src/conditional/FunctionArtifact";
 import * as Options from "../../packages/adapter/src/Options";
 import type { RoutePlan } from "../../packages/adapter/src/mandatory/ArtifactGeneration/RouteRequirements";
+import { hasRuntimeImageCalls } from "../../packages/adapter/src/mandatory/ArtifactGeneration/RuntimeImageRoutes";
 
 const directories: string[] = [];
 const fixtureRegistries: ReturnType<typeof createServer>[] = [];
@@ -820,6 +822,10 @@ describe("Function Artifact mutation plans", () => {
 					"import * as ns from './bridge.js';const {...copy}=ns;copy.runtime=undefined;const {runtime:proc=process}=copy;",
 				],
 				[
+					"export * as runtime from './ordinary-a.mjs';",
+					"import * as ns from './bridge.js';const {...copy}=ns;copy.runtime=undefined;const {runtime:proc=process}=copy;",
+				],
+				[
 					"export const runtime={};",
 					"import * as ns from './bridge.js';const {...copy}=ns;function clear(o){o.runtime=undefined;}clear(copy);const {runtime:proc=process}=copy;",
 				],
@@ -868,7 +874,8 @@ describe("Function Artifact mutation plans", () => {
 			if (
 				bridge.includes('from "./origin.js"') ||
 				bridge.includes("./ordinary-a.mjs?") ||
-				bridge.includes("./ordinary-a.mjs#")
+				bridge.includes("./ordinary-a.mjs#") ||
+				bridge.startsWith("export * as runtime")
 			) {
 				await writeFile(
 					new URL("node_modules/example/index.js", f.root),
@@ -2748,6 +2755,8 @@ describe("Function Artifact mutation plans", () => {
 				const defaultUrl = `http://127.0.0.1:${defaultAddress.port}/`;
 				vi.stubEnv("npm_config_registry", defaultUrl);
 				vi.stubEnv("NPM_CONFIG_REGISTRY", defaultUrl);
+				vi.stubEnv("npm_config_offline", "false");
+				vi.stubEnv("NPM_CONFIG_OFFLINE", "false");
 				const npmrc = `registry=${defaultUrl}\n@corp:registry=${registryUrl}/\n//127.0.0.1:${address.port}/:_authToken=fixture-private-token\n`;
 				await mkdir(
 					new URL("node_modules/@corp/example/", f.root),
@@ -4479,9 +4488,15 @@ describe("Function Artifact mutation plans", () => {
 		},
 	);
 
-	it.each([false, true])(
-		"pins required peers of an absent optional package for clean installation (bundled helper: %s)",
-		async (bundledHelper) => {
+	it.each([
+		"unbundled",
+		"bundled",
+		"undeclared bundled peer",
+	] as const)(
+		"validates the required peers of an absent optional package (%s)",
+		async (mode) => {
+			const bundledHelper = mode !== "unbundled";
+			const bundlePeerOnly = mode === "undeclared bundled peer";
 			const f = await fixture();
 			const archives = new URL("archives/", f.root);
 			await mkdir(archives, { recursive: true });
@@ -4498,10 +4513,15 @@ describe("Function Artifact mutation plans", () => {
 					version: "2.0.0",
 					type: "module",
 					main: "index.js",
-					peerDependencies: { absent: "^3" },
+					...(bundlePeerOnly
+						? {}
+						: { peerDependencies: { absent: "^3" } }),
 					...(bundledHelper
 						? {
 								dependencies: { "bundled-child": "1.0.0" },
+								optionalDependencies: {
+									"bundled-child": "1.0.0",
+								},
 								bundleDependencies: ["bundled-child"],
 							}
 						: {}),
@@ -4549,11 +4569,16 @@ describe("Function Artifact mutation plans", () => {
 							version: "1.0.0",
 							type: "module",
 							main: "index.js",
+							...(bundlePeerOnly
+								? { peerDependencies: { absent: "^3" } }
+								: {}),
 						}),
 					);
 					await writeFile(
 						new URL("index.js", child),
-						'export default " bundled";',
+						bundlePeerOnly
+							? 'export {default} from "absent";'
+							: 'export default " bundled";',
 					);
 				}
 				await promisify(execFile)(
@@ -4585,14 +4610,24 @@ describe("Function Artifact mutation plans", () => {
 					throw new Error(`Bundled ${name} must not be fetched`);
 				return Promise.resolve(selected);
 			});
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(
-					f.build,
-					f.routePlan,
-					{ ...settings, dependencyStrategy: "install" },
-					{ resolve },
-				),
+			const planning = FunctionArtifact.planPreparation(
+				f.build,
+				f.routePlan,
+				{ ...settings, dependencyStrategy: "install" },
+				{ resolve },
 			);
+			if (bundlePeerOnly) {
+				const before = await snapshot(f.directory);
+				await expect(
+					Effect.runPromise(planning),
+				).rejects.toThrow(/bundled.*needs external peer absent/);
+				expect(await snapshot(f.directory)).toEqual(before);
+				expect(
+					resolve.mock.calls.map(([name]) => name),
+				).not.toContain("bundled-child");
+				return;
+			}
+			const plan = await Effect.runPromise(planning);
 			await Effect.runPromise(
 				FunctionArtifact.applyPreparation(plan),
 			);
@@ -4644,6 +4679,25 @@ describe("Function Artifact mutation plans", () => {
 					},
 				},
 			});
+			if (bundledHelper) {
+				const helper = (
+					JSON.parse(lock) as {
+						packages: Record<
+							string,
+							{
+								dependencies?: object;
+								optionalDependencies?: object;
+							}
+						>;
+					}
+				).packages["node_modules/helper"];
+				expect(helper?.optionalDependencies).toMatchObject({
+					"bundled-child": "1.0.0",
+				});
+				expect(helper?.dependencies ?? {}).not.toHaveProperty(
+					"bundled-child",
+				);
+			}
 		},
 	);
 
@@ -6195,32 +6249,91 @@ ${f.index}`,
 				),
 			),
 		);
-		// A flat planner must report the conflict; a nested planner may retain both.
-		if (result._tag === "Left")
-			expect(result.left.message).toMatch(
-				/conflicting versions.*leaf.*1\.1\.0.*1\.2\.0/,
-			);
-		else {
-			const file = result.right.mutations.find(
-				(mutation) =>
-					mutation.kind === "writeFile" &&
-					mutation.path.pathname.endsWith("package-lock.json"),
-			);
-			expect(file?.kind).toBe("writeFile");
-			if (file?.kind !== "writeFile")
-				throw new Error("Expected lockfile");
-			const lock = JSON.parse(file.contents) as {
-				packages: Record<string, { version?: string }>;
-			};
-			const versions = Object.entries(lock.packages)
-				.filter(([path]) => path.endsWith("node_modules/leaf"))
-				.map(([, entry]) => entry.version);
-			expect(versions).toEqual(
-				expect.arrayContaining(["1.1.0", "1.2.0"]),
-			);
+		if (result._tag === "Left") throw result.left;
+		const file = result.right.mutations.find(
+			(mutation) =>
+				mutation.kind === "writeFile" &&
+				mutation.path.pathname.endsWith("package-lock.json"),
+		);
+		if (file?.kind !== "writeFile")
+			throw new Error("Expected lockfile");
+		const { packages } = JSON.parse(file.contents) as {
+			packages: Record<
+				string,
+				{
+					version?: string;
+					dependencies?: Record<string, string>;
+				}
+			>;
+		};
+		const root = fileURLToPath(f.server);
+		const lookup = (owner: string, name: string) => {
+			const paths =
+				createRequire(
+					join(root, owner, "package.json"),
+				).resolve.paths(name) ?? [];
+			const location = paths
+				.map((modules) =>
+					relative(root, join(modules, name)).replaceAll(
+						"\\",
+						"/",
+					),
+				)
+				.find((path) => Object.hasOwn(packages, path));
+			if (!location)
+				throw new Error(`Expected ${name} under ${owner}`);
+			return location;
+		};
+		const sharedA = lookup("node_modules/a", "shared");
+		const sharedB = lookup("node_modules/b", "shared");
+		expect(sharedA).not.toBe(sharedB);
+		for (const [shared, leafVersion] of [
+			[sharedA, "1.1.0"],
+			[sharedB, "1.2.0"],
+		] as const) {
+			expect(packages[shared]).toMatchObject({
+				version: "1.0.0",
+				dependencies: { leaf: leafVersion },
+			});
+			expect(packages[lookup(shared, "leaf")]).toMatchObject({
+				version: leafVersion,
+			});
 		}
 		expect(await snapshot(f.directory)).toEqual(before);
 	});
+
+	it.each([true, false])(
+		"recognizes only the Astro image wrapper through a namespace (%s)",
+		async (astroAssets) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("foo.js", f.server),
+				"import * as images from './assets.mjs'; export const image = images.renderImage({});",
+			);
+			await writeFile(
+				new URL("assets.mjs", f.server),
+				astroAssets
+					? 'export const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function getImage(config){return service.getURL(config)} export {getImage as renderImage};'
+					: 'export function renderImage(){return "unrelated";}',
+			);
+			expect(
+				await hasRuntimeImageCalls(
+					f.server,
+					[
+						{
+							entrypoint: "page:foo",
+							origin: "project",
+							pattern: "/foo",
+							isPrerendered: false,
+						} as Parameters<
+							typeof hasRuntimeImageCalls
+						>[1][number],
+					],
+					new Map(),
+				),
+			).toBe(astroAssets);
+		},
+	);
 
 	it.each(
 		[
@@ -6752,9 +6865,176 @@ ${f.index}`,
 		expect(await snapshot(f.directory)).toEqual(before);
 	});
 
+	it("does not read a malformed lockfile for a builtins-only install artifact", async () => {
+		const f = await fixture();
+		await writeFile(
+			new URL("package-lock.json", f.root),
+			"{ invalid json",
+		);
+		await writeFile(
+			new URL("index.js", f.server),
+			`import 'node:path';${f.index}`,
+		);
+		const before = await snapshot(f.directory);
+		const plan = await Effect.runPromise(
+			FunctionArtifact.planPreparation(f.build, f.routePlan, {
+				...settings,
+				dependencyStrategy: "install",
+			}),
+		);
+		const lock = plan.mutations.find(
+			(file) =>
+				file.kind === "writeFile" &&
+				file.path.pathname.endsWith("package-lock.json"),
+		);
+		if (lock?.kind !== "writeFile")
+			throw new Error("Expected lockfile");
+		expect(
+			Object.keys(
+				(JSON.parse(lock.contents) as { packages: object })
+					.packages,
+			),
+		).toEqual([""]);
+		expect(await snapshot(f.directory)).toEqual(before);
+	});
+
+	it.each([true, false])(
+		"validates omitted local archive files used at runtime (%s)",
+		async (missingRuntimeFile) => {
+			const f = await fixture();
+			const linked = new URL("packages/linked/", f.root);
+			await mkdir(linked, { recursive: true });
+			await mkdir(new URL("node_modules/", f.root));
+			await symlink(
+				linked,
+				new URL("node_modules/linked", f.root),
+				"dir",
+			);
+			await writeFile(
+				new URL("package.json", linked),
+				JSON.stringify({
+					name: "linked",
+					version: "1.0.0",
+					type: "module",
+					exports: {
+						types: "./internal.d.ts",
+						default: "./index.js",
+					},
+					files: missingRuntimeFile
+						? ["index.js"]
+						: ["index.js", "helper.js"],
+					scripts: { prepare: "exit 2" },
+				}),
+			);
+			await writeFile(
+				new URL("index.js", linked),
+				'export { default } from "./helper.js";',
+			);
+			await writeFile(
+				new URL("helper.js", linked),
+				'export default "local helper";',
+			);
+			await writeFile(
+				new URL("internal.d.ts", linked),
+				"export default function run(): string;",
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`import 'linked';${f.index}`,
+			);
+			const before = await snapshot(f.directory);
+			const planning = Effect.runPromise(
+				FunctionArtifact.planPreparation(f.build, f.routePlan, {
+					...settings,
+					dependencyStrategy: "install",
+					includeLocal: true,
+				}),
+			);
+			if (missingRuntimeFile)
+				await expect(planning).rejects.toThrow(
+					/archive.*omits helper\.js/,
+				);
+			else
+				expect(
+					(await planning).plannedOutput.functions,
+				).toHaveLength(1);
+			expect(await snapshot(f.directory)).toEqual(before);
+		},
+	);
+
+	it.each(["ancestor marker", "empty shadow"] as const)(
+		"detects local provenance for the installed ancestor package: %s",
+		async (mode) => {
+			const ancestor = await mkdtemp(
+				join(tmpdir(), "ancestor-package-"),
+			);
+			directories.push(ancestor);
+			const f = await fixture(ancestor);
+			const leaf = join(ancestor, "node_modules", "leaf");
+			await mkdir(leaf, { recursive: true });
+			await writeFile(
+				join(leaf, "package.json"),
+				'{"name":"leaf","version":"1.0.0"}',
+			);
+			await mkdir(new URL("node_modules/parent/", f.root), {
+				recursive: true,
+			});
+			await writeFile(
+				new URL("node_modules/parent/package.json", f.root),
+				'{"name":"parent","version":"1.0.0","dependencies":{"leaf":"^1"}}',
+			);
+			await writeFile(
+				new URL("package.json", f.root),
+				JSON.stringify(
+					mode === "ancestor marker"
+						? {
+								dependencies: { leaf: "^1" },
+								devDependencies: { leaf: "file:./leaf.tgz" },
+							}
+						: { dependencies: { leaf: "file:./leaf.tgz" } },
+				),
+			);
+			if (mode === "ancestor marker") {
+				await writeFile(
+					new URL("node_modules/.modules.yaml", f.root),
+					"layoutVersion: 5\n",
+				);
+				await writeFile(
+					join(ancestor, "node_modules", ".package-lock.json"),
+					"{}",
+				);
+			} else {
+				await mkdir(new URL("node_modules/leaf/", f.root));
+			}
+			await writeFile(
+				new URL("index.js", f.server),
+				`import '${mode === "ancestor marker" ? "leaf" : "parent"}';${f.index}`,
+			);
+			const resolve = vi.fn((_name: string, version: string) =>
+				Promise.resolve({ version }),
+			);
+			const before = await snapshot(ancestor);
+			await expect(
+				Effect.runPromise(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						{ ...settings, dependencyStrategy: "install" },
+						{ resolve },
+					),
+				),
+			).rejects.toThrow(/linked local runtime package "leaf"/);
+			expect(
+				resolve.mock.calls.map(([name]) => name),
+			).not.toContain("leaf");
+			expect(await snapshot(ancestor)).toEqual(before);
+		},
+	);
+
 	it.each(
 		[
 			"import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); if (typeof load === 'function') load('node:fs');",
+			"import {createRequire} from 'node:module'; createRequire(import.meta['url'])('node:fs');",
 			"import {createRequire} from 'node:module'; if (typeof createRequire === 'function') {const load = createRequire(import.meta.url); load('node:fs');}",
 			"if(typeof import.meta.resolve === 'function') import.meta.resolve('node:fs');",
 		].flatMap((source) =>
@@ -7364,7 +7644,12 @@ ${f.index}`,
 			optionalDependencies: { child: "2.1.0" },
 		});
 	});
-	it.each(["next", "npm:real-child@next"])(
+	it.each([
+		"next",
+		"npm:real-child@next",
+		"*",
+		"npm:real-child@*",
+	])(
 		"pins an absent optional dependency from registry tag %s",
 		async (range) => {
 			const f = await fixture();
@@ -7401,7 +7686,10 @@ ${f.index}`,
 						name: range.startsWith("npm:")
 							? "real-child"
 							: "child",
-						"dist-tags": { next: "2.0.0-beta.1" },
+						"dist-tags": {
+							next: "2.0.0-beta.1",
+							latest: "2.0.0-beta.1",
+						},
 						versions: {
 							"2.0.0-beta.1": {
 								version: "2.0.0-beta.1",
@@ -7425,6 +7713,8 @@ ${f.index}`,
 				const fixtureRegistry = `http://127.0.0.1:${address.port}/`;
 				vi.stubEnv("npm_config_registry", fixtureRegistry);
 				vi.stubEnv("NPM_CONFIG_REGISTRY", fixtureRegistry);
+				vi.stubEnv("npm_config_offline", "false");
+				vi.stubEnv("NPM_CONFIG_OFFLINE", "false");
 				await writeFile(
 					new URL(".npmrc", f.root),
 					`registry=http://127.0.0.1:${address.port}/\n`,

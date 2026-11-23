@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { posix } from "node:path";
+import { basename, dirname, join, posix } from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 import semver from "semver";
 
@@ -125,6 +127,70 @@ export const npmRegistry = {
 
 const runCommand = promisify(execFile);
 
+function runNpm(args: string[], appRoot?: URL) {
+	const npmCli = process.env.npm_execpath;
+	const windowsCli =
+		npmCli && basename(npmCli) === "npm-cli.js"
+			? npmCli
+			: join(
+					dirname(process.execPath),
+					"node_modules",
+					"npm",
+					"bin",
+					"npm-cli.js",
+				);
+	return runCommand(
+		process.platform === "win32" ? process.execPath : "npm",
+		process.platform === "win32" ? [windowsCli, ...args] : args,
+		{
+			cwd: appRoot ?? process.cwd(),
+			timeout: 30_000,
+			maxBuffer: 10 * 1024 * 1024,
+			encoding: "utf8",
+		},
+	);
+}
+
+/** Gets the exact optional owner archive with the application's npm registry configuration. */
+export async function readRegistryTarball(
+	specifier: string,
+	appRoot: URL,
+): Promise<Buffer> {
+	const directory = await mkdtemp(
+		join(tmpdir(), "astro-yandex-tarball-"),
+	);
+	try {
+		const { stdout } = await runNpm(
+			[
+				"pack",
+				"--ignore-scripts",
+				"--json",
+				"--pack-destination",
+				directory,
+				"--",
+				specifier,
+			],
+			appRoot,
+		);
+		const [packed] = JSON.parse(stdout) as {
+			filename?: string;
+		}[];
+		if (
+			!packed?.filename ||
+			basename(packed.filename) !== packed.filename
+		)
+			throw new Error("Missing npm tarball filename.");
+		return await readFile(join(directory, packed.filename));
+	} catch {
+		// npm diagnostics may include private configuration.
+		throw new Error(
+			"The install dependency strategy could not inspect a bundled registry tarball.",
+		);
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+}
+
 interface PublishedVersion {
 	bundleDependencies?: boolean | string[];
 	bundledDependencies?: boolean | string[];
@@ -158,7 +224,7 @@ async function fetchRegistryMetadata(
 		: [published];
 	const version =
 		semver.valid(requirement) ??
-		(isRegistryTag(requirement)
+		(requirement === "*" || isRegistryTag(requirement)
 			? semver.valid(versions.at(-1)?.version)
 			: semver.maxSatisfying(
 					versions.flatMap((entry) =>
@@ -212,15 +278,9 @@ async function requestMetadata<T>(
 	appRoot?: URL,
 ): Promise<T> {
 	try {
-		const { stdout } = await runCommand(
-			"npm",
+		const { stdout } = await runNpm(
 			["view", "--json", "--", `${packageName}@${requirement}`],
-			{
-				cwd: appRoot ?? process.cwd(),
-				timeout: 30_000,
-				maxBuffer: 10 * 1024 * 1024,
-				encoding: "utf8",
-			},
+			appRoot,
 		);
 		return JSON.parse(stdout) as T;
 	} catch {

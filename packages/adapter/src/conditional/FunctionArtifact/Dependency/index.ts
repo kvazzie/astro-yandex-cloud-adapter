@@ -14,6 +14,7 @@ import { readFile, realpath } from "node:fs/promises";
 import type { PackageJson } from "pkg-types";
 import npa from "npm-package-arg";
 import semver from "semver";
+import { externalBundledPeers } from "./Archive.ts";
 import {
 	readInstalledSource,
 	readInstalledProvenance,
@@ -31,6 +32,7 @@ import {
 } from "./Metadata.ts";
 import {
 	isRegistryTag,
+	readRegistryTarball,
 	hasInstallLifecycleScripts,
 	normalizePackageBin,
 	normalizeBundleDependencies,
@@ -62,6 +64,7 @@ export async function resolvePinnedRuntimeDependencies(
 	registry: Registry,
 	includeLocal = false,
 ): Promise<ResolvedRuntimeDependency[]> {
+	if (directDependencyNames.size === 0) return [];
 	const appDirectory = await realpath(fileURLToPath(root));
 	const appRoot = pathToFileURL(appDirectory + sep);
 	const appManifestPath = join(appDirectory, "package.json");
@@ -192,6 +195,10 @@ export async function resolvePinnedRuntimeDependencies(
 			metadata: RegistryVersionMetadata;
 			children: Child[];
 		}>
+	>();
+	const bundlePeers = new Map<
+		string,
+		Promise<ReturnType<typeof externalBundledPeers>>
 	>();
 	const identity = (name: string, source: DependencySource) =>
 		source.directory ??
@@ -380,6 +387,7 @@ export async function resolvePinnedRuntimeDependencies(
 						registryName?: string;
 					}) =>
 						(requirement.requirement === undefined ||
+							requirement.requirement === "*" ||
 							isRegistryTag(requirement.requirement) ||
 							semver.satisfies(
 								candidate.version,
@@ -521,6 +529,44 @@ export async function resolvePinnedRuntimeDependencies(
 						optional,
 						peer,
 					});
+				}
+				if (
+					!source.directory &&
+					metadata.bundleDependencies?.length
+				) {
+					const specifier =
+						metadata.resolved ??
+						`${source.registryName ?? packageName}@${source.version}`;
+					const key = JSON.stringify([
+						specifier,
+						metadata.integrity,
+					]);
+					let required = bundlePeers.get(key);
+					if (!required) {
+						required = readRegistryTarball(
+							specifier,
+							appRoot,
+						).then((bytes) =>
+							externalBundledPeers(bytes, metadata.integrity),
+						);
+						bundlePeers.set(key, required);
+					}
+					for (const { child, name, range } of await required) {
+						const provider = children.find(
+							(edge) => edge.name === name && !edge.optional,
+						);
+						if (
+							!provider ||
+							(range !== "*" &&
+								!semver.satisfies(
+									provider.source.version,
+									range,
+								))
+						)
+							throw new Error(
+								`The install dependency strategy cannot pin ${packageName}: bundled ${child} needs external peer ${name}@${range}. Declare that peer on the bundle owner or install the owner before building.`,
+							);
+					}
 				}
 				return { metadata, children };
 			})();
@@ -803,7 +849,7 @@ export async function resolvePinnedRuntimeDependencies(
 					applicationDependencyRequirement(
 						application,
 						name,
-						developmentFirst(source.directory),
+						developmentFirst(source.location),
 					) ?? source.version,
 				).context,
 			}),
@@ -836,12 +882,20 @@ export async function resolvePinnedRuntimeDependencies(
 		const dependencies: Record<string, string> =
 			Object.fromEntries(
 				(metadata.bundleDependencies ?? []).flatMap((name) =>
-					metadata.dependencies?.[name] === undefined
+					metadata.dependencies?.[name] === undefined ||
+					metadata.optionalDependencies?.[name] !== undefined
 						? []
 						: [[name, metadata.dependencies[name]]],
 				),
 			);
-		const optionalDependencies: Record<string, string> = {};
+		const optionalDependencies: Record<string, string> =
+			Object.fromEntries(
+				(metadata.bundleDependencies ?? []).flatMap((name) =>
+					metadata.optionalDependencies?.[name] === undefined
+						? []
+						: [[name, metadata.optionalDependencies[name]]],
+				),
+			);
 		const peerDependencies = { ...metadata.peerDependencies };
 		for (const {
 			name,

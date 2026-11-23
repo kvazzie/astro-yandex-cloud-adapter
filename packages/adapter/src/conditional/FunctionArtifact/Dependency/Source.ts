@@ -75,11 +75,7 @@ export async function readInstalledBindingPath(
 /** Prefer the nearest installation's metadata over the manifest's package manager hint. */
 export async function readRootRequirementPrecedence(
 	appManifestPath: string,
-): Promise<(installedDirectory: string) => boolean> {
-	const rootModules = join(
-		dirname(appManifestPath),
-		"node_modules",
-	);
+): Promise<(installedLocation: string) => boolean> {
 	const inherited = new Map<string, boolean>();
 	for (const modules of createRequire(
 		appManifestPath,
@@ -91,8 +87,6 @@ export async function readRootRequirementPrecedence(
 			try {
 				if (!(await stat(join(modules, marker))).isFile())
 					continue;
-				if (modules === rootModules)
-					return () => developmentFirst;
 				inherited.set(modules, developmentFirst);
 				break;
 			} catch (cause) {
@@ -105,9 +99,9 @@ export async function readRootRequirementPrecedence(
 			}
 		}
 	}
-	return (installedDirectory) => {
+	return (installedLocation) => {
 		for (const [modules, developmentFirst] of inherited) {
-			const path = relative(modules, installedDirectory);
+			const path = relative(modules, installedLocation);
 			if (
 				path &&
 				path !== ".." &&
@@ -121,6 +115,27 @@ export async function readRootRequirementPrecedence(
 	};
 }
 
+async function findInstalledManifest(
+	base: URL | string,
+	name: string,
+) {
+	for (const modules of createRequire(base).resolve.paths(
+		`${name}/package.json`,
+	) ?? []) {
+		const location = join(modules, name);
+		const manifest = await readManifest(
+			join(location, "package.json"),
+		);
+		if (manifest)
+			return {
+				location,
+				manifest,
+				directory: await realpath(location),
+			};
+	}
+	return undefined;
+}
+
 interface BindingProvenance {
 	local: boolean;
 	rootRequirements: Record<string, string>;
@@ -129,7 +144,7 @@ interface BindingProvenance {
 /** Reads installed ownership evidence only; version selection and placement stay in the resolver. */
 export async function readInstalledProvenance(
 	applicationRoot: URL,
-	developmentFirst: (installedDirectory: string) => boolean,
+	developmentFirst: (installedLocation: string) => boolean,
 	overrides: ApplicationOverrides,
 ): Promise<ReadonlyMap<string, BindingProvenance>> {
 	const applicationDirectory = fileURLToPath(applicationRoot);
@@ -191,16 +206,17 @@ export async function readInstalledProvenance(
 		);
 		for (const [name, edge] of ranges) {
 			if (typeof edge.requested !== "string") continue;
-			const selected = await readInstalledBindingPath(
+			const installed = await findInstalledManifest(
 				join(directory, "package.json"),
 				name,
 			);
-			if (!selected) continue;
+			if (!installed) continue;
+			const selected = installed.directory;
 			const requested = root
 				? applicationDependencyRequirement(
 						manifest,
 						name,
-						developmentFirst(selected),
+						developmentFirst(installed.location),
 					)
 				: edge.requested;
 			if (typeof requested !== "string") continue;
@@ -280,50 +296,42 @@ export async function inspectInstalledSource(
 		owner?.dependencies?.[name] ??
 		owner?.devDependencies?.[name] ??
 		owner?.peerDependencies?.[name];
-	for (const modules of createRequire(base).resolve.paths(
-		`${name}/package.json`,
-	) ?? []) {
-		const location = join(modules, name);
-		const manifest = await readManifest(
-			join(location, "package.json"),
-		);
-		if (!manifest) continue;
-		const directory = await realpath(location);
+	const installed = await findInstalledManifest(base, name);
+	if (!installed) return undefined;
+	const { location, manifest, directory } = installed;
 
-		const binding = provenance?.get(directory);
-		const effectiveRequirement =
-			runtimeRequirement ??
-			(isApplication
-				? binding?.rootRequirements[name]
-				: undefined) ??
-			requirement;
-		const parent = dirname(directory);
-		const container = basename(parent).startsWith("@")
-			? dirname(parent)
-			: parent;
-		// Registry-managed virtual stores still end in node_modules/name (or @scope/name).
-		const local =
-			basename(container) !== "node_modules" ||
-			(typeof effectiveRequirement === "string" &&
-				parseRuntimeRequirement(name, effectiveRequirement)
-					.local) ||
-			binding?.local === true;
-		return {
-			version:
-				typeof manifest.version === "string" &&
-				semver.valid(manifest.version)
-					? manifest.version
-					: undefined,
-			...(manifest.name && manifest.name !== name
-				? { registryName: manifest.name }
-				: {}),
-			directory,
-			location,
-			local,
-			manifest,
-		};
-	}
-	return undefined;
+	const binding = provenance?.get(directory);
+	const effectiveRequirement =
+		runtimeRequirement ??
+		(isApplication
+			? binding?.rootRequirements[name]
+			: undefined) ??
+		requirement;
+	const parent = dirname(directory);
+	const container = basename(parent).startsWith("@")
+		? dirname(parent)
+		: parent;
+	// Registry-managed virtual stores still end in node_modules/name (or @scope/name).
+	const local =
+		basename(container) !== "node_modules" ||
+		(typeof effectiveRequirement === "string" &&
+			parseRuntimeRequirement(name, effectiveRequirement)
+				.local) ||
+		binding?.local === true;
+	return {
+		version:
+			typeof manifest.version === "string" &&
+			semver.valid(manifest.version)
+				? manifest.version
+				: undefined,
+		...(manifest.name && manifest.name !== name
+			? { registryName: manifest.name }
+			: {}),
+		directory,
+		location,
+		local,
+		manifest,
+	};
 }
 
 /** Selects runtime contents only after enforcing exact versions and the local-source boundary. */

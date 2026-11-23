@@ -479,12 +479,13 @@ function findImportedPackageNames(
 			if (
 				!isSyntaxNode(argument) ||
 				argument.type !== "MemberExpression" ||
-				!isIdentifier(argument.property, "url") ||
+				(argument.computed
+					? getStaticString(argument.property) !== "url"
+					: !isIdentifier(argument.property, "url")) ||
 				!isSyntaxNode(argument.object) ||
 				argument.object.type !== "MetaProperty" ||
 				!isIdentifier(argument.object.meta, "import") ||
 				!isIdentifier(argument.object.property, "meta") ||
-				argument.computed ||
 				(node.arguments &&
 					(node.arguments as unknown[]).length !== 1)
 			)
@@ -817,6 +818,7 @@ interface ExportBinding {
 	origin?: object;
 	role?: LoaderRole;
 	isDefined?: () => boolean;
+	mutableCopy?: true;
 }
 
 const ambiguousExport: ExportBinding = {};
@@ -1568,11 +1570,12 @@ function runtimeLoaderBindings(
 								resolve: (name, path) => {
 									if (excluded.has(name)) return undefined;
 									const selected = role.resolve(name, path);
-									if (
-										selected?.isDefined &&
-										restMayChange(record)
-									)
-										return { ...selected, isDefined: undefined };
+									if (selected && restMayChange(record))
+										return {
+											...selected,
+											isDefined: undefined,
+											mutableCopy: true,
+										};
 									return selected;
 								},
 							};
@@ -1586,15 +1589,26 @@ function runtimeLoaderBindings(
 						record.property,
 						seen,
 					);
-					if (selected?.role) return selected.role;
+					if (selected?.role && !selected.mutableCopy)
+						return selected.role;
 					// An ordinary defined value does not take the initializer.
 					const fallback = roleOf(
 						record.fallback,
 						new Set(seen),
 					);
+					if (
+						fallback &&
+						selected?.role &&
+						selected.role !== fallback &&
+						(typeof selected.role !== "object" ||
+							namespaceExposesLoader(selected.role))
+					)
+						throw new Error(
+							"Cannot determine a runtime loader from a mutable namespace copy with a different loader default.",
+						);
 					return fallback && !selected?.isDefined?.()
 						? fallback
-						: undefined;
+						: selected?.role;
 				};
 				return read(binding);
 			}
