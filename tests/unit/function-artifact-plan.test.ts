@@ -7137,6 +7137,7 @@ ${f.index}`,
 		installedFiles?: Record<string, string>;
 		fmtBinding?: "absent" | "shared" | "symlink" | "distinct";
 		imported?: string;
+		emittedLoader?: "require";
 	};
 	it.each<ArchiveResolutionCase>([
 		{
@@ -7303,6 +7304,37 @@ ${f.index}`,
 			omissionAllowed: true,
 			required: "legacy main",
 		},
+		...([false, true] as const).flatMap(
+			(complete): ArchiveResolutionCase[] => [
+				{
+					name: `checks a legacy ESM subpath (complete: ${complete})`,
+					specifier: "linked/tools.cjs",
+					manifest: { exports: null },
+					files: {
+						"index.js": 'module.exports = "root";',
+						"tools.cjs": 'module.exports = "legacy tools";',
+					},
+					omitted: complete ? undefined : "tools.cjs",
+					required: "legacy tools",
+					imported: "legacy tools",
+				},
+				{
+					name: `checks a legacy CommonJS directory subpath (complete: ${complete})`,
+					specifier: "linked/tools",
+					emittedLoader: "require" as const,
+					manifest: { exports: null },
+					files: {
+						"index.js": 'module.exports = "root";',
+						"tools/package.json": '{"main":"./entry.js"}',
+						"tools/entry.js":
+							'module.exports = require("./helper.json");',
+						"tools/helper.json": '"legacy directory"',
+					},
+					omitted: complete ? undefined : "tools/helper.json",
+					required: "legacy directory",
+				},
+			],
+		),
 		{
 			name: "follows an extensionless exact ESM entry",
 			manifest: { exports: "./entry", type: "module" },
@@ -7514,15 +7546,32 @@ ${f.index}`,
 			omitted: "sample.js",
 			required: "module",
 		},
-		...([true, false] as const).map((changesResolution) => ({
-			name: changesResolution
-				? "preserves the nested manifest that blocks a private import"
-				: "accepts the missing scope when both private import lookups are blocked",
-			manifest: {
-				imports: {
-					"#feature": changesResolution ? "./root.cjs" : null,
+		...(
+			[
+				{
+					name: "root selects a file",
+					manifest: { imports: { "#feature": "./root.cjs" } },
+					omissionAllowed: false,
 				},
-			},
+				{
+					name: "root has no imports map",
+					manifest: {},
+					omissionAllowed: false,
+				},
+				{
+					name: "root blocks the private import",
+					manifest: { imports: { "#feature": null } },
+					omissionAllowed: true,
+				},
+				{
+					name: "root has an empty imports map",
+					manifest: { imports: {} },
+					omissionAllowed: true,
+				},
+			] as const
+		).map(({ name, manifest, omissionAllowed }) => ({
+			name: `preserves the require error when ${name}`,
+			manifest,
 			files: {
 				"index.cjs":
 					'module.exports = require("./nested/index.cjs");',
@@ -7532,7 +7581,7 @@ ${f.index}`,
 				"nested/package.json": '{"imports":{"#feature":null}}',
 			},
 			omitted: "nested/package.json",
-			omissionAllowed: !changesResolution,
+			omissionAllowed,
 			required: "fallback",
 		})),
 		{
@@ -7688,6 +7737,73 @@ ${f.index}`,
 				? "MODULE_NOT_FOUND"
 				: "ERR_PACKAGE_PATH_NOT_EXPORTED",
 		})),
+		...(
+			[
+				"invalid",
+				"blocked",
+				"missing target",
+				"selected",
+			] as const
+		).flatMap((target) =>
+			(target === "blocked" || target === "missing target"
+				? [false]
+				: [false, true]
+			).map((complete) => {
+				const fallback = target === "invalid";
+				const selected = target === "selected";
+				return {
+					name: `validates a private external array with a ${target} export (complete: ${complete})`,
+					fmtBinding: "shared" as const,
+					manifest: {
+						dependencies: { fmt: "workspace:*" },
+						imports: {
+							"#feature": [
+								"fmt/features/tool.cjs?variant",
+								"./fallback.cjs",
+							],
+						},
+					},
+					files: {
+						"index.cjs":
+							'try { module.exports = require("#feature"); } catch (error) { module.exports = error.code; }',
+						"fallback.cjs": 'module.exports = "fallback";',
+					},
+					installedFiles: {
+						"packages/fmt/package.json": JSON.stringify({
+							name: "fmt",
+							version: "1.0.0",
+							exports: {
+								"./features/*": {
+									invalid: "invalid-target",
+									blocked: null,
+									"missing target": "./src/missing/*.cjs",
+									selected: "./src/*.js",
+								}[target],
+							},
+							files:
+								complete || !selected ? ["src/tool.cjs"] : [],
+						}),
+						"packages/fmt/src/tool.cjs":
+							'module.exports = "external";',
+					},
+					omitted: selected
+						? complete
+							? undefined
+							: "src/tool.cjs"
+						: complete
+							? undefined
+							: "fallback.cjs",
+					omissionAllowed: !fallback && !selected,
+					required: fallback
+						? "fallback"
+						: selected
+							? "external"
+							: target === "blocked"
+								? "ERR_PACKAGE_PATH_NOT_EXPORTED"
+								: "MODULE_NOT_FOUND",
+				};
+			}),
+		),
 		{
 			name: "checks the file selected by a wildcard request with URL search",
 			specifier: "linked/features/entry.cjs?variant",
@@ -7803,6 +7919,7 @@ ${f.index}`,
 			alsoResolves,
 			installedFiles,
 			fmtBinding,
+			emittedLoader,
 		}) => {
 			const f = await fixture();
 			const linked = new URL("packages/linked/", f.root);
@@ -7898,7 +8015,11 @@ ${f.index}`,
 			await assertNodeLoads(fileURLToPath(f.root));
 			await writeFile(
 				new URL("index.js", f.server),
-				`import '${specifier}';${f.index}`,
+				`${
+					emittedLoader === "require"
+						? `import { createRequire } from "node:module"; createRequire(import.meta.url)(${JSON.stringify(specifier)});`
+						: `import ${JSON.stringify(specifier)};`
+				}${f.index}`,
 			);
 			const before = await snapshot(f.directory);
 			const outcome = await Effect.runPromise(

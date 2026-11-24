@@ -29,7 +29,10 @@ import {
 	type SyntaxNode,
 } from "../../../.emittedModules.ts";
 import type { PlannedFile } from "../.types.ts";
-import { readRuntimeRequireBindings } from "./ImportSpecifier.ts";
+import {
+	readRuntimeRequireBindings,
+	type PackageSubpathRequests,
+} from "./ImportSpecifier.ts";
 import type { ResolvedRuntimeDependency } from "./Metadata.ts";
 import { readInstalledBindingPath } from "./Source.ts";
 import type { RegistryVersionMetadata } from "./Registry.ts";
@@ -104,6 +107,7 @@ function packedFiles(bytes: Buffer): Map<string, Buffer> {
 type ArchiveLookup =
 	"exact" | "commonjs" | "directory" | "asset";
 type ArchiveRequest = { target: string; lookup: ArchiveLookup };
+type LoaderMode = keyof typeof nodeConditions;
 
 // The Function Artifact uses Node's default runtime loader conditions.
 const nodeConditions = {
@@ -122,13 +126,25 @@ const nodeConditions = {
 };
 
 const unexported = Symbol("unexported package subpath");
-type PackageTarget = URL | string | false | typeof unexported;
+type ExternalPackageTarget = {
+	specifier: string;
+	binding?: string;
+	request?: ArchiveRequest;
+};
+type PackageTarget =
+	| URL
+	| string
+	| ExternalPackageTarget
+	| false
+	| typeof unexported;
 
-function selectedPackageTarget(
+async function selectedPackageTarget(
 	target: unknown,
 	conditions: ReadonlySet<string>,
-	resolveTarget: (value: string) => PackageTarget,
-): PackageTarget | null | undefined {
+	resolveTarget: (
+		value: string,
+	) => PackageTarget | Promise<PackageTarget>,
+): Promise<PackageTarget | null | undefined> {
 	if (target === null) return null;
 	if (typeof target === "string") return resolveTarget(target);
 	if (Array.isArray(target)) {
@@ -136,14 +152,14 @@ function selectedPackageTarget(
 			? undefined
 			: null;
 		for (const item of target as unknown[]) {
-			const selected = selectedPackageTarget(
+			const selected = await selectedPackageTarget(
 				item,
 				conditions,
 				resolveTarget,
 			);
 			if (
-				selected instanceof URL ||
 				typeof selected === "string" ||
+				(selected && typeof selected === "object") ||
 				selected === unexported
 			)
 				return selected;
@@ -154,7 +170,7 @@ function selectedPackageTarget(
 	if (!target || typeof target !== "object") return false;
 	for (const [key, value] of Object.entries(target)) {
 		if (key !== "default" && !conditions.has(key)) continue;
-		const selected = selectedPackageTarget(
+		const selected = await selectedPackageTarget(
 			value,
 			conditions,
 			resolveTarget,
@@ -244,13 +260,13 @@ function patternMatches(
 	);
 }
 
-function mappedPackageTarget(
+async function mappedPackageTarget(
 	specifier: string,
 	map: Record<string, unknown>,
 	packageURL: URL,
-	mode: keyof typeof nodeConditions,
-	resolveExternal?: (target: string) => PackageTarget,
-): PackageTarget | null | undefined {
+	mode: LoaderMode,
+	resolveExternal?: (target: string) => Promise<PackageTarget>,
+): Promise<PackageTarget | null | undefined> {
 	let key = specifier;
 	let capture: string | undefined;
 	if (
@@ -309,12 +325,22 @@ function barePackageName(specifier: string): string | undefined {
 	)?.[1];
 }
 
-function resolvePrivateImport(
+const ordinaryRequire = Symbol("ordinary CommonJS lookup");
+
+async function resolvePrivateImport(
 	specifier: string,
 	scope: PackageScope,
-	mode: keyof typeof nodeConditions,
+	mode: LoaderMode,
+	resolveExternal: (
+		target: string,
+		scope: PackageScope,
+		mode: LoaderMode,
+	) => Promise<PackageTarget>,
 ) {
 	const { imports, exports, name } = scope.metadata;
+	// Without an imports map, require("#name") falls back to ordinary module lookup.
+	if (mode === "require" && imports == null)
+		return ordinaryRequire;
 	if (
 		specifier === "#" ||
 		specifier.startsWith("#/") ||
@@ -330,22 +356,22 @@ function resolvePrivateImport(
 		imports as Record<string, unknown>,
 		packageURL,
 		mode,
-		(target) => {
+		async (target) => {
+			if (isBuiltin(target)) return target;
 			if (
-				isBuiltin(target) ||
 				exports == null ||
 				typeof name !== "string" ||
 				barePackageName(target) !== name
 			)
-				return target;
+				return resolveExternal(target, scope, mode);
 			// Only an invalid self-export lets an enclosing target array try its next item.
 			return (
-				mappedPackageTarget(
+				(await mappedPackageTarget(
 					"." + target.slice(name.length),
 					packageExportMap(exports),
 					packageURL,
 					mode,
-				) ?? unexported
+				)) ?? unexported
 			);
 		},
 	);
@@ -354,9 +380,10 @@ function resolvePrivateImport(
 async function manifestEntrypoints(
 	directory: string,
 	manifest: Record<string, unknown>,
-	requests: ReadonlySet<string> | undefined,
+	requests: ReturnType<PackageSubpathRequests["get"]>,
 ): Promise<ArchiveRequest[]> {
 	const entries = new Map<string, ArchiveLookup>();
+	const retained: ArchiveRequest[] = [];
 	const packageURL = pathToFileURL(directory + sep);
 	const exportMap = packageExportMap(manifest.exports);
 	const targets: { match: RegExp; url: URL }[] = [];
@@ -393,30 +420,37 @@ async function manifestEntrypoints(
 		);
 		targets.push({ match, url });
 	};
-	if (
-		manifest.exports === undefined ||
-		manifest.exports === null
-	) {
+	// Resolve emitted requests directly even if URL normalization hides them from the filename scan.
+	for (const [request, modes] of requests ?? []) {
+		for (const mode of modes) {
+			if (manifest.exports == null && mode === "require") {
+				retained.push({
+					target: resolve(directory, request),
+					lookup: /\/$/.test(request) ? "directory" : "commonjs",
+				});
+				continue;
+			}
+			const target =
+				manifest.exports == null
+					? new URL(request, packageURL)
+					: await mappedPackageTarget(
+							request,
+							exportMap,
+							packageURL,
+							mode,
+						);
+			const path =
+				target instanceof URL && packageFilePath(target);
+			if (path) retained.push({ target: path, lookup: "exact" });
+		}
+	}
+	if (manifest.exports == null) {
 		entries.set(directory, "directory");
 	} else {
-		// Resolve retained requests before the filename scan: URL parsing can change the target shape.
-		for (const request of requests ?? []) {
-			for (const mode of ["import", "require"] as const) {
-				const target = mappedPackageTarget(
-					request,
-					exportMap,
-					packageURL,
-					mode,
-				);
-				const path =
-					target instanceof URL && packageFilePath(target);
-				if (path) entries.set(path, "exact");
-			}
-		}
 		for (const [key, target] of Object.entries(exportMap)) {
 			const seen = new Set<string>();
 			for (const conditions of Object.values(nodeConditions)) {
-				const selected = selectedPackageTarget(
+				const selected = await selectedPackageTarget(
 					target,
 					conditions,
 					(value) => packageTarget(value, packageURL),
@@ -464,10 +498,12 @@ async function manifestEntrypoints(
 			}
 		}
 	}
-	return [...entries].map(([target, lookup]) => ({
-		target,
-		lookup,
-	}));
+	return retained.concat(
+		[...entries].map(([target, lookup]) => ({
+			target,
+			lookup,
+		})),
+	);
 }
 
 const commonJsExtensions = [".js", ".json", ".node"];
@@ -476,23 +512,42 @@ function missingPath(error: NodeJS.ErrnoException): boolean {
 	return error.code === "ENOENT" || error.code === "ENOTDIR";
 }
 
+type ArchiveVerification = {
+	directory: string;
+	bytes: Buffer;
+	subpaths: ReturnType<PackageSubpathRequests["get"]>;
+	pending: ArchiveRequest[];
+	visited: Set<string>;
+};
+
 /** Stops before publication filtering can turn a statically linked local runtime file into a missing one. */
 async function verifyLocalRuntimeFiles(
-	directory: string,
-	bytes: Buffer,
-	requests: ReadonlySet<string> | undefined,
+	{
+		directory,
+		bytes,
+		subpaths,
+		pending,
+		visited,
+	}: ArchiveVerification,
 	location: string,
-	bindings: ReadonlyMap<string, string | undefined>,
+	bindings: ReadonlyMap<string, ResolvedRuntimeDependency>,
+	queueDependencyFile: (
+		location: string,
+		request: ArchiveRequest,
+	) => void,
 ): Promise<void> {
 	const files = packedFiles(bytes);
-	const manifest = JSON.parse(
-		files.get("package.json")?.toString("utf8") ?? "{}",
-	) as Record<string, unknown>;
-	const pending = await manifestEntrypoints(
-		directory,
-		manifest,
-		requests,
-	);
+	if (!visited.size) {
+		const manifest = JSON.parse(
+			files.get("package.json")?.toString("utf8") ?? "{}",
+		) as Record<string, unknown>;
+		for (const request of await manifestEntrypoints(
+			directory,
+			manifest,
+			subpaths,
+		))
+			pending.push(request);
+	}
 	const archivePath = (
 		candidate: string,
 	): string | undefined => {
@@ -558,6 +613,61 @@ async function verifyLocalRuntimeFiles(
 		}
 		return loaded;
 	};
+	const resolveExternal = async (
+		specifier: string,
+		scope: PackageScope,
+		mode: LoaderMode,
+	): Promise<PackageTarget> => {
+		const name = barePackageName(specifier);
+		if (!name) return { specifier };
+		const binding = await readInstalledBindingPath(
+			scope.path,
+			name,
+		);
+		if (!binding) return { specifier };
+		const manifest = await installedManifest(
+			join(binding, "package.json"),
+		);
+		const subpath = "." + specifier.slice(name.length);
+		const packageURL = pathToFileURL(binding + sep);
+		if (manifest?.exports == null && subpath === ".")
+			return {
+				specifier,
+				binding,
+				request: { target: binding, lookup: "directory" },
+			};
+		// Node resolves private targets using package resolution even in require mode.
+		const selected =
+			manifest?.exports == null
+				? new URL(subpath, packageURL)
+				: await mappedPackageTarget(
+						subpath,
+						packageExportMap(manifest.exports),
+						packageURL,
+						mode,
+					);
+		if (!(selected instanceof URL))
+			return selected === false ? false : unexported;
+		const target = packageFilePath(selected);
+		return {
+			specifier,
+			binding,
+			request: target ? { target, lookup: "exact" } : undefined,
+		};
+	};
+	const plannedBinding = (scope: PackageScope, name: string) => {
+		// Search the emitted placement tree from the package scope that will survive.
+		let owner = posix.join(
+			location,
+			posix.dirname(archivePath(scope.path)!),
+		);
+		while (true) {
+			const slot = posix.join(owner, "node_modules", name);
+			if (bindings.has(slot) || owner === ".")
+				return bindings.get(slot);
+			owner = posix.dirname(owner);
+		}
+	};
 	function* scopeManifests(candidate: string) {
 		for (
 			let scope = dirname(candidate);
@@ -613,9 +723,13 @@ async function verifyLocalRuntimeFiles(
 		return type;
 	};
 	const targetIdentity = (
-		target: ReturnType<typeof resolvePrivateImport>,
-	) => (target instanceof URL ? target.href : (target ?? null));
-	const visited = new Set<string>();
+		target: Awaited<ReturnType<typeof resolvePrivateImport>>,
+	) => {
+		if (target instanceof URL) return target.href;
+		if (target && typeof target === "object")
+			return JSON.stringify(target);
+		return target ?? null;
+	};
 	while (pending.length) {
 		const { target, lookup } = pending.pop()!;
 		const key = JSON.stringify([target, lookup]);
@@ -748,61 +862,56 @@ async function verifyLocalRuntimeFiles(
 			if (!scope) continue;
 			const archived = archivedScope(candidate);
 			for (const { specifier, mode } of privateImports) {
-				const selected = resolvePrivateImport(
+				const selected = await resolvePrivateImport(
 					specifier,
 					scope,
 					mode,
+					resolveExternal,
 				);
 				const packed =
 					archived &&
-					resolvePrivateImport(specifier, archived, mode);
+					(await resolvePrivateImport(
+						specifier,
+						archived,
+						mode,
+						resolveExternal,
+					));
 				if (targetIdentity(selected) !== targetIdentity(packed))
 					requirePacked(scope.path);
-				if (
-					typeof selected === "string" &&
-					!isBuiltin(selected) &&
-					archived &&
-					scope.path !== archived.path &&
-					selected === packed
-				) {
-					const name = barePackageName(selected);
-					if (!name)
-						throw new Error(
-							`Cannot verify private dependency ${selected} in ${scope.path}.`,
-						);
-					const binding = await readInstalledBindingPath(
-						scope.path,
-						name,
-					);
-					if (
-						binding !==
-						(await readInstalledBindingPath(archived.path, name))
-					)
-						requirePacked(scope.path);
-					// Follow the same node_modules search in the emitted tree, not the build machine.
-					let owner = posix.join(
-						location,
-						posix.dirname(archivePath(archived.path)!),
-					);
-					let planned: string | undefined;
-					while (true) {
-						const slot = posix.join(owner, "node_modules", name);
-						if (bindings.has(slot)) {
-							planned = bindings.get(slot);
-							break;
-						}
-						if (owner === ".") break;
-						owner = posix.dirname(owner);
-					}
-					if (!binding || planned !== binding)
-						throw new Error(
-							`The Function Artifact cannot preserve private dependency "${name}" from ${scope.path}. Declare it as a runtime dependency.`,
-						);
-				}
 				if (selected instanceof URL) {
 					const path = packageFilePath(selected);
 					if (path)
 						pending.push({ target: path, lookup: "exact" });
+				} else if (selected && typeof selected === "object") {
+					const {
+						specifier: target,
+						binding,
+						request,
+					} = selected;
+					const name = barePackageName(target);
+					if (!name)
+						throw new Error(
+							`Cannot verify private dependency ${target} in ${scope.path}.`,
+						);
+					const planned = plannedBinding(
+						archived ?? scope,
+						name,
+					);
+					if (
+						archived?.path !== scope.path &&
+						(!binding || planned?.installedDirectory !== binding)
+					)
+						throw new Error(
+							`The Function Artifact cannot preserve private dependency "${name}" from ${scope.path}. Declare it as a runtime dependency.`,
+						);
+					if (
+						request &&
+						planned?.localDirectory &&
+						planned.localDirectory === binding
+					)
+						queueDependencyFile(planned.location, request);
+					else if (request && archivePath(request.target))
+						pending.push(request);
 				}
 			}
 		}
@@ -880,7 +989,7 @@ export function externalBundledPeers(
 /** Packs exact local package files without lifecycle scripts or artifact writes. */
 export async function planLocalArchives(
 	graph: ResolvedRuntimeDependency[],
-	requests: ReadonlyMap<string, ReadonlySet<string>>,
+	requests: PackageSubpathRequests,
 ): Promise<{
 	dependencies: ResolvedRuntimeDependency[];
 	files: PlannedFile[];
@@ -888,14 +997,16 @@ export async function planLocalArchives(
 	const files = new Map<string, PlannedFile>();
 	const packed = new Map<
 		string,
-		{ resolved: string; integrity: string }
+		{
+			resolved: string;
+			integrity: string;
+			bytes: Buffer;
+		}
 	>();
+	const verification = new Map<string, ArchiveVerification>();
 	const dependencies: ResolvedRuntimeDependency[] = [];
 	const bindings = new Map(
-		graph.map((dependency) => [
-			dependency.location,
-			dependency.installedDirectory,
-		]),
+		graph.map((dependency) => [dependency.location, dependency]),
 	);
 	for (const dependency of graph) {
 		if (!dependency.localDirectory) {
@@ -907,24 +1018,46 @@ export async function planLocalArchives(
 			const bytes = await pack(dependency.localDirectory, {
 				ignoreScripts: true,
 			});
-			await verifyLocalRuntimeFiles(
-				dependency.localDirectory,
-				bytes,
-				dependency.location === `node_modules/${dependency.name}`
-					? requests.get(dependency.name)
-					: undefined,
-				dependency.location,
-				bindings,
-			);
 			const path = `.yandex/dependencies/${createHash("sha256").update(bytes).digest("hex")}.tgz`;
 			files.set(path, { path, binaryContents: bytes });
 			archive = {
 				resolved: `file:${path}`,
 				integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+				bytes,
 			};
 			packed.set(dependency.localDirectory, archive);
 		}
-		dependencies.push({ ...dependency, ...archive });
+		const { bytes, resolved, integrity } = archive;
+		dependencies.push({ ...dependency, resolved, integrity });
+		verification.set(dependency.location, {
+			directory: dependency.localDirectory,
+			bytes,
+			subpaths:
+				dependency.location === `node_modules/${dependency.name}`
+					? requests.get(dependency.name)
+					: undefined,
+			pending: [],
+			visited: new Set(),
+		});
+	}
+	const work = new Set(verification.keys());
+	const queueDependencyFile = (
+		location: string,
+		request: ArchiveRequest,
+	) => {
+		const archive = verification.get(location)!;
+		archive.pending.push(request);
+		work.add(location);
+	};
+	// Private targets can add requests to an archive already visited in graph order.
+	for (const location of work) {
+		work.delete(location);
+		await verifyLocalRuntimeFiles(
+			verification.get(location)!,
+			location,
+			bindings,
+			queueDependencyFile,
+		);
 	}
 	return { dependencies, files: [...files.values()] };
 }

@@ -16,11 +16,17 @@ import type {
 	PreparationSettings,
 } from "../.types.ts";
 
+type PackageLoader = "import" | "require";
+export type PackageSubpathRequests = Map<
+	string,
+	Map<string, Set<PackageLoader>>
+>;
+
 /** Inspects the files that will form an artifact, without requiring output files on disk. */
 export function findRuntimePackageImports(
 	files: readonly PlannedFile[],
 	strategy: PreparationSettings["dependencyStrategy"],
-	requests?: Map<string, Set<string>>,
+	requests?: PackageSubpathRequests,
 ): Set<string> {
 	if (
 		strategy === "bundle" &&
@@ -142,7 +148,10 @@ export function findRuntimePackageImports(
 				resolveImport,
 			),
 			inspect: () => {
-				for (const request of findImportedPackageSpecifiers(
+				for (const [
+					request,
+					modes,
+				] of findImportedPackageSpecifiers(
 					program,
 					path,
 					strategy,
@@ -154,8 +163,13 @@ export function findRuntimePackageImports(
 					names.add(name);
 					if (requests && request !== name) {
 						const subpaths =
-							requests.get(name) ?? new Set<string>();
-						subpaths.add("." + request.slice(name.length));
+							requests.get(name) ??
+							new Map<string, Set<PackageLoader>>();
+						const subpath = "." + request.slice(name.length);
+						const loaders =
+							subpaths.get(subpath) ?? new Set<PackageLoader>();
+						for (const mode of modes) loaders.add(mode);
+						subpaths.set(subpath, loaders);
 						requests.set(name, subpaths);
 					}
 				}
@@ -213,10 +227,14 @@ function findImportedPackageSpecifiers(
 	bindings: ReturnType<typeof runtimeLoaderBindings>,
 	resolveImport: (specifier: string) => LoaderRole | undefined,
 	resolveRequire: (specifier: string) => string | undefined,
-): Set<BareImportSpecifier> {
-	const specifiers = new Set<BareImportSpecifier>();
+) {
+	const specifiers = new Map<
+		BareImportSpecifier,
+		Set<PackageLoader>
+	>();
 	const collectPackageImport = (
 		importSpecifier: string,
+		mode?: PackageLoader,
 	): void => {
 		if (
 			importSpecifier.endsWith(".node") &&
@@ -229,13 +247,20 @@ function findImportedPackageSpecifiers(
 		// Native file imports stay inside the owning package for install builds,
 		// so the package itself is pinned; bundle builds cannot carry native code.
 		if (!isBareImportSpecifier(importSpecifier)) return;
-		specifiers.add(importSpecifier);
+		const modes =
+			specifiers.get(importSpecifier) ??
+			new Set<PackageLoader>();
+		for (const loader of mode
+			? [mode]
+			: (["import", "require"] as const))
+			modes.add(loader);
+		specifiers.set(importSpecifier, modes);
 	};
 	const inspectModuleImport = (specifier: string): void => {
 		const url = URL.parse(specifier);
 		if (url?.protocol === "data:") {
 			resolveImport(specifier);
-		} else collectPackageImport(specifier);
+		} else collectPackageImport(specifier, "import");
 	};
 	const rejectDynamicImport = (detail?: string): never => {
 		if (strategy === "install") {
@@ -582,7 +607,10 @@ function findImportedPackageSpecifiers(
 					rejectDynamicImport(
 						`relative require "${specifier}" does not name a retained file supported by the Function Artifact`,
 					);
-				collectPackageImport(specifier);
+				collectPackageImport(
+					specifier,
+					requires || role !== "resolve" ? "require" : undefined,
+				);
 				return;
 			}
 			default: {

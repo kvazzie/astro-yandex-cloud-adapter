@@ -20,7 +20,10 @@ import {
 	formatNpmLockfile,
 } from "./Dependency/Metadata.ts";
 import { type Registry } from "./Dependency/Registry.ts";
-import { findRuntimePackageImports } from "./Dependency/ImportSpecifier.ts";
+import {
+	findRuntimePackageImports,
+	type PackageSubpathRequests,
+} from "./Dependency/ImportSpecifier.ts";
 import { planLocalArchives } from "./Dependency/Archive.ts";
 import { resolvePinnedRuntimeDependencies } from "./Dependency";
 
@@ -31,7 +34,7 @@ export async function planPackageFiles(
 	registry: Registry,
 	includeLocal = false,
 ): Promise<PlannedFile[]> {
-	const requests = new Map<string, Set<string>>();
+	const requests: PackageSubpathRequests = new Map();
 	const dependencyNames = findRuntimePackageImports(
 		files,
 		strategy,
