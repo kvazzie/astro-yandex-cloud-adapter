@@ -295,6 +295,12 @@ export function staticLocalAssetReference(
 		base.type === "MemberExpression" &&
 		isSyntaxNode(base.object) &&
 		base.object.type === "MetaProperty" &&
+		isSyntaxNode(base.object.meta) &&
+		base.object.meta.type === "Identifier" &&
+		base.object.meta.name === "import" &&
+		isSyntaxNode(base.object.property) &&
+		base.object.property.type === "Identifier" &&
+		base.object.property.name === "meta" &&
 		(base.computed
 			? getStaticString(base.property) === "url"
 			: isSyntaxNode(base.property) &&

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
+import { isBuiltin } from "node:module";
 import {
 	basename,
 	dirname,
@@ -276,6 +277,71 @@ function resolvePrivateImport(
 	);
 }
 
+function encodedCharacterSpellings(character: string): string[] {
+	if (character === "/") return [character];
+	let encodings = [""];
+	for (const byte of Buffer.from(character)) {
+		const hex = byte.toString(16).padStart(2, "0");
+		const first = new Set([hex[0]!, hex[0]!.toUpperCase()]);
+		const second = new Set([hex[1]!, hex[1]!.toUpperCase()]);
+		const spellings = [...first].flatMap((a) =>
+			[...second].map((b) => "%" + a + b),
+		);
+		encodings = encodings.flatMap((prefix) =>
+			spellings.map((part) => prefix + part),
+		);
+	}
+	return [character, ...encodings];
+}
+
+function canReachWildcard(
+	capture: string,
+	reaches: (spelling: string) => boolean,
+): boolean {
+	const canonical = capture
+		.split("/")
+		.map(encodeURIComponent)
+		.join("/");
+	if (
+		reaches(capture) ||
+		(canonical !== capture && reaches(canonical))
+	)
+		return true;
+	const choices = Array.from(capture, encodedCharacterSpellings);
+	const allEncoded = choices
+		.map((variants) => variants[1] ?? variants[0])
+		.join("");
+	if (
+		allEncoded !== canonical &&
+		allEncoded !== capture &&
+		reaches(allEncoded)
+	)
+		return true;
+
+	const positions = choices.map(() => 0);
+	// Encodings combine independently. Retain the file if checking every
+	// spelling would exceed the planning budget.
+	for (let attempt = 0; attempt < 4096; attempt++) {
+		let index = positions.length - 1;
+		while (
+			index >= 0 &&
+			positions[index]! + 1 === choices[index]!.length
+		) {
+			positions[index] = 0;
+			index--;
+		}
+		if (index < 0) return false;
+		positions[index] = positions[index]! + 1;
+		const spelling = choices
+			.map(
+				(variants, position) => variants[positions[position]!],
+			)
+			.join("");
+		if (reaches(spelling)) return true;
+	}
+	return true;
+}
+
 async function manifestEntrypoints(
 	directory: string,
 	manifest: Record<string, unknown>,
@@ -372,23 +438,31 @@ async function manifestEntrypoints(
 			for (const { key, match, url } of targets) {
 				const capture = match.exec(file)?.[1];
 				if (!capture) continue;
-				const encoded = capture
-					.split("/")
-					.map(encodeURIComponent)
-					.join("/");
-				for (const spelling of new Set([capture, encoded])) {
-					const subpath = key.replace("*", () => spelling);
-					if (exactExports.has(subpath)) continue;
-					const selected = patterns.find((pattern) =>
-						patternMatches(subpath, pattern),
-					);
-					if (selected?.key !== key) continue;
-					const target = new URL(
-						url.href.replaceAll("*", () => spelling),
-					);
-					if (packageFilePath(target) === path)
-						entries.set(path, "exact");
-				}
+				const reachable = canReachWildcard(
+					capture,
+					(spelling) => {
+						const subpath = key.replace("*", () => spelling);
+						if (
+							exactExports.has(subpath) &&
+							!subpath.includes("*") &&
+							!subpath.endsWith("/")
+						)
+							return false;
+						const selected = patterns.find((pattern) =>
+							patternMatches(subpath, pattern),
+						);
+						if (
+							selected?.key !== key ||
+							invalidPackageSegment(spelling)
+						)
+							return false;
+						const target = new URL(
+							url.href.replaceAll("*", () => spelling),
+						);
+						return packageFilePath(target) === path;
+					},
+				);
+				if (reachable) entries.set(path, "exact");
 			}
 		}
 	}
@@ -688,7 +762,14 @@ async function verifyLocalRuntimeFiles(
 						archivedURL,
 						mode,
 					);
-				if (targetIdentity(selected) !== targetIdentity(packed))
+				const bareTargetChangedScope =
+					typeof selected === "string" &&
+					!isBuiltin(selected) &&
+					scope.path !== archived?.path;
+				if (
+					bareTargetChangedScope ||
+					targetIdentity(selected) !== targetIdentity(packed)
+				)
 					requirePacked(scope.path);
 				if (selected instanceof URL) {
 					const path = packageFilePath(selected);

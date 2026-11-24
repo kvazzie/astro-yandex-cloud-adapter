@@ -7071,9 +7071,7 @@ ${f.index}`,
 							}
 						: "./index.cjs",
 					files: Object.keys(files).filter(
-						(path) =>
-							path !== excluded &&
-							path !== "src/features/internal/private.js",
+						(path) => path !== excluded,
 					),
 				}),
 			);
@@ -7087,11 +7085,21 @@ ${f.index}`,
 			const require = createRequire(
 				new URL("package.json", f.root),
 			);
-			if (pattern)
+			if (pattern) {
 				expect(require.resolve(specifier)).toBe(
 					await realpath(new URL("src/features/a.js", linked)),
 				);
-			else expect(require(specifier)).toBe("selected main");
+				expect(() => {
+					require.resolve("linked/features/internal/private");
+				}).toThrow(/not defined by "exports"/);
+				expect(
+					require.resolve("linked/features/%69nternal/private"),
+				).toBe(
+					await realpath(
+						new URL("src/features/internal/private.js", linked),
+					),
+				);
+			} else expect(require(specifier)).toBe("selected main");
 			await writeFile(
 				new URL("index.js", f.server),
 				`import '${specifier}';${f.index}`,
@@ -7125,6 +7133,7 @@ ${f.index}`,
 		omitted?: string;
 		omissionAllowed?: boolean;
 		required?: string;
+		alsoResolves?: Record<string, string>;
 		imported?: string;
 	};
 	it.each<ArchiveResolutionCase>([
@@ -7450,8 +7459,8 @@ ${f.index}`,
 			required: "encoded wildcard",
 		},
 		{
-			name: "does not require a wildcard file when both relevant spellings use exact exports",
-			specifier: "linked/features/a%20b",
+			name: "checks a reachable wildcard when raw and canonical spellings use exact exports",
+			specifier: "linked/features/%61%20b",
 			manifest: {
 				exports: {
 					"./features/*": "./src/*.cjs",
@@ -7464,8 +7473,12 @@ ${f.index}`,
 				"override.cjs": 'module.exports = "override";',
 			},
 			omitted: "src/a b.cjs",
-			omissionAllowed: true,
-			required: "override",
+			alsoResolves: {
+				"linked/features/a b": "override",
+				"linked/features/a%20b": "override",
+			},
+			required: "unused",
+			imported: "unused",
 		},
 		{
 			name: "does not scan a JavaScript-shaped URL asset as a module",
@@ -7545,6 +7558,104 @@ ${f.index}`,
 			omitted: "helper.cjs",
 			required: "conditional wrapper loader",
 		},
+		{
+			name: "ignores a new.target asset base",
+			manifest: { exports: "./index.mjs" },
+			files: {
+				"index.mjs":
+					'class Result { static url = "https://example.test/"; constructor() { this.path = new URL("payload.txt", new.target.url).href; } } export default new Result().path;',
+				"payload.txt": "unused",
+			},
+			omitted: "payload.txt",
+			omissionAllowed: true,
+			required: "https://example.test/payload.txt",
+		},
+		{
+			name: "keeps bracket-form import.meta URLs",
+			manifest: { exports: "./index.mjs" },
+			files: {
+				"index.mjs":
+					'import { readFileSync } from "node:fs"; export default readFileSync(new URL("payload.txt", import.meta["url"]), "utf8");',
+				"payload.txt": "bracket asset",
+			},
+			omitted: "payload.txt",
+			required: "bracket asset",
+		},
+		{
+			name: "finds a partially escaped wildcard when every initial spelling is overridden",
+			specifier: "linked/features/%61%20b",
+			manifest: {
+				exports: {
+					"./features/*": "./src/*.cjs",
+					"./features/a b": "./override.cjs",
+					"./features/a%20b": "./override.cjs",
+					"./features/%61%20%62": "./override.cjs",
+				},
+			},
+			files: {
+				"src/a b.cjs": 'module.exports = "partial";',
+				"override.cjs": 'module.exports = "override";',
+			},
+			omitted: "src/a b.cjs",
+			required: "partial",
+		},
+		{
+			name: "checks encoded wildcard paths past a literal pattern exclusion",
+			specifier: "linked/features/%69nternal/private",
+			manifest: {
+				exports: {
+					"./features/*": "./src/*.cjs",
+					"./features/internal/*": null,
+				},
+			},
+			files: {
+				"src/internal/private.cjs":
+					'module.exports = "encoded bypass";',
+			},
+			omitted: "src/internal/private.cjs",
+			required: "encoded bypass",
+		},
+		{
+			name: "omits wildcard files when both raw and escaped forms are blocked",
+			specifier: "linked/features/%27",
+			manifest: {
+				exports: {
+					"./features/*": "./src/*.cjs",
+					"./features/'": "./override.cjs",
+					"./features/%27": "./override.cjs",
+				},
+			},
+			files: {
+				"src/'.cjs": 'module.exports = "unused";',
+				"override.cjs": 'module.exports = "override";',
+			},
+			omitted: "src/'.cjs",
+			omissionAllowed: true,
+			required: "override",
+			alsoResolves: { "linked/features/'": "override" },
+		},
+		{
+			name: "keeps the package scope of an identical bare private target",
+			manifest: {
+				imports: { "#feature": "linked/feature" },
+				exports: {
+					".": "./index.cjs",
+					"./feature": "./root.cjs",
+				},
+			},
+			files: {
+				"index.cjs":
+					'module.exports = require("./nested/index.cjs");',
+				"root.cjs": 'module.exports = "root";',
+				"nested/index.cjs":
+					'module.exports = require("#feature");',
+				"nested/package.json":
+					'{"name":"linked","imports":{"#feature":"linked/feature"},"exports":{"./feature":"./feature.cjs"}}',
+				"nested/feature.cjs": 'module.exports = "nested";',
+			},
+			omitted: "nested/package.json",
+			required: "nested",
+		},
 	])(
 		"validates Node archive resolution ($name)",
 		async ({
@@ -7556,6 +7667,7 @@ ${f.index}`,
 			omissionAllowed,
 			required,
 			imported,
+			alsoResolves,
 		}) => {
 			const f = await fixture();
 			const linked = new URL("packages/linked/", f.root);
@@ -7605,6 +7717,10 @@ ${f.index}`,
 						: loaded;
 				expect(value).toBe(required);
 			}
+			for (const [request, expected] of Object.entries(
+				alsoResolves ?? {},
+			))
+				expect(require(request)).toBe(expected);
 			if (imported !== undefined) {
 				const result = await promisify(execFile)(
 					process.execPath,
