@@ -36,7 +36,10 @@ import {
 	type PackageSubpathRequests,
 } from "./ImportSpecifier.ts";
 import type { ResolvedRuntimeDependency } from "./Metadata.ts";
-import { readInstalledBindingPath } from "./Source.ts";
+import {
+	readInstalledBindingPath,
+	stripJsonBom,
+} from "./Source.ts";
 import type { RegistryVersionMetadata } from "./Registry.ts";
 
 /** Reads npm's gzip-compressed tar entries in memory without extracting paths. */
@@ -565,7 +568,9 @@ async function verifyLocalRuntimeFiles(
 	const files = packedFiles(bytes);
 	if (!visited.size) {
 		const manifest = JSON.parse(
-			files.get("package.json")?.toString("utf8") ?? "{}",
+			stripJsonBom(
+				files.get("package.json")?.toString("utf8") ?? "{}",
+			),
 		) as Record<string, unknown>;
 		for (const request of await manifestEntrypoints(
 			directory,
@@ -622,7 +627,7 @@ async function verifyLocalRuntimeFiles(
 		if (!loaded) {
 			loaded = readFile(location, "utf8").then(
 				(source) =>
-					JSON.parse(source) as
+					JSON.parse(stripJsonBom(source)) as
 						Record<string, unknown> | undefined,
 				(error: NodeJS.ErrnoException) => {
 					if (!missingPath(error)) throw error;
@@ -767,10 +772,9 @@ async function verifyLocalRuntimeFiles(
 			if (!packed) continue;
 			let metadata = archivedManifests.get(path);
 			if (!metadata) {
-				metadata = JSON.parse(packed.toString("utf8")) as Record<
-					string,
-					unknown
-				>;
+				metadata = JSON.parse(
+					stripJsonBom(packed.toString("utf8")),
+				) as Record<string, unknown>;
 				archivedManifests.set(path, metadata);
 			}
 			return { path, metadata };
@@ -1036,7 +1040,7 @@ export function externalBundledPeers(
 			manifests.set(
 				posix.dirname(name),
 				JSON.parse(
-					contents.toString("utf8"),
+					stripJsonBom(contents.toString("utf8")),
 				) as RegistryVersionMetadata,
 			);
 	const required: {

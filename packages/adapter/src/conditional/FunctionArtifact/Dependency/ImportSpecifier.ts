@@ -15,8 +15,13 @@ import type {
 	PlannedFile,
 	PreparationSettings,
 } from "../.types.ts";
+import { stripJsonBom } from "./Source.ts";
 
 type PackageRequestMode = "import" | "require" | "resolveImport";
+type ResolveImport = (
+	specifier: string,
+	dynamic?: boolean,
+) => LoaderRole | undefined;
 export type PackageSubpathRequests = Map<
 	string,
 	Map<string, Set<PackageRequestMode>>
@@ -76,7 +81,7 @@ export function findRuntimePackageImports(
 			file.path !== "package.json"
 		) {
 			const metadata: unknown = JSON.parse(
-				file.contents.replace(/^\uFEFF/, ""),
+				stripJsonBom(file.contents),
 			);
 			if (
 				metadata &&
@@ -101,6 +106,7 @@ export function findRuntimePackageImports(
 	>();
 	const loadEmittedModule = (
 		url: URL,
+		dynamic = false,
 	): EmittedNamespace | undefined => {
 		const loaded = modules.get(url.href);
 		if (loaded) return loaded.namespace;
@@ -120,7 +126,18 @@ export function findRuntimePackageImports(
 			);
 		let program = programs.get(sourceURL.href);
 		if (!program) {
-			program = parseModule(file.contents);
+			try {
+				program = parseModule(file.contents);
+			} catch (error) {
+				// Node reports this dynamic import's failure to the caller at runtime.
+				if (
+					dynamic &&
+					!isJavaScript(file.path) &&
+					error instanceof SyntaxError
+				)
+					return undefined;
+				throw error;
+			}
 			programs.set(sourceURL.href, program);
 		}
 		addModule(url, program, file.path);
@@ -131,9 +148,10 @@ export function findRuntimePackageImports(
 		program: SyntaxNode,
 		path: string,
 	): void => {
-		const resolveImport = (
-			specifier: string,
-		): LoaderRole | undefined => {
+		const resolveImport: ResolveImport = (
+			specifier,
+			dynamic,
+		) => {
 			const builtin = builtinModuleRole(specifier);
 			if (builtin) return builtin;
 			const target = URL.parse(specifier);
@@ -167,7 +185,7 @@ export function findRuntimePackageImports(
 			// Match Node's file resolution by retaining only nonempty query and fragment values.
 			instance.search = local.search;
 			instance.hash = local.hash;
-			return loadEmittedModule(instance);
+			return loadEmittedModule(instance, dynamic);
 		};
 		const resolveRequire = (
 			specifier: string,
@@ -269,7 +287,7 @@ function findImportedPackageSpecifiers(
 	relativePath: string,
 	strategy: PreparationSettings["dependencyStrategy"],
 	bindings: ReturnType<typeof runtimeLoaderBindings>,
-	resolveImport: (specifier: string) => LoaderRole | undefined,
+	resolveImport: ResolveImport,
 	resolveRequire: (
 		specifier: string,
 		resolveOnly?: boolean,
@@ -300,13 +318,16 @@ function findImportedPackageSpecifiers(
 		modes.add(mode);
 		specifiers.set(importSpecifier, modes);
 	};
-	const inspectModuleImport = (specifier: string): void => {
+	const inspectModuleImport = (
+		specifier: string,
+		dynamic = false,
+	): void => {
 		const url = URL.parse(specifier);
 		if (
 			url?.protocol === "data:" ||
 			isRelativeSpecifier(specifier)
 		) {
-			resolveImport(specifier);
+			resolveImport(specifier, dynamic);
 		} else collectPackageImport(specifier, "import");
 	};
 	const rejectDynamicImport = (detail?: string): never => {
@@ -614,7 +635,7 @@ function findImportedPackageSpecifiers(
 			case "ImportExpression": {
 				const importSpecifier = getStaticString(node.source);
 				if (importSpecifier) {
-					inspectModuleImport(importSpecifier);
+					inspectModuleImport(importSpecifier, true);
 				} else if (
 					!isAstroLoggerImport(node.source, ancestors, bindings)
 				) {
@@ -906,7 +927,7 @@ function emittedNamespace(
 		value: unknown,
 		seen: Set<unknown>,
 	) => ExportBinding,
-	resolveImport: (specifier: string) => LoaderRole | undefined,
+	resolveImport: ResolveImport,
 ): EmittedNamespace {
 	const exports = new Map<
 		string,
@@ -1165,7 +1186,7 @@ export function readRuntimeRequireBindings(
 /** Resolve lexical bindings before inspecting calls, including declarations after a use. */
 function runtimeLoaderBindings(
 	program: SyntaxNode,
-	resolveImport: (specifier: string) => LoaderRole | undefined,
+	resolveImport: ResolveImport,
 	resolveRequire: (
 		specifier: string,
 		seen: Set<unknown>,
@@ -1525,7 +1546,10 @@ function runtimeLoaderBindings(
 		)
 			return "meta";
 		if (value.type === "ImportExpression")
-			return resolveImport(getStaticString(value.source) ?? "");
+			return resolveImport(
+				getStaticString(value.source) ?? "",
+				true,
+			);
 		if (value.type === "AwaitExpression")
 			return roleOf(value.argument, seen);
 		if (

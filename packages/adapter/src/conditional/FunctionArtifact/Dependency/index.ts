@@ -21,6 +21,7 @@ import {
 	readRootRequirementPrecedence,
 	inspectInstalledSource,
 	readInstalledBindingPath,
+	stripJsonBom,
 	parseRuntimeRequirement,
 	type InstalledSource,
 } from "./Source.ts";
@@ -982,7 +983,9 @@ async function readJsonFile<T>(
 	filePath: string,
 ): Promise<T | undefined> {
 	try {
-		return JSON.parse(await readFile(filePath, "utf8")) as T;
+		return JSON.parse(
+			stripJsonBom(await readFile(filePath, "utf8")),
+		) as T;
 	} catch (error) {
 		if (
 			["ENOENT", "ENOTDIR"].includes(

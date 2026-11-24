@@ -27,4 +27,6 @@ distinguish URL-only resolution. Follow retained CommonJS
 directory entrypoints. Determine whether extensionless files are
 modules from their load references. Preserve package-root
 directory errors, accept BOMs in retained manifests, and validate
-bare CommonJS directory requests.
+bare CommonJS directory requests. Preserve runtime fallbacks for
+invalid extensionless dynamic imports and accept BOMs in
+installed and archived manifests.

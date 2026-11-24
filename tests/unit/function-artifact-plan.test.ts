@@ -1510,6 +1510,67 @@ describe("Function Artifact mutation plans", () => {
 		},
 	);
 
+	it.each([
+		{ file: "optional", dynamic: true, accepted: true },
+		{ file: "optional", dynamic: false, accepted: false },
+		{ file: "optional.mjs", dynamic: true, accepted: false },
+	])(
+		"preserves an optional extensionless import fallback ($file, dynamic: $dynamic)",
+		async ({ file, dynamic, accepted }) => {
+			const f = await fixture();
+			await writeFile(
+				new URL(file, f.server),
+				"export const broken = ;",
+			);
+			const request = JSON.stringify("./" + file);
+			const source = dynamic
+				? `export async function observe() { try { const loaded = await import(${request}); return loaded.default; } catch (error) { if (!(error instanceof SyntaxError)) throw error; return "fallback"; } }`
+				: `import ${request};`;
+			await writeFile(
+				new URL("index.js", f.server),
+				source + f.index,
+			);
+			const check = async (cwd: string) => {
+				const { stdout } = await promisify(execFile)(
+					process.execPath,
+					[
+						"--input-type=module",
+						"-e",
+						'import { observe } from "./index.js"; console.log(await observe());',
+					],
+					{ cwd },
+				);
+				expect(stdout.trim()).toBe("fallback");
+			};
+			if (accepted) await check(fileURLToPath(f.server));
+			const before = await snapshot(f.directory);
+			const planning = Effect.runPromise(
+				FunctionArtifact.planPreparation(f.build, f.routePlan, {
+					...settings,
+					dependencyStrategy: "install",
+				}),
+			);
+			if (!accepted) {
+				await expect(planning).rejects.toThrow(
+					/Unexpected token/,
+				);
+				expect(await snapshot(f.directory)).toEqual(before);
+				return;
+			}
+			const plan = await planning;
+			expect(await snapshot(f.directory)).toEqual(before);
+			await Effect.runPromise(
+				FunctionArtifact.applyPreparation(plan),
+			);
+			const isolated = await mkdtemp(
+				join(tmpdir(), "optional-extensionless-"),
+			);
+			directories.push(isolated);
+			await cp(f.server, isolated, { recursive: true });
+			await check(isolated);
+		},
+	);
+
 	it.each(
 		["process", "node:process"].flatMap((specifier) =>
 			[false, true].flatMap((namespace) =>
@@ -4559,6 +4620,7 @@ describe("Function Artifact mutation plans", () => {
 	it.each([
 		"unbundled",
 		"bundled",
+		"bundled BOM",
 		"undeclared bundled peer",
 	] as const)(
 		"validates the required peers of an absent optional package (%s)",
@@ -4632,15 +4694,16 @@ describe("Function Artifact mutation plans", () => {
 					await mkdir(child, { recursive: true });
 					await writeFile(
 						new URL("package.json", child),
-						JSON.stringify({
-							name: "bundled-child",
-							version: "1.0.0",
-							type: "module",
-							main: "index.js",
-							...(bundlePeerOnly
-								? { peerDependencies: { absent: "^3" } }
-								: {}),
-						}),
+						(mode === "bundled BOM" ? "\uFEFF" : "") +
+							JSON.stringify({
+								name: "bundled-child",
+								version: "1.0.0",
+								type: "module",
+								main: "index.js",
+								...(bundlePeerOnly
+									? { peerDependencies: { absent: "^3" } }
+									: {}),
+							}),
 					);
 					await writeFile(
 						new URL("index.js", child),
@@ -7208,6 +7271,7 @@ ${f.index}`,
 			"require" | "require-resolve" | "import-resolve";
 		bracketResolver?: boolean;
 		rejection?: string;
+		manifestBom?: boolean;
 		esmProbe?: "directory-error" | "url";
 		alsoImport?: boolean;
 	};
@@ -8087,6 +8151,24 @@ ${f.index}`,
 			})),
 		),
 		{
+			name: "preserves a BOM in the root archive manifest",
+			manifestBom: true,
+			files: { "index.cjs": 'module.exports = "root";' },
+			required: "root",
+		},
+		{
+			name: "preserves a BOM in a nested directory manifest and archive scope",
+			files: {
+				"index.cjs": 'module.exports = require("./nested");',
+				"nested/package.json":
+					'\uFEFF{"main":"./entry.js","imports":{"#feature":"./value.cjs"}}',
+				"nested/entry.js":
+					'module.exports = require("#feature");',
+				"nested/value.cjs": 'module.exports = "nested";',
+			},
+			required: "nested",
+		},
+		{
 			name: "preserves the directory error for an export of the archive root",
 			manifest: { exports: "./" },
 			files: {},
@@ -8240,6 +8322,7 @@ ${f.index}`,
 			emittedLoader,
 			bracketResolver,
 			rejection,
+			manifestBom,
 			esmProbe,
 			alsoImport,
 		}) => {
@@ -8258,18 +8341,19 @@ ${f.index}`,
 			}
 			await writeFile(
 				new URL("package.json", linked),
-				JSON.stringify({
-					name: "linked",
-					version: "1.0.0",
-					type: "commonjs",
-					exports: pattern
-						? { "./features/*": pattern }
-						: "./index.cjs",
-					...manifest,
-					files: Object.keys(files).filter(
-						(path) => path !== omitted,
-					),
-				}),
+				(manifestBom ? "\uFEFF" : "") +
+					JSON.stringify({
+						name: "linked",
+						version: "1.0.0",
+						type: "commonjs",
+						exports: pattern
+							? { "./features/*": pattern }
+							: "./index.cjs",
+						...manifest,
+						files: Object.keys(files).filter(
+							(path) => path !== omitted,
+						),
+					}),
 			);
 			await mkdir(new URL("node_modules/", f.root), {
 				recursive: true,

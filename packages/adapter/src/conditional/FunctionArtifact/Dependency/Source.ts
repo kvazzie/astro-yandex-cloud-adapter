@@ -29,12 +29,16 @@ export interface InstalledSource {
 	manifest: PackageJson;
 }
 
+export function stripJsonBom(source: string): string {
+	return source.replace(/^\uFEFF/, "");
+}
+
 async function readManifest(
 	path: string,
 ): Promise<PackageJson | undefined> {
 	try {
 		return JSON.parse(
-			await readFile(path, "utf8"),
+			stripJsonBom(await readFile(path, "utf8")),
 		) as PackageJson;
 	} catch (cause) {
 		if (
