@@ -126,6 +126,7 @@ const nodeConditions = {
 };
 
 const unexported = Symbol("unexported package subpath");
+const invalidCapture = Symbol("invalid package subpath capture");
 type ExternalPackageTarget = {
 	specifier: string;
 	binding?: string;
@@ -136,7 +137,8 @@ type PackageTarget =
 	| string
 	| ExternalPackageTarget
 	| false
-	| typeof unexported;
+	| typeof unexported
+	| typeof invalidCapture;
 
 async function selectedPackageTarget(
 	target: unknown,
@@ -160,7 +162,7 @@ async function selectedPackageTarget(
 			if (
 				typeof selected === "string" ||
 				(selected && typeof selected === "object") ||
-				selected === unexported
+				typeof selected === "symbol"
 			)
 				return selected;
 			if (selected !== undefined) fallback = selected;
@@ -209,14 +211,13 @@ function packageTarget(
 				? value
 				: value.replaceAll("*", () => capture)
 			: false;
-	if (
-		invalidPackageSegment(value.slice(2)) ||
-		(capture !== undefined && invalidPackageSegment(capture))
-	)
-		return false;
+	if (invalidPackageSegment(value.slice(2))) return false;
 	const target = new URL(value, packageURL);
 	if (!target.pathname.startsWith(packageURL.pathname))
 		return false;
+	// Node's target arrays only catch invalid targets, not invalid subpaths.
+	if (capture !== undefined && invalidPackageSegment(capture))
+		return invalidCapture;
 	return capture === undefined
 		? target
 		: new URL(target.href.replaceAll("*", () => capture));
@@ -325,6 +326,14 @@ function barePackageName(specifier: string): string | undefined {
 	)?.[1];
 }
 
+function commonJsLookup(
+	request: string,
+): "commonjs" | "directory" {
+	return /(?:\/(?:\.{1,2})?|^\.{1,2})$/.test(request)
+		? "directory"
+		: "commonjs";
+}
+
 const ordinaryRequire = Symbol("ordinary CommonJS lookup");
 
 async function resolvePrivateImport(
@@ -426,7 +435,7 @@ async function manifestEntrypoints(
 			if (manifest.exports == null && mode === "require") {
 				retained.push({
 					target: resolve(directory, request),
-					lookup: /\/$/.test(request) ? "directory" : "commonjs",
+					lookup: commonJsLookup(request),
 				});
 				continue;
 			}
@@ -647,7 +656,9 @@ async function verifyLocalRuntimeFiles(
 						mode,
 					);
 		if (!(selected instanceof URL))
-			return selected === false ? false : unexported;
+			return selected === false || selected === invalidCapture
+				? selected
+				: unexported;
 		const target = packageFilePath(selected);
 		return {
 			specifier,
@@ -851,9 +862,7 @@ async function verifyLocalRuntimeFiles(
 			) {
 				pending.push({
 					target: resolve(dirname(candidate), reference),
-					lookup: /(?:\/(?:\.{1,2})?|^\.{1,2})$/.test(reference)
-						? "directory"
-						: "commonjs",
+					lookup: commonJsLookup(reference),
 				});
 			}
 		});
@@ -897,9 +906,16 @@ async function verifyLocalRuntimeFiles(
 						archived ?? scope,
 						name,
 					);
+					const bundledManifest =
+						binding &&
+						archivePath(join(binding, "package.json"));
+					const bundled =
+						!!bundledManifest && files.has(bundledManifest);
 					if (
-						archived?.path !== scope.path &&
-						(!binding || planned?.installedDirectory !== binding)
+						binding
+							? planned?.installedDirectory !== binding &&
+								!bundled
+							: archived?.path !== scope.path
 					)
 						throw new Error(
 							`The Function Artifact cannot preserve private dependency "${name}" from ${scope.path}. Declare it as a runtime dependency.`,
@@ -910,8 +926,7 @@ async function verifyLocalRuntimeFiles(
 						planned.localDirectory === binding
 					)
 						queueDependencyFile(planned.location, request);
-					else if (request && archivePath(request.target))
-						pending.push(request);
+					else if (request && bundled) pending.push(request);
 				}
 			}
 		}

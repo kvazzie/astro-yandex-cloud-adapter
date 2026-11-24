@@ -234,7 +234,7 @@ function findImportedPackageSpecifiers(
 	>();
 	const collectPackageImport = (
 		importSpecifier: string,
-		mode?: PackageLoader,
+		mode: PackageLoader,
 	): void => {
 		if (
 			importSpecifier.endsWith(".node") &&
@@ -250,10 +250,7 @@ function findImportedPackageSpecifiers(
 		const modes =
 			specifiers.get(importSpecifier) ??
 			new Set<PackageLoader>();
-		for (const loader of mode
-			? [mode]
-			: (["import", "require"] as const))
-			modes.add(loader);
+		modes.add(mode);
 		specifiers.set(importSpecifier, modes);
 	};
 	const inspectModuleImport = (specifier: string): void => {
@@ -309,7 +306,8 @@ function findImportedPackageSpecifiers(
 		if (
 			role === "factory" ||
 			role === "require" ||
-			role === "resolve" ||
+			role === "resolveImport" ||
+			role === "resolveRequire" ||
 			role === "module" ||
 			role === "meta" ||
 			role === "builtin"
@@ -579,11 +577,7 @@ function findImportedPackageSpecifiers(
 				if (!isSyntaxNode(callee)) return;
 				const role = bindingRole(callee);
 				const resolves =
-					role === "resolve" ||
-					(callee.type === "MemberExpression" &&
-						!callee.computed &&
-						isIdentifier(callee.property, "resolve") &&
-						bindingRole(callee.object) === "require");
+					role === "resolveImport" || role === "resolveRequire";
 				const requires =
 					role === "require" ||
 					(isUnbound(callee) &&
@@ -593,7 +587,7 @@ function findImportedPackageSpecifiers(
 				const args = Array.isArray(parameters)
 					? (parameters as unknown[])
 					: [];
-				if (role === "resolve" && args.length !== 1)
+				if (resolves && args.length !== 1)
 					rejectDynamicImport(
 						"resolution options or additional arguments are not accounted for; use require.resolve('package') or import.meta.resolve('package') without options",
 					);
@@ -609,7 +603,7 @@ function findImportedPackageSpecifiers(
 					);
 				collectPackageImport(
 					specifier,
-					requires || role !== "resolve" ? "require" : undefined,
+					role === "resolveImport" ? "import" : "require",
 				);
 				return;
 			}
@@ -987,7 +981,8 @@ type LoaderRole =
 	| EmittedNamespace
 	| "factory"
 	| "require"
-	| "resolve"
+	| "resolveImport"
+	| "resolveRequire"
 	| "module"
 	| "meta"
 	| "process"
@@ -1040,7 +1035,9 @@ function loaderPropertyRole(
 		if (property === "default") return "process";
 	}
 	if (role === "meta" && property === "resolve")
-		return "resolve";
+		return "resolveImport";
+	if (role === "require" && property === "resolve")
+		return "resolveRequire";
 	return undefined;
 }
 
@@ -1608,11 +1605,11 @@ function runtimeLoaderBindings(
 				if (selected) return selected;
 			}
 			if (
-				property === "resolve" &&
-				(role === "meta" ||
-					(!value.computed && role === "require"))
+				value.computed &&
+				role === "meta" &&
+				property === "resolve"
 			)
-				return "resolve";
+				return "resolveImport";
 		}
 		if (value.type === "CallExpression") {
 			const role = roleOf(value.callee, seen);

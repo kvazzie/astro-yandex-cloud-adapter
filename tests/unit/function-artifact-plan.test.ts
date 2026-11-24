@@ -17,7 +17,7 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import * as Effect from "effect/Effect";
@@ -7137,7 +7137,9 @@ ${f.index}`,
 		installedFiles?: Record<string, string>;
 		fmtBinding?: "absent" | "shared" | "symlink" | "distinct";
 		imported?: string;
-		emittedLoader?: "require";
+		emittedLoader?:
+			"require" | "require-resolve" | "import-resolve";
+		rejection?: string;
 	};
 	it.each<ArchiveResolutionCase>([
 		{
@@ -7334,6 +7336,50 @@ ${f.index}`,
 					required: "legacy directory",
 				},
 			],
+		),
+		...(["tools", "tools/.", "tools/sub/.."] as const).map(
+			(request) => ({
+				name: `matches Node's CommonJS lookup for ${request} with a sibling file`,
+				specifier: `linked/${request}`,
+				emittedLoader: "require" as const,
+				manifest: { exports: null },
+				files: {
+					"index.js": 'module.exports = "root";',
+					"tools.js": 'module.exports = "file";',
+					"tools/package.json": '{"main":"./entry.js"}',
+					"tools/sub/marker.txt": "keeps the subdirectory",
+					"tools/entry.js": 'module.exports = "directory";',
+				},
+				omitted: "tools/entry.js",
+				omissionAllowed: request === "tools",
+				required: request === "tools" ? "file" : "directory",
+			}),
+		),
+		...(["require-resolve", "import-resolve"] as const).map(
+			(emittedLoader) => ({
+				name: `preserves the loader mode of an aliased ${emittedLoader}`,
+				specifier: "linked/tools?tag",
+				emittedLoader,
+				manifest: { exports: null },
+				files: {
+					"index.js": 'module.exports = "root";',
+					"tools?tag.js": 'module.exports = "literal filename";',
+					tools: 'module.exports = "URL pathname";',
+				},
+				omitted:
+					emittedLoader === "require-resolve"
+						? "tools"
+						: "tools?tag.js",
+				omissionAllowed: true,
+				required:
+					emittedLoader === "require-resolve"
+						? "literal filename"
+						: undefined,
+				imported:
+					emittedLoader === "import-resolve"
+						? "URL pathname"
+						: undefined,
+			}),
 		),
 		{
 			name: "follows an extensionless exact ESM entry",
@@ -7740,12 +7786,15 @@ ${f.index}`,
 		...(
 			[
 				"invalid",
+				"invalid capture",
 				"blocked",
 				"missing target",
 				"selected",
 			] as const
 		).flatMap((target) =>
-			(target === "blocked" || target === "missing target"
+			(target === "blocked" ||
+			target === "missing target" ||
+			target === "invalid capture"
 				? [false]
 				: [false, true]
 			).map((complete) => {
@@ -7758,7 +7807,9 @@ ${f.index}`,
 						dependencies: { fmt: "workspace:*" },
 						imports: {
 							"#feature": [
-								"fmt/features/tool.cjs?variant",
+								target === "invalid capture"
+									? "fmt/features/node_modules/tool"
+									: "fmt/features/tool.cjs?variant",
 								"./fallback.cjs",
 							],
 						},
@@ -7775,6 +7826,7 @@ ${f.index}`,
 							exports: {
 								"./features/*": {
 									invalid: "invalid-target",
+									"invalid capture": "./src/*.cjs",
 									blocked: null,
 									"missing target": "./src/missing/*.cjs",
 									selected: "./src/*.js",
@@ -7800,7 +7852,9 @@ ${f.index}`,
 							? "external"
 							: target === "blocked"
 								? "ERR_PACKAGE_PATH_NOT_EXPORTED"
-								: "MODULE_NOT_FOUND",
+								: target === "invalid capture"
+									? "ERR_INVALID_MODULE_SPECIFIER"
+									: "MODULE_NOT_FOUND",
 				};
 			}),
 		),
@@ -7812,6 +7866,29 @@ ${f.index}`,
 			omitted: "src/entry.cjs",
 			required: "variant",
 		},
+		...([false, true] as const).map((declared) => ({
+			name: `preserves a private external binding with its original scope (declared: ${declared})`,
+			fmtBinding: "shared" as const,
+			manifest: {
+				imports: { "#fmt": "fmt/entry.cjs" },
+				...(declared
+					? { dependencies: { fmt: "workspace:*" } }
+					: {}),
+			},
+			files: {
+				"index.cjs": 'module.exports = require("#fmt");',
+			},
+			installedFiles: {
+				"packages/fmt/package.json":
+					'{"name":"fmt","version":"1.0.0"}',
+				"packages/fmt/entry.cjs":
+					'module.exports = "fmt entry";',
+			},
+			rejection: declared
+				? undefined
+				: 'cannot preserve private dependency "fmt"',
+			required: "fmt entry",
+		})),
 		...(
 			["absent", "shared", "symlink", "distinct"] as const
 		).map((fmtBinding) => ({
@@ -7920,6 +7997,7 @@ ${f.index}`,
 			installedFiles,
 			fmtBinding,
 			emittedLoader,
+			rejection,
 		}) => {
 			const f = await fixture();
 			const linked = new URL("packages/linked/", f.root);
@@ -7928,8 +8006,8 @@ ${f.index}`,
 				[f.root, installedFiles ?? {}],
 			] as const) {
 				for (const [path, contents] of Object.entries(entries)) {
-					const file = new URL(path, base);
-					await mkdir(new URL(".", file), { recursive: true });
+					const file = join(fileURLToPath(base), path);
+					await mkdir(dirname(file), { recursive: true });
 					await writeFile(file, contents);
 				}
 			}
@@ -7981,12 +8059,12 @@ ${f.index}`,
 				const require = createRequire(
 					join(directory, "package.json"),
 				);
-				if (required === undefined) {
-					expect(() => {
-						require(specifier);
-					}).toThrow(/Cannot find module/);
-				} else {
-					const loaded: unknown = require(specifier);
+				if (required !== undefined) {
+					const loaded: unknown = require(
+						emittedLoader === "require-resolve"
+							? require.resolve(specifier)
+							: specifier,
+					);
 					const value =
 						loaded &&
 						typeof loaded === "object" &&
@@ -7994,6 +8072,10 @@ ${f.index}`,
 							? loaded.default
 							: loaded;
 					expect(value).toBe(required);
+				} else if (emittedLoader !== "import-resolve") {
+					expect(() => {
+						require(specifier);
+					}).toThrow(/Cannot find module/);
 				}
 				for (const [request, expected] of Object.entries(
 					alsoResolves ?? {},
@@ -8005,7 +8087,9 @@ ${f.index}`,
 						[
 							"--input-type=module",
 							"-e",
-							`import value from ${JSON.stringify(specifier)}; console.log(value);`,
+							emittedLoader === "import-resolve"
+								? `const { resolve: select } = import.meta; console.log((await import(select(${JSON.stringify(specifier)}))).default);`
+								: `import value from ${JSON.stringify(specifier)}; console.log(value);`,
 						],
 						{ cwd: directory },
 					);
@@ -8018,7 +8102,11 @@ ${f.index}`,
 				`${
 					emittedLoader === "require"
 						? `import { createRequire } from "node:module"; createRequire(import.meta.url)(${JSON.stringify(specifier)});`
-						: `import ${JSON.stringify(specifier)};`
+						: emittedLoader === "require-resolve"
+							? `import { createRequire } from "node:module"; const req = createRequire(import.meta.url); const select = req.resolve; select(${JSON.stringify(specifier)});`
+							: emittedLoader === "import-resolve"
+								? `const { resolve: select } = import.meta; select(${JSON.stringify(specifier)});`
+								: `import ${JSON.stringify(specifier)};`
 				}${f.index}`,
 			);
 			const before = await snapshot(f.directory);
@@ -8035,12 +8123,18 @@ ${f.index}`,
 					),
 				),
 			);
-			const missing = omissionAllowed ? undefined : omitted;
-			if (missing) {
+			const expectedRejection =
+				rejection ??
+				(omitted && !omissionAllowed
+					? fmtBinding === "absent"
+						? "fmt"
+						: `omits ${omitted}`
+					: undefined);
+			if (expectedRejection) {
 				expect(outcome._tag).toBe("Left");
 				if (outcome._tag === "Left")
 					expect(String(outcome.left)).toContain(
-						fmtBinding === "absent" ? "fmt" : `omits ${missing}`,
+						expectedRejection,
 					);
 			} else {
 				if (outcome._tag === "Left") throw outcome.left;

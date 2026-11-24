@@ -14,3 +14,7 @@ when the clean artifact preserves its private dependency binding.
 Validate legacy subpath requests using the emitted loader,
 preserve CommonJS private import errors, and follow private
 targets into their selected dependency archives.
+
+Preserve directory-only CommonJS lookups and the loader mode of
+resolver aliases. Reject missing private dependency bindings and
+retain Node’s terminal errors for invalid wildcard captures.
