@@ -7371,34 +7371,36 @@ ${f.index}`,
 					bracketResolver: false,
 				},
 			] as const
-		).map(({ emittedLoader, bracketResolver }) => ({
-			name: bracketResolver
-				? "accepts a fixed bracket resolver alias"
-				: `preserves the loader mode of an aliased ${emittedLoader}`,
-			specifier: "linked/tools%20tag.cjs",
-			emittedLoader,
-			bracketResolver,
-			manifest: { exports: null },
-			files: {
-				"index.js": 'module.exports = "root";',
-				"tools%20tag.cjs":
-					'module.exports = "literal filename";',
-				"tools tag.cjs": 'module.exports = "URL pathname";',
-			},
-			omitted:
-				emittedLoader === "require-resolve"
-					? "tools tag.cjs"
-					: "tools%20tag.cjs",
-			omissionAllowed: true,
-			required:
-				emittedLoader === "require-resolve"
-					? "literal filename"
-					: undefined,
-			imported:
-				emittedLoader === "import-resolve"
-					? "URL pathname"
-					: undefined,
-		})),
+		).flatMap(({ emittedLoader, bracketResolver }) =>
+			[false, true].map((omitSelected) => ({
+				name: bracketResolver
+					? `checks bracket resolver (selected file omitted: ${omitSelected})`
+					: `checks ${emittedLoader} (selected file omitted: ${omitSelected})`,
+				specifier: "linked/tools%20tag.cjs",
+				emittedLoader,
+				bracketResolver,
+				manifest: { exports: null },
+				files: {
+					"index.js": 'module.exports = "root";',
+					"tools%20tag.cjs":
+						'module.exports = "literal filename";',
+					"tools tag.cjs": 'module.exports = "URL pathname";',
+				},
+				omitted:
+					(emittedLoader === "require-resolve") === omitSelected
+						? "tools%20tag.cjs"
+						: "tools tag.cjs",
+				omissionAllowed: !omitSelected,
+				required:
+					emittedLoader === "require-resolve"
+						? "literal filename"
+						: undefined,
+				imported:
+					emittedLoader === "import-resolve"
+						? "URL pathname"
+						: undefined,
+			})),
+		),
 		{
 			name: "follows an extensionless exact ESM entry",
 			manifest: { exports: "./entry", type: "module" },
@@ -7907,6 +7909,73 @@ ${f.index}`,
 				: 'cannot preserve private dependency "fmt"',
 			required: "fmt entry",
 		})),
+		...([false, true] as const).map((declared) => ({
+			name: `skips a file shadowing the external package (declared: ${declared})`,
+			fmtBinding: "shared" as const,
+			manifest: {
+				imports: { "#fmt": "fmt/entry.cjs" },
+				...(declared
+					? { dependencies: { fmt: "workspace:*" } }
+					: {}),
+			},
+			files: {
+				"index.cjs": 'module.exports = require("#fmt");',
+				"node_modules/fmt": "a file cannot provide the package",
+			},
+			installedFiles: {
+				"packages/fmt/package.json":
+					'{"name":"fmt","version":"1.0.0"}',
+				"packages/fmt/entry.cjs":
+					'module.exports = "ancestor fmt";',
+			},
+			rejection: declared
+				? undefined
+				: 'cannot preserve private dependency "fmt"',
+			required: "ancestor fmt",
+		})),
+		...([false, true] as const).flatMap((external) =>
+			([false, true] as const).map(
+				(packed): ArchiveResolutionCase => ({
+					name: `preserves directory import errors (external: ${external}, packed: ${packed})`,
+					fmtBinding: external ? "shared" : undefined,
+					manifest: {
+						imports: {
+							"#entry": external ? "fmt/feature" : "./folder",
+						},
+						...(external
+							? { dependencies: { fmt: "workspace:*" } }
+							: {}),
+					},
+					files: {
+						"index.cjs":
+							'module.exports = import("#entry").then(() => "loaded", error => { if (error.code !== "ERR_UNSUPPORTED_DIR_IMPORT") throw error; return "directory fallback"; });',
+						...(!external
+							? { "folder/marker.txt": "keeps the directory" }
+							: {}),
+					},
+					installedFiles: external
+						? {
+								"packages/fmt/package.json": JSON.stringify({
+									name: "fmt",
+									version: "1.0.0",
+									exports: { "./feature": "./folder" },
+									files: packed ? ["folder/marker.txt"] : [],
+								}),
+								"packages/fmt/folder/marker.txt":
+									"keeps the directory",
+							}
+						: undefined,
+					omitted:
+						!external && !packed
+							? "folder/marker.txt"
+							: undefined,
+					rejection: packed
+						? undefined
+						: "omits directory folder",
+					required: "directory fallback",
+				}),
+			),
+		),
 		...(
 			[
 				"legacy subpath",
@@ -8116,7 +8185,7 @@ ${f.index}`,
 					join(directory, "package.json"),
 				);
 				if (required !== undefined) {
-					const loaded: unknown = require(
+					const loaded: unknown = await require(
 						emittedLoader === "require-resolve"
 							? require.resolve(specifier)
 							: specifier,
@@ -8221,6 +8290,59 @@ ${f.index}`,
 				);
 				await assertNodeLoads(isolated);
 			}
+		},
+	);
+
+	it.each([
+		{ resolver: ".resolve", retained: false },
+		{ resolver: '["resolve"]', retained: false },
+		{ resolver: ".resolve", retained: true },
+		{ resolver: '["resolve"]', retained: true },
+	])(
+		"checks the relative CommonJS resolver target ($resolver, retained: $retained)",
+		async ({ resolver, retained }) => {
+			const f = await fixture();
+			const relativeTarget = retained
+				? "./asset.bin"
+				: "../feature.cjs";
+			const file = new URL(relativeTarget, f.server);
+			if (!retained)
+				await writeFile(file, 'module.exports = "source only";');
+			const entry = new URL("index.js", f.server);
+			const source = `import {createRequire} from "node:module"; const req = createRequire(import.meta.url); export const resolved = req${resolver}(${JSON.stringify(relativeTarget)});`;
+			await writeFile(entry, `${source}\n${f.index}`);
+			expect(createRequire(entry).resolve(relativeTarget)).toBe(
+				await realpath(file),
+			);
+			const before = await snapshot(f.directory);
+			const planning = Effect.runPromise(
+				FunctionArtifact.planPreparation(f.build, f.routePlan, {
+					...settings,
+					dependencyStrategy: "install",
+				}),
+			);
+			if (!retained) {
+				await expect(planning).rejects.toThrow(
+					/does not name a retained file/,
+				);
+				expect(await snapshot(f.directory)).toEqual(before);
+				return;
+			}
+			const plan = await planning;
+			expect(await snapshot(f.directory)).toEqual(before);
+			await Effect.runPromise(
+				FunctionArtifact.applyPreparation(plan),
+			);
+			const isolated = await mkdtemp(
+				join(tmpdir(), "relative-resolver-"),
+			);
+			directories.push(isolated);
+			await cp(f.server, isolated, { recursive: true });
+			expect(
+				createRequire(join(isolated, "index.js")).resolve(
+					relativeTarget,
+				),
+			).toBe(await realpath(join(isolated, "asset.bin")));
 		},
 	);
 

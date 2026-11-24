@@ -105,7 +105,7 @@ function packedFiles(bytes: Buffer): Map<string, Buffer> {
 }
 
 type ArchiveLookup =
-	"exact" | "commonjs" | "directory" | "asset";
+	"exact" | "import" | "commonjs" | "directory" | "asset";
 type ArchiveRequest = { target: string; lookup: ArchiveLookup };
 type LoaderMode = keyof typeof nodeConditions;
 
@@ -451,7 +451,11 @@ async function manifestEntrypoints(
 						);
 			const path =
 				target instanceof URL && packageFilePath(target);
-			if (path) retained.push({ target: path, lookup: "exact" });
+			if (path)
+				retained.push({
+					target: path,
+					lookup: mode === "import" ? "import" : "exact",
+				});
 		}
 	}
 	if (manifest.exports == null) {
@@ -709,7 +713,10 @@ async function verifyLocalRuntimeFiles(
 			missing,
 			request:
 				target && !missing
-					? { target, lookup: "exact" }
+					? {
+							target,
+							lookup: mode === "import" ? "import" : "exact",
+						}
 					: undefined,
 		};
 	};
@@ -811,7 +818,25 @@ async function verifyLocalRuntimeFiles(
 			candidate = entry.candidate;
 			directoryManifest = entry.manifestPath;
 		}
-		if (!candidate) continue;
+		if (!candidate) {
+			if (
+				lookup === "import" &&
+				(await statInstalledPath(target))?.isDirectory() &&
+				target !== directory
+			) {
+				const relativeTarget = archivePath(target);
+				if (
+					!relativeTarget ||
+					![...files.keys()].some((path) =>
+						path.startsWith(relativeTarget + "/"),
+					)
+				)
+					throw new Error(
+						`The npm archive of the local runtime package at ${directory} omits directory ${relativeTarget ?? target}. Include a file in this directory to preserve Node's directory import error.`,
+					);
+			}
+			continue;
+		}
 		const contents = requirePacked(candidate);
 		if (lookup === "asset") continue;
 		if (directoryManifest) requirePacked(directoryManifest);
@@ -841,7 +866,7 @@ async function verifyLocalRuntimeFiles(
 		const url = pathToFileURL(candidate);
 		const addLocalReference = (
 			reference: string,
-			lookup: "exact" | "asset",
+			lookup: "import" | "asset",
 		) => {
 			try {
 				const path = packageFilePath(new URL(reference, url));
@@ -862,7 +887,7 @@ async function verifyLocalRuntimeFiles(
 		visitSyntax(syntax, (node) => {
 			const module = staticModuleReference(node);
 			if (module?.startsWith("."))
-				addLocalReference(module, "exact");
+				addLocalReference(module, "import");
 			if (module?.startsWith("#"))
 				privateImports.push({
 					specifier: module,
@@ -929,7 +954,10 @@ async function verifyLocalRuntimeFiles(
 				if (selected instanceof URL) {
 					const path = packageFilePath(selected);
 					if (path)
-						pending.push({ target: path, lookup: "exact" });
+						pending.push({
+							target: path,
+							lookup: mode === "import" ? "import" : "exact",
+						});
 				} else if (selected && typeof selected === "object") {
 					const {
 						specifier: target,

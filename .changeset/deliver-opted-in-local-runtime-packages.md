@@ -19,4 +19,7 @@ Preserve directory-only CommonJS lookups and the loader mode of
 resolver aliases. Reject missing private dependency bindings and
 retain Node’s terminal errors for invalid wildcard captures.
 Preserve missing-module fallbacks for private imports and accept
-fixed bracket access to the CommonJS resolver.
+fixed bracket access to the CommonJS resolver. Validate directory
+import errors and relative CommonJS resolver targets against the
+artifact, and skip files during installed package directory
+lookup.

@@ -100,6 +100,7 @@ export function findRuntimePackageImports(
 		};
 		const resolveRequire = (
 			specifier: string,
+			resolveOnly = false,
 		): string | undefined => {
 			if (
 				url.protocol !== "file:" ||
@@ -117,7 +118,8 @@ export function findRuntimePackageImports(
 				const path = target + suffix;
 				const candidate = pathToFileURL(path).href;
 				if (emittedFiles.has(candidate))
-					return modules.has(candidate) ||
+					return resolveOnly ||
+						modules.has(candidate) ||
 						/\.(json|node)$/.test(path)
 						? candidate
 						: undefined;
@@ -226,7 +228,10 @@ function findImportedPackageSpecifiers(
 	strategy: PreparationSettings["dependencyStrategy"],
 	bindings: ReturnType<typeof runtimeLoaderBindings>,
 	resolveImport: (specifier: string) => LoaderRole | undefined,
-	resolveRequire: (specifier: string) => string | undefined,
+	resolveRequire: (
+		specifier: string,
+		resolveOnly?: boolean,
+	) => string | undefined,
 ) {
 	const specifiers = new Map<
 		BareImportSpecifier,
@@ -594,12 +599,12 @@ function findImportedPackageSpecifiers(
 				const specifier =
 					getStaticString(args[0]) ?? rejectDynamicImport();
 				if (
-					requires &&
+					(requires || role === "resolveRequire") &&
 					isRelativeSpecifier(specifier) &&
-					!resolveRequire(specifier)
+					!resolveRequire(specifier, role === "resolveRequire")
 				)
 					rejectDynamicImport(
-						`relative require "${specifier}" does not name a retained file supported by the Function Artifact`,
+						`relative ${role === "resolveRequire" ? "require.resolve" : "require"} "${specifier}" does not name a retained file supported by the Function Artifact`,
 					);
 				collectPackageImport(
 					specifier,

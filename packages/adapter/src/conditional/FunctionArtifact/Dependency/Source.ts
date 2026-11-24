@@ -59,7 +59,9 @@ export async function readInstalledBindingPath(
 		`${name}/package.json`,
 	) ?? []) {
 		try {
-			return await realpath(join(modules, name));
+			const candidate = await realpath(join(modules, name));
+			if ((await stat(candidate)).isDirectory())
+				return candidate;
 		} catch (cause) {
 			if (
 				!["ENOENT", "ENOTDIR"].includes(
