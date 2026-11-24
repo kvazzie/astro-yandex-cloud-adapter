@@ -288,11 +288,17 @@ export function staticLocalAssetReference(
 	const [source, base] = node.arguments as unknown[];
 	const reference = getStaticString(source);
 	if (
-		reference?.startsWith(".") &&
+		reference &&
+		!/^[/\\]/.test(reference.trimStart()) &&
+		!URL.canParse(reference) &&
 		isSyntaxNode(base) &&
 		base.type === "MemberExpression" &&
 		isSyntaxNode(base.object) &&
-		base.object.type === "MetaProperty"
+		base.object.type === "MetaProperty" &&
+		(base.computed
+			? getStaticString(base.property) === "url"
+			: isSyntaxNode(base.property) &&
+				base.property.name === "url")
 	)
 		return reference;
 }

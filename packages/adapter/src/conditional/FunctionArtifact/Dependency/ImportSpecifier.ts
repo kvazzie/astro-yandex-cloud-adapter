@@ -1172,8 +1172,13 @@ function runtimeLoaderBindings(
 	const scopes = readLexicalScopes<Binding>(
 		program,
 		(node, scope, outer, ancestors, isFunction) => {
-			if (commonjs && node.type === "Program")
-				scope.bindings.set("require", { role: "require" });
+			if (commonjs && node.type === "Program") {
+				const requireParameter: Binding = { role: "require" };
+				scope.bindings.set("require", requireParameter);
+				scope.parameters = new Map([
+					["require", requireParameter],
+				]);
+			}
 			const parent = ancestors.at(-1);
 			if (
 				(node.type === "FunctionDeclaration" ||
@@ -1228,7 +1233,8 @@ function runtimeLoaderBindings(
 								bodyScope: target,
 								direct:
 									scope === target &&
-									ancestors.at(-2)?.type === "BlockStatement",
+									(ancestors.at(-2)?.type === "BlockStatement" ||
+										ancestors.at(-2)?.type === "Program"),
 							}
 						: {
 								value: node.init,
@@ -1466,11 +1472,14 @@ function runtimeLoaderBindings(
 						)
 							return read(record.previous);
 						// A nested function or conditional initializer can still observe the parameter.
-						if (
-							(!sameFrame || !record.direct) &&
-							read(record.previous) === "process"
-						)
-							return "process";
+						if (!sameFrame || !record.direct) {
+							const previous = read(record.previous);
+							if (
+								previous === "process" ||
+								previous === "require"
+							)
+								return previous;
+						}
 					}
 					const role =
 						record.importValue?.(seen)?.role ??

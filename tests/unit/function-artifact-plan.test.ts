@@ -7120,6 +7120,7 @@ ${f.index}`,
 		name: string;
 		files: Record<string, string>;
 		pattern?: unknown;
+		specifier?: string;
 		manifest?: Record<string, unknown>;
 		omitted?: string;
 		omissionAllowed?: boolean;
@@ -7421,11 +7422,135 @@ ${f.index}`,
 			omitted: "helper.cjs",
 			required: "explicit loader",
 		},
+		{
+			name: "requires a URL asset without a leading dot",
+			manifest: { exports: "./index.mjs" },
+			files: {
+				"index.mjs":
+					'import {readFileSync} from "node:fs"; export default readFileSync(new URL("payload.txt", import.meta.url), "utf8");',
+				"payload.txt": "runtime data",
+			},
+			omitted: "payload.txt",
+			required: "runtime data",
+		},
+		{
+			name: "checks a wildcard reached by the encoded spelling of an overridden export",
+			specifier: "linked/features/a%20b",
+			manifest: {
+				exports: {
+					"./features/*": "./src/*.cjs",
+					"./features/a b": "./override.cjs",
+				},
+			},
+			files: {
+				"src/a b.cjs": 'module.exports = "encoded wildcard";',
+				"override.cjs": 'module.exports = "raw override";',
+			},
+			omitted: "src/a b.cjs",
+			required: "encoded wildcard",
+		},
+		{
+			name: "does not require a wildcard file when both relevant spellings use exact exports",
+			specifier: "linked/features/a%20b",
+			manifest: {
+				exports: {
+					"./features/*": "./src/*.cjs",
+					"./features/a b": "./override.cjs",
+					"./features/a%20b": "./override.cjs",
+				},
+			},
+			files: {
+				"src/a b.cjs": 'module.exports = "unused";',
+				"override.cjs": 'module.exports = "override";',
+			},
+			omitted: "src/a b.cjs",
+			omissionAllowed: true,
+			required: "override",
+		},
+		{
+			name: "does not scan a JavaScript-shaped URL asset as a module",
+			manifest: { exports: "./index.mjs", type: "module" },
+			files: {
+				"index.mjs":
+					'import {readFileSync} from "node:fs"; export default String(readFileSync(new URL("./template.js", import.meta.url), "utf8").includes("sample"));',
+				"template.js": 'import "./sample.js";',
+				"sample.js": 'export default "sample";',
+			},
+			omitted: "sample.js",
+			omissionAllowed: true,
+			required: "true",
+		},
+		{
+			name: "scans a JavaScript file also reached by a module edge",
+			manifest: { exports: "./index.mjs", type: "module" },
+			files: {
+				"index.mjs":
+					'import "./template.js"; export default new URL("./template.js", import.meta.url).pathname.endsWith("template.js") ? "module" : "other";',
+				"template.js": 'import "./sample.js";',
+				"sample.js": 'export default "sample";',
+			},
+			omitted: "sample.js",
+			required: "module",
+		},
+		...([true, false] as const).map((changesResolution) => ({
+			name: changesResolution
+				? "preserves the nested manifest that blocks a private import"
+				: "accepts the missing scope when both private import lookups are blocked",
+			manifest: {
+				imports: {
+					"#feature": changesResolution ? "./root.cjs" : null,
+				},
+			},
+			files: {
+				"index.cjs":
+					'module.exports = require("./nested/index.cjs");',
+				"root.cjs": 'module.exports = "root";',
+				"nested/index.cjs":
+					'try { module.exports = require("#feature"); } catch (error) { if (error.code !== "ERR_PACKAGE_IMPORT_NOT_DEFINED") throw error; module.exports = "fallback"; }',
+				"nested/package.json": '{"imports":{"#feature":null}}',
+			},
+			omitted: "nested/package.json",
+			omissionAllowed: !changesResolution,
+			required: "fallback",
+		})),
+		{
+			name: "follows the wrapper require before a later var initializer",
+			files: {
+				"index.cjs":
+					'module.exports = require("./helper.cjs"); var require = value => value;',
+				"helper.cjs": 'module.exports = "wrapper loader";',
+			},
+			omitted: "helper.cjs",
+			required: "wrapper loader",
+		},
+		{
+			name: "does not use the wrapper require after an unconditional initializer",
+			files: {
+				"index.cjs":
+					'var require = value => value; module.exports = require("./helper.cjs");',
+				"helper.cjs": 'module.exports = "unused";',
+			},
+			omitted: "helper.cjs",
+			omissionAllowed: true,
+			required: "./helper.cjs",
+		},
+		{
+			name: "retains the wrapper require when a conditional initializer need not execute",
+			files: {
+				"index.cjs":
+					'if (false) { var require = value => value; } module.exports = require("./helper.cjs");',
+				"helper.cjs":
+					'module.exports = "conditional wrapper loader";',
+			},
+			omitted: "helper.cjs",
+			required: "conditional wrapper loader",
+		},
 	])(
 		"validates Node archive resolution ($name)",
 		async ({
 			files,
 			pattern,
+			specifier: explicitSpecifier,
 			manifest,
 			omitted,
 			omissionAllowed,
@@ -7460,7 +7585,9 @@ ${f.index}`,
 				new URL("node_modules/linked", f.root),
 				"dir",
 			);
-			const specifier = pattern ? "linked/features/a" : "linked";
+			const specifier =
+				explicitSpecifier ??
+				(pattern ? "linked/features/a" : "linked");
 			const require = createRequire(
 				new URL("package.json", f.root),
 			);

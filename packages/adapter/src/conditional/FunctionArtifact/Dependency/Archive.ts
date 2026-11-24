@@ -119,7 +119,7 @@ const nodeConditions = {
 	]),
 };
 
-type PackageTarget = URL | "external" | false;
+type PackageTarget = URL | string | false;
 
 function selectedPackageTarget(
 	target: unknown,
@@ -138,7 +138,10 @@ function selectedPackageTarget(
 				conditions,
 				resolveTarget,
 			);
-			if (selected instanceof URL || selected === "external")
+			if (
+				selected instanceof URL ||
+				typeof selected === "string"
+			)
 				return selected;
 			if (selected !== undefined) fallback = selected;
 		}
@@ -182,7 +185,9 @@ function packageTarget(
 			!value.startsWith("../") &&
 			!value.startsWith("/") &&
 			!URL.canParse(value)
-			? "external"
+			? capture === undefined
+				? value
+				: value.replaceAll("*", () => capture)
 			: false;
 	if (
 		invalidPackageSegment(value.slice(2)) ||
@@ -292,7 +297,7 @@ async function manifestEntrypoints(
 			.filter((key) => key.startsWith("./")),
 	);
 	const exactExports = new Set(exportMap.map(([key]) => key));
-	const targets: { key: string; match: RegExp }[] = [];
+	const targets: { key: string; match: RegExp; url: URL }[] = [];
 	const addExport = (url: URL, key: string) => {
 		const file = packageFilePath(url);
 		if (!file) return;
@@ -322,7 +327,7 @@ async function manifestEntrypoints(
 				parts.slice(1).join("(?:\\1)") +
 				"$",
 		);
-		targets.push({ key, match });
+		targets.push({ key, match, url });
 	};
 	if (
 		manifest.exports === undefined ||
@@ -363,16 +368,27 @@ async function manifestEntrypoints(
 			followSymbolicLinks: false,
 			ignore: ["**/node_modules/**"],
 		})) {
-			for (const { key, match } of targets) {
+			const path = join(directory, file);
+			for (const { key, match, url } of targets) {
 				const capture = match.exec(file)?.[1];
 				if (!capture) continue;
-				const subpath = key.replace("*", () => capture);
-				if (exactExports.has(subpath)) continue;
-				const selected = patterns.find((pattern) =>
-					patternMatches(subpath, pattern),
-				);
-				if (selected?.key === key)
-					entries.set(join(directory, file), "exact");
+				const encoded = capture
+					.split("/")
+					.map(encodeURIComponent)
+					.join("/");
+				for (const spelling of new Set([capture, encoded])) {
+					const subpath = key.replace("*", () => spelling);
+					if (exactExports.has(subpath)) continue;
+					const selected = patterns.find((pattern) =>
+						patternMatches(subpath, pattern),
+					);
+					if (selected?.key !== key) continue;
+					const target = new URL(
+						url.href.replaceAll("*", () => spelling),
+					);
+					if (packageFilePath(target) === path)
+						entries.set(path, "exact");
+				}
 			}
 		}
 	}
@@ -484,6 +500,25 @@ async function verifyLocalRuntimeFiles(
 			if (metadata) return { path, metadata };
 		}
 	};
+	const archivedManifests = new Map<
+		string,
+		Record<string, unknown>
+	>();
+	const archivedScope = (candidate: string) => {
+		for (const path of scopeManifests(candidate)) {
+			const packed = files.get(archivePath(path)!);
+			if (!packed) continue;
+			let metadata = archivedManifests.get(path);
+			if (!metadata) {
+				metadata = JSON.parse(packed.toString("utf8")) as Record<
+					string,
+					unknown
+				>;
+				archivedManifests.set(path, metadata);
+			}
+			return { path, metadata };
+		}
+	};
 	const moduleType = (metadata?: Record<string, unknown>) =>
 		metadata?.type === "module" || metadata?.type === "commonjs"
 			? metadata.type
@@ -491,23 +526,16 @@ async function verifyLocalRuntimeFiles(
 	const selectedModuleType = async (candidate: string) => {
 		const installed = await sourceScope(candidate);
 		const type = moduleType(installed?.metadata);
-		let archivedType: ReturnType<typeof moduleType>;
-		for (const path of scopeManifests(candidate)) {
-			const packed = files.get(archivePath(path)!);
-			if (packed) {
-				archivedType = moduleType(
-					JSON.parse(packed.toString("utf8")) as Record<
-						string,
-						unknown
-					>,
-				);
-				break;
-			}
-		}
-		if (installed && type !== archivedType)
+		if (
+			installed &&
+			type !== moduleType(archivedScope(candidate)?.metadata)
+		)
 			requirePacked(installed.path);
 		return type;
 	};
+	const targetIdentity = (
+		target: ReturnType<typeof resolvePrivateImport>,
+	) => (target instanceof URL ? target.href : (target ?? null));
 	const visited = new Set<string>();
 	while (pending.length) {
 		const { target, lookup } = pending.pop()!;
@@ -542,12 +570,10 @@ async function verifyLocalRuntimeFiles(
 		}
 		if (!candidate) continue;
 		const contents = requirePacked(candidate);
+		if (lookup === "asset") continue;
 		if (directoryManifest) requirePacked(directoryManifest);
 		const extension = extname(candidate);
-		if (
-			![".js", ".mjs", ".cjs"].includes(extension) &&
-			!(extension === "" && lookup !== "asset")
-		)
+		if (!["", ".js", ".mjs", ".cjs"].includes(extension))
 			continue;
 		const format =
 			extension === ".mjs"
@@ -641,9 +667,12 @@ async function verifyLocalRuntimeFiles(
 		if (privateImports.length) {
 			const scope = await sourceScope(candidate);
 			if (!scope) continue;
+			const archived = archivedScope(candidate);
 			const packageURL = pathToFileURL(
 				dirname(scope.path) + sep,
 			);
+			const archivedURL =
+				archived && pathToFileURL(dirname(archived.path) + sep);
 			for (const { specifier, mode } of privateImports) {
 				const selected = resolvePrivateImport(
 					specifier,
@@ -651,7 +680,15 @@ async function verifyLocalRuntimeFiles(
 					packageURL,
 					mode,
 				);
-				if (selected instanceof URL || selected === "external")
+				const packed =
+					archivedURL &&
+					resolvePrivateImport(
+						specifier,
+						archived?.metadata.imports,
+						archivedURL,
+						mode,
+					);
+				if (targetIdentity(selected) !== targetIdentity(packed))
 					requirePacked(scope.path);
 				if (selected instanceof URL) {
 					const path = packageFilePath(selected);
