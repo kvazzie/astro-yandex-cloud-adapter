@@ -22,4 +22,6 @@ Preserve missing-module fallbacks for private imports and accept
 fixed bracket access to the CommonJS resolver. Validate directory
 import errors and relative CommonJS resolver targets against the
 artifact, and skip files during installed package directory
-lookup.
+lookup. Preserve directory errors for package-root imports and
+distinguish URL-only resolution. Follow retained CommonJS
+directory entrypoints.

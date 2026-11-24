@@ -9,18 +9,36 @@ import {
 	type SyntaxNode,
 } from "../../../.emittedModules.ts";
 import { isBuiltin } from "node:module";
-import { basename, dirname, extname, resolve } from "node:path";
+import {
+	basename,
+	dirname,
+	extname,
+	join,
+	resolve,
+} from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
 	PlannedFile,
 	PreparationSettings,
 } from "../.types.ts";
 
-type PackageLoader = "import" | "require";
+type PackageRequestMode = "import" | "require" | "resolveImport";
 export type PackageSubpathRequests = Map<
 	string,
-	Map<string, Set<PackageLoader>>
+	Map<string, Set<PackageRequestMode>>
 >;
+
+export const commonJsExtensions = [
+	".js",
+	".json",
+	".node",
+] as const;
+
+export function commonJsDirectoryRequest(
+	specifier: string,
+): boolean {
+	return /(?:\/(?:\.{1,2})?|^\.{1,2})$/.test(specifier);
+}
 
 /** Inspects the files that will form an artifact, without requiring output files on disk. */
 export function findRuntimePackageImports(
@@ -40,9 +58,45 @@ export function findRuntimePackageImports(
 			"The function artifact contains an unsupported CommonJS module. V1 function artifacts must use ESM.",
 		);
 	const names = new Set<string>();
-	const emittedFiles = new Set(
-		files.map(({ path }) => pathToFileURL(path).href),
+	const emittedFiles = new Map(
+		files.map((file) => [pathToFileURL(file.path).href, file]),
 	);
+	const firstEmittedFile = (
+		target: string,
+		suffixes: readonly string[],
+	) =>
+		suffixes
+			.map((suffix) => pathToFileURL(target + suffix).href)
+			.find((candidate) => emittedFiles.has(candidate));
+	const emittedFile = (target: string) =>
+		firstEmittedFile(target, ["", ...commonJsExtensions]);
+	const emittedIndex = (target: string) =>
+		firstEmittedFile(join(target, "index"), commonJsExtensions);
+	const emittedDirectory = (target: string) => {
+		const file = emittedFiles.get(
+			pathToFileURL(join(target, "package.json")).href,
+		);
+		// Preparation replaces the root manifest with one that has no main field.
+		if (
+			file?.contents !== undefined &&
+			file.path !== "package.json"
+		) {
+			const metadata: unknown = JSON.parse(file.contents);
+			if (
+				metadata &&
+				typeof metadata === "object" &&
+				"main" in metadata &&
+				typeof metadata.main === "string" &&
+				metadata.main
+			) {
+				const main = resolve(target, metadata.main);
+				const candidate =
+					emittedFile(main) ?? emittedIndex(main);
+				if (candidate) return candidate;
+			}
+		}
+		return emittedIndex(target);
+	};
 	const sources = new Map<
 		string,
 		{ program: SyntaxNode; path: string }
@@ -102,29 +156,22 @@ export function findRuntimePackageImports(
 			specifier: string,
 			resolveOnly = false,
 		): string | undefined => {
-			if (
-				url.protocol !== "file:" ||
-				/\/(?:\.{1,2})?$/.test(specifier) ||
-				specifier === "." ||
-				specifier === ".."
-			)
-				return undefined;
+			if (url.protocol !== "file:") return undefined;
 			// CommonJS resolves a filesystem path, where percent escapes are literal.
 			const target = resolve(
 				dirname(fileURLToPath(url)),
 				specifier,
 			);
-			for (const suffix of ["", ".js", ".json", ".node"]) {
-				const path = target + suffix;
-				const candidate = pathToFileURL(path).href;
-				if (emittedFiles.has(candidate))
-					return resolveOnly ||
-						modules.has(candidate) ||
-						/\.(json|node)$/.test(path)
-						? candidate
-						: undefined;
-			}
-			return undefined;
+			const candidate =
+				(commonJsDirectoryRequest(specifier)
+					? undefined
+					: emittedFile(target)) ?? emittedDirectory(target);
+			return candidate &&
+				(resolveOnly ||
+					modules.has(candidate) ||
+					/\.(json|node)$/.test(candidate))
+				? candidate
+				: undefined;
 		};
 		const bindings = runtimeLoaderBindings(
 			program,
@@ -163,13 +210,14 @@ export function findRuntimePackageImports(
 				)) {
 					const name = packageNameFromSpecifier(request);
 					names.add(name);
-					if (requests && request !== name) {
+					if (requests) {
 						const subpaths =
 							requests.get(name) ??
-							new Map<string, Set<PackageLoader>>();
+							new Map<string, Set<PackageRequestMode>>();
 						const subpath = "." + request.slice(name.length);
 						const loaders =
-							subpaths.get(subpath) ?? new Set<PackageLoader>();
+							subpaths.get(subpath) ??
+							new Set<PackageRequestMode>();
 						for (const mode of modes) loaders.add(mode);
 						subpaths.set(subpath, loaders);
 						requests.set(name, subpaths);
@@ -235,11 +283,11 @@ function findImportedPackageSpecifiers(
 ) {
 	const specifiers = new Map<
 		BareImportSpecifier,
-		Set<PackageLoader>
+		Set<PackageRequestMode>
 	>();
 	const collectPackageImport = (
 		importSpecifier: string,
-		mode: PackageLoader,
+		mode: PackageRequestMode,
 	): void => {
 		if (
 			importSpecifier.endsWith(".node") &&
@@ -254,7 +302,7 @@ function findImportedPackageSpecifiers(
 		if (!isBareImportSpecifier(importSpecifier)) return;
 		const modes =
 			specifiers.get(importSpecifier) ??
-			new Set<PackageLoader>();
+			new Set<PackageRequestMode>();
 		modes.add(mode);
 		specifiers.set(importSpecifier, modes);
 	};
@@ -608,7 +656,7 @@ function findImportedPackageSpecifiers(
 					);
 				collectPackageImport(
 					specifier,
-					role === "resolveImport" ? "import" : "require",
+					role === "resolveImport" ? "resolveImport" : "require",
 				);
 				return;
 			}

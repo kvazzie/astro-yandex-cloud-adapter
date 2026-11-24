@@ -7141,6 +7141,8 @@ ${f.index}`,
 			"require" | "require-resolve" | "import-resolve";
 		bracketResolver?: boolean;
 		rejection?: string;
+		esmProbe?: "directory-error" | "url";
+		alsoImport?: boolean;
 	};
 	it.each<ArchiveResolutionCase>([
 		{
@@ -7978,6 +7980,47 @@ ${f.index}`,
 		),
 		...(
 			[
+				"root import",
+				"resolve-only",
+				"resolve and import",
+			] as const
+		).flatMap((operation) =>
+			[false, true].map((packed): ArchiveResolutionCase => ({
+				name: `checks observed ${operation} for a directory (packed: ${packed})`,
+				specifier:
+					operation === "root import"
+						? "linked"
+						: "linked/folder",
+				manifest: {
+					exports:
+						operation === "root import"
+							? "./folder"
+							: { "./folder": "./folder" },
+				},
+				files: { "folder/marker.txt": "keeps the directory" },
+				omitted: packed ? undefined : "folder/marker.txt",
+				omissionAllowed: operation === "resolve-only",
+				rejection:
+					!packed && operation !== "resolve-only"
+						? "omits directory folder"
+						: undefined,
+				emittedLoader:
+					operation === "root import"
+						? undefined
+						: "import-resolve",
+				esmProbe:
+					operation === "resolve-only"
+						? "url"
+						: "directory-error",
+				alsoImport: operation === "resolve and import",
+				imported:
+					operation === "resolve-only"
+						? "folder"
+						: "ERR_UNSUPPORTED_DIR_IMPORT",
+			})),
+		),
+		...(
+			[
 				"legacy subpath",
 				"exported subpath",
 				"legacy root",
@@ -8123,6 +8166,8 @@ ${f.index}`,
 			emittedLoader,
 			bracketResolver,
 			rejection,
+			esmProbe,
+			alsoImport,
 		}) => {
 			const f = await fixture();
 			const linked = new URL("packages/linked/", f.root);
@@ -8207,14 +8252,19 @@ ${f.index}`,
 				))
 					expect(require(request)).toBe(expected);
 				if (imported !== undefined) {
+					const request = JSON.stringify(specifier);
 					const result = await promisify(execFile)(
 						process.execPath,
 						[
 							"--input-type=module",
 							"-e",
-							emittedLoader === "import-resolve"
-								? `const { resolve: select } = import.meta; console.log((await import(select(${JSON.stringify(specifier)}))).default);`
-								: `import value from ${JSON.stringify(specifier)}; console.log(value);`,
+							esmProbe === "url"
+								? `console.log(new URL(import.meta.resolve(${request})).pathname.split("/").at(-1));`
+								: esmProbe === "directory-error"
+									? `${alsoImport ? `import.meta.resolve(${request});` : ""} try { await import(${request}); } catch (error) { console.log(error.code); }`
+									: emittedLoader === "import-resolve"
+										? `const { resolve: select } = import.meta; console.log((await import(select(${request}))).default);`
+										: `import value from ${request}; console.log(value);`,
 						],
 						{ cwd: directory },
 					);
@@ -8230,8 +8280,10 @@ ${f.index}`,
 						: emittedLoader === "require-resolve"
 							? `import { createRequire } from "node:module"; const req = createRequire(import.meta.url); const select = req${bracketResolver ? '["resolve"]' : ".resolve"}; select(${JSON.stringify(specifier)});`
 							: emittedLoader === "import-resolve"
-								? `const { resolve: select } = import.meta; select(${JSON.stringify(specifier)});`
-								: `import ${JSON.stringify(specifier)};`
+								? `const { resolve: select } = import.meta; select(${JSON.stringify(specifier)});${alsoImport ? ` await import(${JSON.stringify(specifier)});` : ""}`
+								: esmProbe === "directory-error"
+									? `try { await import(${JSON.stringify(specifier)}); } catch (error) { if (error.code !== "ERR_UNSUPPORTED_DIR_IMPORT") throw error; }`
+									: `import ${JSON.stringify(specifier)};`
 				}${f.index}`,
 			);
 			const before = await snapshot(f.directory);
@@ -8343,6 +8395,106 @@ ${f.index}`,
 					relativeTarget,
 				),
 			).toBe(await realpath(join(isolated, "asset.bin")));
+		},
+	);
+
+	it.each([
+		{
+			request: "./feature",
+			entry: "feature/index.js",
+			invoke: "req",
+		},
+		{
+			request: "./feature/",
+			entry: "feature/index.js",
+			invoke: "req.resolve",
+		},
+		{
+			request: "./feature/sub/..",
+			entry: "feature/main.cjs.json",
+			invoke: 'req["resolve"]',
+		},
+		{
+			request: "./feature",
+			entry: "feature.js",
+			invoke: "req.resolve",
+		},
+		{
+			request: "../feature/",
+			entry: "../feature/index.js",
+			invoke: "req.resolve",
+		},
+	])(
+		"checks CommonJS directory resolution for $request and $invoke ($entry)",
+		async ({ request, entry, invoke }) => {
+			const f = await fixture();
+			const feature = new URL("feature/", f.server);
+			const selected = new URL(entry, f.server);
+			await mkdir(new URL(".", selected), { recursive: true });
+			await mkdir(feature, { recursive: true });
+			await writeFile(
+				selected,
+				entry.endsWith(".json")
+					? '"selected"'
+					: 'export default "selected";',
+			);
+			if (entry === "feature.js" || entry.endsWith(".json"))
+				await writeFile(
+					new URL("index.js", feature),
+					'export default "wrong index";',
+				);
+			if (entry.endsWith(".json")) {
+				await writeFile(
+					new URL("package.json", feature),
+					'{"main":"./main.cjs"}',
+				);
+				await writeFile(
+					new URL("feature.js", f.server),
+					'export default "wrong file";',
+				);
+			}
+			const from = new URL("index.js", f.server);
+			await writeFile(
+				from,
+				`import {createRequire} from "node:module"; const req = createRequire(import.meta.url); export const selected = ${invoke}(${JSON.stringify(request)});\n${f.index}`,
+			);
+			expect(createRequire(from).resolve(request)).toBe(
+				await realpath(selected),
+			);
+			const planning = Effect.runPromise(
+				FunctionArtifact.planPreparation(f.build, f.routePlan, {
+					...settings,
+					dependencyStrategy: "install",
+				}),
+			);
+			if (entry.startsWith("../")) {
+				await expect(planning).rejects.toThrow(
+					/does not name a retained file/,
+				);
+				return;
+			}
+			await Effect.runPromise(
+				FunctionArtifact.applyPreparation(await planning),
+			);
+			const isolated = await mkdtemp(
+				join(tmpdir(), "directory-resolver-"),
+			);
+			directories.push(isolated);
+			await cp(f.server, isolated, { recursive: true });
+			const result = await promisify(execFile)(
+				process.execPath,
+				[
+					"--input-type=module",
+					"-e",
+					'import { selected } from "./index.js"; console.log(selected.default ?? selected);',
+				],
+				{ cwd: isolated },
+			);
+			expect(result.stdout.trim()).toBe(
+				invoke === "req"
+					? "selected"
+					: await realpath(join(isolated, entry)),
+			);
 		},
 	);
 

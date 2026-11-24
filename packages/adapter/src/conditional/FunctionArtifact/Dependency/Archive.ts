@@ -30,6 +30,8 @@ import {
 } from "../../../.emittedModules.ts";
 import type { PlannedFile } from "../.types.ts";
 import {
+	commonJsDirectoryRequest,
+	commonJsExtensions,
 	readRuntimeRequireBindings,
 	type PackageSubpathRequests,
 } from "./ImportSpecifier.ts";
@@ -330,7 +332,7 @@ function barePackageName(specifier: string): string | undefined {
 function commonJsLookup(
 	request: string,
 ): "commonjs" | "directory" {
-	return /(?:\/(?:\.{1,2})?|^\.{1,2})$/.test(request)
+	return commonJsDirectoryRequest(request)
 		? "directory"
 		: "commonjs";
 }
@@ -432,7 +434,10 @@ async function manifestEntrypoints(
 	};
 	// Resolve emitted requests directly even if URL normalization hides them from the filename scan.
 	for (const [request, modes] of requests ?? []) {
-		for (const mode of modes) {
+		if (manifest.exports == null && request === ".") continue;
+		for (const requestMode of modes) {
+			const mode =
+				requestMode === "resolveImport" ? "import" : requestMode;
 			if (manifest.exports == null && mode === "require") {
 				retained.push({
 					target: resolve(directory, request),
@@ -454,7 +459,7 @@ async function manifestEntrypoints(
 			if (path)
 				retained.push({
 					target: path,
-					lookup: mode === "import" ? "import" : "exact",
+					lookup: requestMode === "import" ? "import" : "exact",
 				});
 		}
 	}
@@ -519,8 +524,6 @@ async function manifestEntrypoints(
 		})),
 	);
 }
-
-const commonJsExtensions = [".js", ".json", ".node"];
 
 function missingPath(error: NodeJS.ErrnoException): boolean {
 	return error.code === "ENOENT" || error.code === "ENOTDIR";
