@@ -7186,17 +7186,24 @@ ${f.index}`,
 			required: "default",
 			imported: "default",
 		},
-		...(["esm/a.mjs", "cjs/a.cjs"] as const).map((omitted) => ({
-			name: `checks both Node loaders when ${omitted} is omitted`,
-			pattern: { import: "./esm/*.mjs", require: "./cjs/*.cjs" },
-			files: {
-				"esm/a.mjs": 'export default "import";',
-				"cjs/a.cjs": 'module.exports = "require";',
-			},
-			omitted,
-			required: "require",
-			imported: "import",
-		})),
+		...(["esm/a.mjs", "cjs/a.cjs", undefined] as const).map(
+			(omitted) => ({
+				name: omitted
+					? `checks both Node loaders when ${omitted} is omitted`
+					: "preserves different wildcard targets for import and require after installation",
+				pattern: {
+					import: "./esm/*.mjs",
+					require: "./cjs/*.cjs",
+				},
+				files: {
+					"esm/a.mjs": 'export default "import";',
+					"cjs/a.cjs": 'module.exports = "require";',
+				},
+				omitted,
+				required: "require",
+				imported: "import",
+			}),
+		),
 		{
 			name: "requires the fallback index's format-defining package scope",
 			files: {
@@ -7707,6 +7714,8 @@ ${f.index}`,
 				"nested/package.json": '{"imports":{"#fmt":"fmt"}}',
 				...(fmtBinding === "distinct"
 					? {
+							"nested/node_modules/fmt/package.json":
+								'{"name":"fmt","version":"1.0.0"}',
 							"nested/node_modules/fmt/index.js":
 								'module.exports = "nearby";',
 						}
@@ -7851,39 +7860,42 @@ ${f.index}`,
 			const specifier =
 				explicitSpecifier ??
 				(pattern ? "linked/features/a" : "linked");
-			const require = createRequire(
-				new URL("package.json", f.root),
-			);
-			if (required === undefined) {
-				expect(() => {
-					require(specifier);
-				}).toThrow(/Cannot find module/);
-			} else {
-				const loaded: unknown = require(specifier);
-				const value =
-					loaded &&
-					typeof loaded === "object" &&
-					"default" in loaded
-						? loaded.default
-						: loaded;
-				expect(value).toBe(required);
-			}
-			for (const [request, expected] of Object.entries(
-				alsoResolves ?? {},
-			))
-				expect(require(request)).toBe(expected);
-			if (imported !== undefined) {
-				const result = await promisify(execFile)(
-					process.execPath,
-					[
-						"--input-type=module",
-						"-e",
-						`import value from ${JSON.stringify(specifier)}; console.log(value);`,
-					],
-					{ cwd: fileURLToPath(f.root) },
+			const assertNodeLoads = async (directory: string) => {
+				const require = createRequire(
+					join(directory, "package.json"),
 				);
-				expect(result.stdout.trim()).toBe(imported);
-			}
+				if (required === undefined) {
+					expect(() => {
+						require(specifier);
+					}).toThrow(/Cannot find module/);
+				} else {
+					const loaded: unknown = require(specifier);
+					const value =
+						loaded &&
+						typeof loaded === "object" &&
+						"default" in loaded
+							? loaded.default
+							: loaded;
+					expect(value).toBe(required);
+				}
+				for (const [request, expected] of Object.entries(
+					alsoResolves ?? {},
+				))
+					expect(require(request)).toBe(expected);
+				if (imported !== undefined) {
+					const result = await promisify(execFile)(
+						process.execPath,
+						[
+							"--input-type=module",
+							"-e",
+							`import value from ${JSON.stringify(specifier)}; console.log(value);`,
+						],
+						{ cwd: directory },
+					);
+					expect(result.stdout.trim()).toBe(imported);
+				}
+			};
+			await assertNodeLoads(fileURLToPath(f.root));
 			await writeFile(
 				new URL("index.js", f.server),
 				`import '${specifier}';${f.index}`,
@@ -7916,16 +7928,12 @@ ${f.index}`,
 				).toHaveLength(1);
 			}
 			expect(await snapshot(f.directory)).toEqual(before);
-			if (
-				fmtBinding &&
-				omissionAllowed &&
-				outcome._tag === "Right"
-			) {
+			if (outcome._tag === "Right") {
 				await Effect.runPromise(
 					FunctionArtifact.applyPreparation(outcome.right),
 				);
 				const isolated = await mkdtemp(
-					join(tmpdir(), "private-binding-"),
+					join(tmpdir(), "archive-resolution-"),
 				);
 				directories.push(isolated);
 				await cp(f.server, isolated, { recursive: true });
@@ -7940,11 +7948,7 @@ ${f.index}`,
 					],
 					{ cwd: isolated },
 				);
-				expect(
-					createRequire(join(isolated, "package.json"))(
-						"linked",
-					),
-				).toBe("shared");
+				await assertNodeLoads(isolated);
 			}
 		},
 	);
