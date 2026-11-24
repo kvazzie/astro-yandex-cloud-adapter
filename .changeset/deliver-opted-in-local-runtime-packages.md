@@ -8,5 +8,6 @@ contexts.
 
 Validate linked package archives against Node’s wildcard export
 paths and package-private imports. Check the file selected by a
-self-reference and allow an omitted manifest when the dependency
-lookup is unchanged.
+self-reference, including fallback arrays, and by static wildcard
+requests after URL normalization. Allow an omitted manifest only
+when the clean artifact preserves its private dependency binding.

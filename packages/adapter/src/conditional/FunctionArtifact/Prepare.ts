@@ -31,9 +31,11 @@ export async function planPackageFiles(
 	registry: Registry,
 	includeLocal = false,
 ): Promise<PlannedFile[]> {
+	const requests = new Map<string, Set<string>>();
 	const dependencyNames = findRuntimePackageImports(
 		files,
 		strategy,
+		includeLocal ? requests : undefined,
 	);
 	if (strategy === "install") {
 		const graph = await resolvePinnedRuntimeDependencies(
@@ -43,7 +45,7 @@ export async function planPackageFiles(
 			includeLocal,
 		);
 		const { dependencies: pinned, files: archives } =
-			await planLocalArchives(graph);
+			await planLocalArchives(graph, requests);
 		return [
 			...archives,
 			{

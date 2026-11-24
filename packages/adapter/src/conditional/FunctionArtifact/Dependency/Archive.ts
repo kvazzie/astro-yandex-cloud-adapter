@@ -31,6 +31,7 @@ import {
 import type { PlannedFile } from "../.types.ts";
 import { readRuntimeRequireBindings } from "./ImportSpecifier.ts";
 import type { ResolvedRuntimeDependency } from "./Metadata.ts";
+import { readInstalledBindingPath } from "./Source.ts";
 import type { RegistryVersionMetadata } from "./Registry.ts";
 
 /** Reads npm's gzip-compressed tar entries in memory without extracting paths. */
@@ -120,7 +121,8 @@ const nodeConditions = {
 	]),
 };
 
-type PackageTarget = URL | string | false;
+const unexported = Symbol("unexported package subpath");
+type PackageTarget = URL | string | false | typeof unexported;
 
 function selectedPackageTarget(
 	target: unknown,
@@ -141,7 +143,8 @@ function selectedPackageTarget(
 			);
 			if (
 				selected instanceof URL ||
-				typeof selected === "string"
+				typeof selected === "string" ||
+				selected === unexported
 			)
 				return selected;
 			if (selected !== undefined) fallback = selected;
@@ -246,8 +249,8 @@ function mappedPackageTarget(
 	map: Record<string, unknown>,
 	packageURL: URL,
 	mode: keyof typeof nodeConditions,
-	allowExternal = false,
-) {
+	resolveExternal?: (target: string) => PackageTarget,
+): PackageTarget | null | undefined {
 	let key = specifier;
 	let capture: string | undefined;
 	if (
@@ -268,8 +271,17 @@ function mappedPackageTarget(
 	return selectedPackageTarget(
 		map[key],
 		nodeConditions[mode],
-		(value) =>
-			packageTarget(value, packageURL, capture, allowExternal),
+		(value) => {
+			const target = packageTarget(
+				value,
+				packageURL,
+				capture,
+				!!resolveExternal,
+			);
+			return typeof target === "string" && resolveExternal
+				? resolveExternal(target)
+				: target;
+		},
 	);
 }
 
@@ -313,72 +325,40 @@ function resolvePrivateImport(
 	)
 		return;
 	const packageURL = pathToFileURL(dirname(scope.path) + sep);
-	const target = mappedPackageTarget(
+	return mappedPackageTarget(
 		specifier,
 		imports as Record<string, unknown>,
 		packageURL,
 		mode,
-		true,
+		(target) => {
+			if (
+				isBuiltin(target) ||
+				exports == null ||
+				typeof name !== "string" ||
+				barePackageName(target) !== name
+			)
+				return target;
+			// Only an invalid self-export lets an enclosing target array try its next item.
+			return (
+				mappedPackageTarget(
+					"." + target.slice(name.length),
+					packageExportMap(exports),
+					packageURL,
+					mode,
+				) ?? unexported
+			);
+		},
 	);
-	// Private bare targets use package resolution from the defining scope.
-	// A self-reference selects an exact file from that scope's own exports.
-	if (
-		typeof target === "string" &&
-		!isBuiltin(target) &&
-		exports != null &&
-		typeof name === "string" &&
-		barePackageName(target) === name
-	)
-		return (
-			mappedPackageTarget(
-				"." + target.slice(name.length),
-				packageExportMap(exports),
-				packageURL,
-				mode,
-			) ?? false
-		);
-	return target;
-}
-
-async function hasSameDependencyLookup(
-	specifier: string,
-	source: PackageScope,
-	archived: PackageScope,
-) {
-	const name = barePackageName(specifier);
-	if (!name) return false;
-	const archiveScope = dirname(archived.path);
-	// Both lookups ascend the same tree once they reach the archived scope.
-	// A dependency found before that shared lookup can change the binding.
-	for (
-		let scope = dirname(source.path);
-		;
-		scope = dirname(scope)
-	) {
-		if (scope === archiveScope) return true;
-		if (scope === dirname(scope)) return false;
-		const found = await stat(
-			join(scope, "node_modules", name),
-		).then(
-			(entry) => entry.isDirectory(),
-			(error: NodeJS.ErrnoException) => {
-				if (missingPath(error)) return false;
-				throw error;
-			},
-		);
-		if (found) return false;
-	}
 }
 
 async function manifestEntrypoints(
 	directory: string,
 	manifest: Record<string, unknown>,
+	requests: ReadonlySet<string> | undefined,
 ): Promise<ArchiveRequest[]> {
 	const entries = new Map<string, ArchiveLookup>();
 	const packageURL = pathToFileURL(directory + sep);
-	const exportMap = Object.entries(
-		packageExportMap(manifest.exports),
-	);
+	const exportMap = packageExportMap(manifest.exports);
 	const targets: { match: RegExp; url: URL }[] = [];
 	const addExport = (url: URL, key: string) => {
 		const file = packageFilePath(url);
@@ -419,7 +399,21 @@ async function manifestEntrypoints(
 	) {
 		entries.set(directory, "directory");
 	} else {
-		for (const [key, target] of exportMap) {
+		// Resolve retained requests before the filename scan: URL parsing can change the target shape.
+		for (const request of requests ?? []) {
+			for (const mode of ["import", "require"] as const) {
+				const target = mappedPackageTarget(
+					request,
+					exportMap,
+					packageURL,
+					mode,
+				);
+				const path =
+					target instanceof URL && packageFilePath(target);
+				if (path) entries.set(path, "exact");
+			}
+		}
+		for (const [key, target] of Object.entries(exportMap)) {
 			const seen = new Set<string>();
 			for (const conditions of Object.values(nodeConditions)) {
 				const selected = selectedPackageTarget(
@@ -486,12 +480,19 @@ function missingPath(error: NodeJS.ErrnoException): boolean {
 async function verifyLocalRuntimeFiles(
 	directory: string,
 	bytes: Buffer,
+	requests: ReadonlySet<string> | undefined,
+	location: string,
+	bindings: ReadonlyMap<string, string | undefined>,
 ): Promise<void> {
 	const files = packedFiles(bytes);
 	const manifest = JSON.parse(
 		files.get("package.json")?.toString("utf8") ?? "{}",
 	) as Record<string, unknown>;
-	const pending = await manifestEntrypoints(directory, manifest);
+	const pending = await manifestEntrypoints(
+		directory,
+		manifest,
+		requests,
+	);
 	const archivePath = (
 		candidate: string,
 	): string | undefined => {
@@ -755,22 +756,49 @@ async function verifyLocalRuntimeFiles(
 				const packed =
 					archived &&
 					resolvePrivateImport(specifier, archived, mode);
-				const dependencyChanged =
+				if (targetIdentity(selected) !== targetIdentity(packed))
+					requirePacked(scope.path);
+				if (
 					typeof selected === "string" &&
 					!isBuiltin(selected) &&
-					archived !== undefined &&
+					archived &&
 					scope.path !== archived.path &&
-					selected === packed &&
-					!(await hasSameDependencyLookup(
-						selected,
-						scope,
-						archived,
-					));
-				if (
-					dependencyChanged ||
-					targetIdentity(selected) !== targetIdentity(packed)
-				)
-					requirePacked(scope.path);
+					selected === packed
+				) {
+					const name = barePackageName(selected);
+					if (!name)
+						throw new Error(
+							`Cannot verify private dependency ${selected} in ${scope.path}.`,
+						);
+					const binding = await readInstalledBindingPath(
+						scope.path,
+						name,
+					);
+					if (
+						binding !==
+						(await readInstalledBindingPath(archived.path, name))
+					)
+						requirePacked(scope.path);
+					// Follow the same node_modules search in the emitted tree, not the build machine.
+					let owner = posix.join(
+						location,
+						posix.dirname(archivePath(archived.path)!),
+					);
+					let planned: string | undefined;
+					while (true) {
+						const slot = posix.join(owner, "node_modules", name);
+						if (bindings.has(slot)) {
+							planned = bindings.get(slot);
+							break;
+						}
+						if (owner === ".") break;
+						owner = posix.dirname(owner);
+					}
+					if (!binding || planned !== binding)
+						throw new Error(
+							`The Function Artifact cannot preserve private dependency "${name}" from ${scope.path}. Declare it as a runtime dependency.`,
+						);
+				}
 				if (selected instanceof URL) {
 					const path = packageFilePath(selected);
 					if (path)
@@ -852,6 +880,7 @@ export function externalBundledPeers(
 /** Packs exact local package files without lifecycle scripts or artifact writes. */
 export async function planLocalArchives(
 	graph: ResolvedRuntimeDependency[],
+	requests: ReadonlyMap<string, ReadonlySet<string>>,
 ): Promise<{
 	dependencies: ResolvedRuntimeDependency[];
 	files: PlannedFile[];
@@ -862,6 +891,12 @@ export async function planLocalArchives(
 		{ resolved: string; integrity: string }
 	>();
 	const dependencies: ResolvedRuntimeDependency[] = [];
+	const bindings = new Map(
+		graph.map((dependency) => [
+			dependency.location,
+			dependency.installedDirectory,
+		]),
+	);
 	for (const dependency of graph) {
 		if (!dependency.localDirectory) {
 			dependencies.push(dependency);
@@ -875,6 +910,11 @@ export async function planLocalArchives(
 			await verifyLocalRuntimeFiles(
 				dependency.localDirectory,
 				bytes,
+				dependency.location === `node_modules/${dependency.name}`
+					? requests.get(dependency.name)
+					: undefined,
+				dependency.location,
+				bindings,
 			);
 			const path = `.yandex/dependencies/${createHash("sha256").update(bytes).digest("hex")}.tgz`;
 			files.set(path, { path, binaryContents: bytes });

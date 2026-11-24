@@ -818,6 +818,9 @@ export async function resolvePinnedRuntimeDependencies(
 			dependency: {
 				name,
 				...(source.inBundle ? { inBundle: true } : {}),
+				...(includeLocal && source.directory
+					? { installedDirectory: source.directory }
+					: {}),
 				...(source.local
 					? { localDirectory: source.directory }
 					: {}),

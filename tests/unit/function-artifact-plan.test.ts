@@ -7135,6 +7135,7 @@ ${f.index}`,
 		required?: string;
 		alsoResolves?: Record<string, string>;
 		installedFiles?: Record<string, string>;
+		fmtBinding?: "absent" | "shared" | "symlink" | "distinct";
 		imported?: string;
 	};
 	it.each<ArchiveResolutionCase>([
@@ -7637,17 +7638,74 @@ ${f.index}`,
 				"linked/features/%27": "override",
 			},
 		},
-		...([false, true] as const).map((shadowed) => ({
-			name: shadowed
-				? "keeps a private import scope with a different dependency lookup"
-				: "accepts an omitted scope with the same private dependency lookup",
-			manifest: { imports: { "#fmt": "fmt" } },
+		{
+			name: "checks the fallback after an invalid self export in a private target array",
+			files: {
+				"index.cjs":
+					'module.exports = require("./nested/index.cjs");',
+				"nested/index.cjs":
+					'module.exports = require("#feature");',
+				"nested/package.json": JSON.stringify({
+					name: "inner",
+					imports: {
+						"#feature": ["inner/feature", "./fallback.cjs"],
+					},
+					exports: { "./feature": "invalid-target" },
+				}),
+				"nested/fallback.cjs": 'module.exports = "fallback";',
+			},
+			omitted: "nested/fallback.cjs",
+			required: "fallback",
+		},
+		...([true, false] as const).map((exported) => ({
+			name: `does not retry a private target array for a ${exported ? "missing file" : "blocked subpath"}`,
+			files: {
+				"index.cjs":
+					'module.exports = require("./nested/index.cjs");',
+				"nested/index.cjs":
+					'try { module.exports = require("#feature"); } catch (error) { module.exports = error.code; }',
+				"nested/package.json": JSON.stringify({
+					name: "inner",
+					imports: {
+						"#feature": ["inner/feature", "./fallback.cjs"],
+					},
+					exports: {
+						"./feature": exported ? "./missing.cjs" : null,
+					},
+				}),
+				"nested/fallback.cjs": 'module.exports = "unused";',
+			},
+			omitted: "nested/fallback.cjs",
+			omissionAllowed: true,
+			required: exported
+				? "MODULE_NOT_FOUND"
+				: "ERR_PACKAGE_PATH_NOT_EXPORTED",
+		})),
+		{
+			name: "checks the file selected by a wildcard request with URL search",
+			specifier: "linked/features/entry.cjs?variant",
+			manifest: { exports: { "./features/*": "./src/*.js" } },
+			files: { "src/entry.cjs": 'module.exports = "variant";' },
+			omitted: "src/entry.cjs",
+			required: "variant",
+		},
+		...(
+			["absent", "shared", "symlink", "distinct"] as const
+		).map((fmtBinding) => ({
+			name: `checks the private dependency binding in the artifact: ${fmtBinding}`,
+			fmtBinding,
+			manifest: {
+				imports: { "#fmt": "fmt" },
+				...(fmtBinding === "absent"
+					? {}
+					: { dependencies: { fmt: "workspace:*" } }),
+			},
 			files: {
 				"index.cjs":
 					'module.exports = require("./nested/index.cjs");',
 				"nested/index.cjs": 'module.exports = require("#fmt");',
 				"nested/package.json": '{"imports":{"#fmt":"fmt"}}',
-				...(shadowed
+				...(fmtBinding === "distinct"
 					? {
 							"nested/node_modules/fmt/index.js":
 								'module.exports = "nearby";',
@@ -7655,12 +7713,14 @@ ${f.index}`,
 					: {}),
 			},
 			installedFiles: {
-				"node_modules/fmt/index.js":
-					'module.exports = "shared";',
+				"packages/fmt/index.js": 'module.exports = "shared";',
+				"packages/fmt/package.json":
+					'{"name":"fmt","version":"1.0.0"}',
 			},
 			omitted: "nested/package.json",
-			omissionAllowed: !shadowed,
-			required: shadowed ? "nearby" : "shared",
+			omissionAllowed:
+				fmtBinding === "shared" || fmtBinding === "symlink",
+			required: fmtBinding === "distinct" ? "nearby" : "shared",
 		})),
 		...(
 			[
@@ -7733,6 +7793,7 @@ ${f.index}`,
 			imported,
 			alsoResolves,
 			installedFiles,
+			fmtBinding,
 		}) => {
 			const f = await fixture();
 			const linked = new URL("packages/linked/", f.root);
@@ -7769,6 +7830,24 @@ ${f.index}`,
 				new URL("node_modules/linked", f.root),
 				"dir",
 			);
+			if (fmtBinding) {
+				const fmt = new URL("packages/fmt/", f.root);
+				await symlink(
+					fmt,
+					new URL("node_modules/fmt", f.root),
+					"dir",
+				);
+				if (fmtBinding === "symlink") {
+					await mkdir(new URL("nested/node_modules/", linked), {
+						recursive: true,
+					});
+					await symlink(
+						fmt,
+						new URL("nested/node_modules/fmt", linked),
+						"dir",
+					);
+				}
+			}
 			const specifier =
 				explicitSpecifier ??
 				(pattern ? "linked/features/a" : "linked");
@@ -7828,7 +7907,7 @@ ${f.index}`,
 				expect(outcome._tag).toBe("Left");
 				if (outcome._tag === "Left")
 					expect(String(outcome.left)).toContain(
-						`omits ${missing}`,
+						fmtBinding === "absent" ? "fmt" : `omits ${missing}`,
 					);
 			} else {
 				if (outcome._tag === "Left") throw outcome.left;
@@ -7837,6 +7916,36 @@ ${f.index}`,
 				).toHaveLength(1);
 			}
 			expect(await snapshot(f.directory)).toEqual(before);
+			if (
+				fmtBinding &&
+				omissionAllowed &&
+				outcome._tag === "Right"
+			) {
+				await Effect.runPromise(
+					FunctionArtifact.applyPreparation(outcome.right),
+				);
+				const isolated = await mkdtemp(
+					join(tmpdir(), "private-binding-"),
+				);
+				directories.push(isolated);
+				await cp(f.server, isolated, { recursive: true });
+				await promisify(execFile)(
+					"npm",
+					[
+						"ci",
+						"--offline",
+						"--ignore-scripts",
+						"--no-audit",
+						"--no-fund",
+					],
+					{ cwd: isolated },
+				);
+				expect(
+					createRequire(join(isolated, "package.json"))(
+						"linked",
+					),
+				).toBe("shared");
+			}
 		},
 	);
 

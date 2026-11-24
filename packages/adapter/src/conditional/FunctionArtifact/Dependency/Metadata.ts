@@ -6,6 +6,8 @@ export interface ResolvedRuntimeDependency {
 	name: string;
 	registryName?: string;
 	localDirectory?: string;
+	/** Canonical source binding used during archive validation; never serialized. */
+	installedDirectory?: string;
 	/** Relative npm package location, including any nested node_modules. */
 	location: string;
 	version: string;

@@ -20,6 +20,7 @@ import type {
 export function findRuntimePackageImports(
 	files: readonly PlannedFile[],
 	strategy: PreparationSettings["dependencyStrategy"],
+	requests?: Map<string, Set<string>>,
 ): Set<string> {
 	if (
 		strategy === "bundle" &&
@@ -141,15 +142,23 @@ export function findRuntimePackageImports(
 				resolveImport,
 			),
 			inspect: () => {
-				for (const name of findImportedPackageNames(
+				for (const request of findImportedPackageSpecifiers(
 					program,
 					path,
 					strategy,
 					bindings,
 					resolveImport,
 					resolveRequire,
-				))
+				)) {
+					const name = packageNameFromSpecifier(request);
 					names.add(name);
+					if (requests && request !== name) {
+						const subpaths =
+							requests.get(name) ?? new Set<string>();
+						subpaths.add("." + request.slice(name.length));
+						requests.set(name, subpaths);
+					}
+				}
 			},
 		});
 	};
@@ -197,15 +206,15 @@ export function asDirectoryPath(path: string): DirectoryPath {
 	return path as DirectoryPath;
 }
 
-function findImportedPackageNames(
+function findImportedPackageSpecifiers(
 	program: SyntaxNode,
 	relativePath: string,
 	strategy: PreparationSettings["dependencyStrategy"],
 	bindings: ReturnType<typeof runtimeLoaderBindings>,
 	resolveImport: (specifier: string) => LoaderRole | undefined,
 	resolveRequire: (specifier: string) => string | undefined,
-): Set<string> {
-	const dependencyNames = new Set<string>();
+): Set<BareImportSpecifier> {
+	const specifiers = new Set<BareImportSpecifier>();
 	const collectPackageImport = (
 		importSpecifier: string,
 	): void => {
@@ -220,9 +229,7 @@ function findImportedPackageNames(
 		// Native file imports stay inside the owning package for install builds,
 		// so the package itself is pinned; bundle builds cannot carry native code.
 		if (!isBareImportSpecifier(importSpecifier)) return;
-		dependencyNames.add(
-			packageNameFromSpecifier(importSpecifier),
-		);
+		specifiers.add(importSpecifier);
 	};
 	const inspectModuleImport = (specifier: string): void => {
 		const url = URL.parse(specifier);
@@ -583,7 +590,7 @@ function findImportedPackageNames(
 			}
 		}
 	});
-	return dependencyNames;
+	return specifiers;
 }
 
 function inlineJavaScript(url: URL): string | undefined {
