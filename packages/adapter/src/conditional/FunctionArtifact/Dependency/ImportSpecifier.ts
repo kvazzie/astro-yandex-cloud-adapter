@@ -367,11 +367,11 @@ function findImportedPackageSpecifiers(
 						? getStaticString(parent.property) !== undefined
 						: isSyntaxNode(parent.property) &&
 							parent.property.type === "Identifier")) ||
-					(!parent.computed &&
-						((role === "module" &&
-							node.type !== "ImportExpression") ||
-							(role === "require" &&
-								isIdentifier(parent.property, "resolve")))));
+					(role === "module" &&
+						!parent.computed &&
+						node.type !== "ImportExpression") ||
+					(role === "require" &&
+						bindingRole(parent) === "resolveRequire"));
 			if (
 				!declaration &&
 				!importBinding &&
@@ -1595,6 +1595,8 @@ function runtimeLoaderBindings(
 			if (
 				!value.computed ||
 				role === "process" ||
+				role === "meta" ||
+				role === "require" ||
 				typeof role === "object"
 			) {
 				const selected = loaderPropertyRole(
@@ -1604,12 +1606,6 @@ function runtimeLoaderBindings(
 				);
 				if (selected) return selected;
 			}
-			if (
-				value.computed &&
-				role === "meta" &&
-				property === "resolve"
-			)
-				return "resolveImport";
 		}
 		if (value.type === "CallExpression") {
 			const role = roleOf(value.callee, seen);

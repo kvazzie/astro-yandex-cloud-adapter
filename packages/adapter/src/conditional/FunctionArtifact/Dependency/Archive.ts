@@ -131,6 +131,7 @@ type ExternalPackageTarget = {
 	specifier: string;
 	binding?: string;
 	request?: ArchiveRequest;
+	missing?: boolean;
 };
 type PackageTarget =
 	| URL
@@ -521,6 +522,15 @@ function missingPath(error: NodeJS.ErrnoException): boolean {
 	return error.code === "ENOENT" || error.code === "ENOTDIR";
 }
 
+async function statInstalledPath(path: string) {
+	try {
+		return await stat(path);
+	} catch (error) {
+		if (!missingPath(error as NodeJS.ErrnoException))
+			throw error;
+	}
+}
+
 type ArchiveVerification = {
 	directory: string;
 	bytes: Buffer;
@@ -584,14 +594,8 @@ async function verifyLocalRuntimeFiles(
 			const path = archivePath(candidate);
 			if (!path) continue;
 			if (files.has(path)) return candidate;
-			const exists = await stat(candidate).then(
-				(file) => file.isFile(),
-				(error: NodeJS.ErrnoException) => {
-					if (missingPath(error)) return false;
-					throw error;
-				},
-			);
-			if (exists) return candidate;
+			if ((await statInstalledPath(candidate))?.isFile())
+				return candidate;
 		}
 	};
 	const fileCandidates = (base: string) => [
@@ -622,6 +626,24 @@ async function verifyLocalRuntimeFiles(
 		}
 		return loaded;
 	};
+	const findDirectoryEntry = async (
+		target: string,
+		find: (
+			candidates: readonly string[],
+		) => Promise<string | undefined>,
+	) => {
+		const manifestPath = join(target, "package.json");
+		const main = (await installedManifest(manifestPath))?.main;
+		if (typeof main === "string" && main) {
+			const entry = resolve(target, main);
+			const candidate = await find([
+				...fileCandidates(entry),
+				...indexCandidates(entry),
+			]);
+			if (candidate) return { candidate, manifestPath };
+		}
+		return { candidate: await find(indexCandidates(target)) };
+	};
 	const resolveExternal = async (
 		specifier: string,
 		scope: PackageScope,
@@ -639,12 +661,24 @@ async function verifyLocalRuntimeFiles(
 		);
 		const subpath = "." + specifier.slice(name.length);
 		const packageURL = pathToFileURL(binding + sep);
-		if (manifest?.exports == null && subpath === ".")
+		if (manifest?.exports == null && subpath === ".") {
+			const { candidate } = await findDirectoryEntry(
+				binding,
+				async (candidates) => {
+					for (const path of candidates)
+						if ((await statInstalledPath(path))?.isFile())
+							return path;
+				},
+			);
 			return {
 				specifier,
 				binding,
-				request: { target: binding, lookup: "directory" },
+				missing: candidate === undefined,
+				request: candidate
+					? { target: binding, lookup: "directory" }
+					: undefined,
 			};
+		}
 		// Node resolves private targets using package resolution even in require mode.
 		const selected =
 			manifest?.exports == null
@@ -660,10 +694,23 @@ async function verifyLocalRuntimeFiles(
 				? selected
 				: unexported;
 		const target = packageFilePath(selected);
+		const stats =
+			target === undefined
+				? undefined
+				: await statInstalledPath(target);
+		// ESM reports a directory-specific error, whereas require reports a missing module.
+		const missing =
+			target !== undefined &&
+			!stats?.isFile() &&
+			!(mode === "import" && stats?.isDirectory());
 		return {
 			specifier,
 			binding,
-			request: target ? { target, lookup: "exact" } : undefined,
+			missing,
+			request:
+				target && !missing
+					? { target, lookup: "exact" }
+					: undefined,
 		};
 	};
 	const plannedBinding = (scope: PackageScope, name: string) => {
@@ -760,17 +807,9 @@ async function verifyLocalRuntimeFiles(
 			(lookup === "commonjs" || lookup === "directory") &&
 			(target === directory || archivePath(target))
 		) {
-			const manifestPath = join(target, "package.json");
-			const main = (await installedManifest(manifestPath))?.main;
-			if (typeof main === "string" && main) {
-				const entry = resolve(target, main);
-				candidate = await findFile([
-					...fileCandidates(entry),
-					...indexCandidates(entry),
-				]);
-				if (candidate) directoryManifest = manifestPath;
-			}
-			candidate ??= await findFile(indexCandidates(target));
+			const entry = await findDirectoryEntry(target, findFile);
+			candidate = entry.candidate;
+			directoryManifest = entry.manifestPath;
 		}
 		if (!candidate) continue;
 		const contents = requirePacked(candidate);
@@ -906,6 +945,7 @@ async function verifyLocalRuntimeFiles(
 						archived ?? scope,
 						name,
 					);
+					if (selected.missing && !planned) continue;
 					const bundledManifest =
 						binding &&
 						archivePath(join(binding, "package.json"));

@@ -7139,6 +7139,7 @@ ${f.index}`,
 		imported?: string;
 		emittedLoader?:
 			"require" | "require-resolve" | "import-resolve";
+		bracketResolver?: boolean;
 		rejection?: string;
 	};
 	it.each<ArchiveResolutionCase>([
@@ -7355,32 +7356,49 @@ ${f.index}`,
 				required: request === "tools" ? "file" : "directory",
 			}),
 		),
-		...(["require-resolve", "import-resolve"] as const).map(
-			(emittedLoader) => ({
-				name: `preserves the loader mode of an aliased ${emittedLoader}`,
-				specifier: "linked/tools?tag",
-				emittedLoader,
-				manifest: { exports: null },
-				files: {
-					"index.js": 'module.exports = "root";',
-					"tools?tag.js": 'module.exports = "literal filename";',
-					tools: 'module.exports = "URL pathname";',
+		...(
+			[
+				{
+					emittedLoader: "require-resolve",
+					bracketResolver: false,
 				},
-				omitted:
-					emittedLoader === "require-resolve"
-						? "tools"
-						: "tools?tag.js",
-				omissionAllowed: true,
-				required:
-					emittedLoader === "require-resolve"
-						? "literal filename"
-						: undefined,
-				imported:
-					emittedLoader === "import-resolve"
-						? "URL pathname"
-						: undefined,
-			}),
-		),
+				{
+					emittedLoader: "require-resolve",
+					bracketResolver: true,
+				},
+				{
+					emittedLoader: "import-resolve",
+					bracketResolver: false,
+				},
+			] as const
+		).map(({ emittedLoader, bracketResolver }) => ({
+			name: bracketResolver
+				? "accepts a fixed bracket resolver alias"
+				: `preserves the loader mode of an aliased ${emittedLoader}`,
+			specifier: "linked/tools%20tag.cjs",
+			emittedLoader,
+			bracketResolver,
+			manifest: { exports: null },
+			files: {
+				"index.js": 'module.exports = "root";',
+				"tools%20tag.cjs":
+					'module.exports = "literal filename";',
+				"tools tag.cjs": 'module.exports = "URL pathname";',
+			},
+			omitted:
+				emittedLoader === "require-resolve"
+					? "tools tag.cjs"
+					: "tools%20tag.cjs",
+			omissionAllowed: true,
+			required:
+				emittedLoader === "require-resolve"
+					? "literal filename"
+					: undefined,
+			imported:
+				emittedLoader === "import-resolve"
+					? "URL pathname"
+					: undefined,
+		})),
 		{
 			name: "follows an extensionless exact ESM entry",
 			manifest: { exports: "./entry", type: "module" },
@@ -7890,6 +7908,43 @@ ${f.index}`,
 			required: "fmt entry",
 		})),
 		...(
+			[
+				"legacy subpath",
+				"exported subpath",
+				"legacy root",
+				"directory",
+			] as const
+		).map((target) => ({
+			name: `keeps the external private fallback for a missing ${target}`,
+			fmtBinding: "shared" as const,
+			manifest: {
+				imports: {
+					"#fmt":
+						target === "legacy root" ? "fmt" : "fmt/entry.cjs",
+				},
+			},
+			files: {
+				"index.cjs":
+					'try { module.exports = require("#fmt"); } catch (error) { if (error.code !== "MODULE_NOT_FOUND") throw error; module.exports = "fallback"; }',
+			},
+			installedFiles: {
+				"packages/fmt/package.json": JSON.stringify({
+					name: "fmt",
+					version: "1.0.0",
+					...(target === "exported subpath"
+						? { exports: { "./entry.cjs": "./entry.cjs" } }
+						: {}),
+				}),
+				...(target === "directory"
+					? {
+							"packages/fmt/entry.cjs/marker.txt":
+								"keeps the directory",
+						}
+					: {}),
+			},
+			required: "fallback",
+		})),
+		...(
 			["absent", "shared", "symlink", "distinct"] as const
 		).map((fmtBinding) => ({
 			name: `checks the private dependency binding in the artifact: ${fmtBinding}`,
@@ -7997,6 +8052,7 @@ ${f.index}`,
 			installedFiles,
 			fmtBinding,
 			emittedLoader,
+			bracketResolver,
 			rejection,
 		}) => {
 			const f = await fixture();
@@ -8103,7 +8159,7 @@ ${f.index}`,
 					emittedLoader === "require"
 						? `import { createRequire } from "node:module"; createRequire(import.meta.url)(${JSON.stringify(specifier)});`
 						: emittedLoader === "require-resolve"
-							? `import { createRequire } from "node:module"; const req = createRequire(import.meta.url); const select = req.resolve; select(${JSON.stringify(specifier)});`
+							? `import { createRequire } from "node:module"; const req = createRequire(import.meta.url); const select = req${bracketResolver ? '["resolve"]' : ".resolve"}; select(${JSON.stringify(specifier)});`
 							: emittedLoader === "import-resolve"
 								? `const { resolve: select } = import.meta; select(${JSON.stringify(specifier)});`
 								: `import ${JSON.stringify(specifier)};`
@@ -9583,6 +9639,7 @@ ${f.index}`,
 			"const meta = import.meta; consume(meta);",
 			"consume(import.meta);",
 			"const meta = import.meta; meta[process.env.RESOLVER]('example');",
+			"import {createRequire} from 'node:module'; const req = createRequire(import.meta.url); req[process.env.RESOLVER]('example');",
 			"const meta = import.meta; const {resolve: locate} = meta; consume(locate);",
 			"const {resolve: locate} = import.meta; locate(process.env.RUNTIME_PACKAGE);",
 			"const meta = import.meta; export {meta};",
