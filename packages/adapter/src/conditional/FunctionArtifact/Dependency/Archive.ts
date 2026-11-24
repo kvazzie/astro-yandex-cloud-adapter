@@ -241,25 +241,20 @@ function patternMatches(
 	);
 }
 
-function resolvePrivateImport(
+function mappedPackageTarget(
 	specifier: string,
-	imports: unknown,
+	map: Record<string, unknown>,
 	packageURL: URL,
 	mode: keyof typeof nodeConditions,
+	allowExternal = false,
 ) {
-	if (
-		specifier === "#" ||
-		specifier.startsWith("#/") ||
-		specifier.endsWith("/") ||
-		!imports ||
-		typeof imports !== "object" ||
-		Array.isArray(imports)
-	)
-		return;
-	const map = imports as Record<string, unknown>;
 	let key = specifier;
 	let capture: string | undefined;
-	if (key.includes("*") || !Object.hasOwn(map, key)) {
+	if (
+		key.includes("*") ||
+		key.endsWith("/") ||
+		!Object.hasOwn(map, key)
+	) {
 		const match = packagePatterns(Object.keys(map)).find(
 			(pattern) => patternMatches(specifier, pattern),
 		);
@@ -273,73 +268,106 @@ function resolvePrivateImport(
 	return selectedPackageTarget(
 		map[key],
 		nodeConditions[mode],
-		(value) => packageTarget(value, packageURL, capture, true),
+		(value) =>
+			packageTarget(value, packageURL, capture, allowExternal),
 	);
 }
 
-function encodedCharacterSpellings(character: string): string[] {
-	if (character === "/") return [character];
-	let encodings = [""];
-	for (const byte of Buffer.from(character)) {
-		const hex = byte.toString(16).padStart(2, "0");
-		const first = new Set([hex[0]!, hex[0]!.toUpperCase()]);
-		const second = new Set([hex[1]!, hex[1]!.toUpperCase()]);
-		const spellings = [...first].flatMap((a) =>
-			[...second].map((b) => "%" + a + b),
-		);
-		encodings = encodings.flatMap((prefix) =>
-			spellings.map((part) => prefix + part),
-		);
-	}
-	return [character, ...encodings];
+function packageExportMap(
+	exports: unknown,
+): Record<string, unknown> {
+	if (
+		exports &&
+		typeof exports === "object" &&
+		!Array.isArray(exports) &&
+		Object.keys(exports).some((key) => key.startsWith("."))
+	)
+		return exports as Record<string, unknown>;
+	return { ".": exports };
 }
 
-function canReachWildcard(
-	capture: string,
-	reaches: (spelling: string) => boolean,
-): boolean {
-	const canonical = capture
-		.split("/")
-		.map(encodeURIComponent)
-		.join("/");
-	if (
-		reaches(capture) ||
-		(canonical !== capture && reaches(canonical))
-	)
-		return true;
-	const choices = Array.from(capture, encodedCharacterSpellings);
-	const allEncoded = choices
-		.map((variants) => variants[1] ?? variants[0])
-		.join("");
-	if (
-		allEncoded !== canonical &&
-		allEncoded !== capture &&
-		reaches(allEncoded)
-	)
-		return true;
+type PackageScope = {
+	path: string;
+	metadata: Record<string, unknown>;
+};
 
-	const positions = choices.map(() => 0);
-	// Encodings combine independently. Retain the file if checking every
-	// spelling would exceed the planning budget.
-	for (let attempt = 0; attempt < 4096; attempt++) {
-		let index = positions.length - 1;
-		while (
-			index >= 0 &&
-			positions[index]! + 1 === choices[index]!.length
-		) {
-			positions[index] = 0;
-			index--;
-		}
-		if (index < 0) return false;
-		positions[index] = positions[index]! + 1;
-		const spelling = choices
-			.map(
-				(variants, position) => variants[positions[position]!],
-			)
-			.join("");
-		if (reaches(spelling)) return true;
+function barePackageName(specifier: string): string | undefined {
+	return /^(@[^/\\%]+\/[^/\\%]+|[^@./\\%][^/\\%]*)(?=\/|$)/.exec(
+		specifier,
+	)?.[1];
+}
+
+function resolvePrivateImport(
+	specifier: string,
+	scope: PackageScope,
+	mode: keyof typeof nodeConditions,
+) {
+	const { imports, exports, name } = scope.metadata;
+	if (
+		specifier === "#" ||
+		specifier.startsWith("#/") ||
+		specifier.endsWith("/") ||
+		!imports ||
+		typeof imports !== "object" ||
+		Array.isArray(imports)
+	)
+		return;
+	const packageURL = pathToFileURL(dirname(scope.path) + sep);
+	const target = mappedPackageTarget(
+		specifier,
+		imports as Record<string, unknown>,
+		packageURL,
+		mode,
+		true,
+	);
+	// Private bare targets use package resolution from the defining scope.
+	// A self-reference selects an exact file from that scope's own exports.
+	if (
+		typeof target === "string" &&
+		!isBuiltin(target) &&
+		exports != null &&
+		typeof name === "string" &&
+		barePackageName(target) === name
+	)
+		return (
+			mappedPackageTarget(
+				"." + target.slice(name.length),
+				packageExportMap(exports),
+				packageURL,
+				mode,
+			) ?? false
+		);
+	return target;
+}
+
+async function hasSameDependencyLookup(
+	specifier: string,
+	source: PackageScope,
+	archived: PackageScope,
+) {
+	const name = barePackageName(specifier);
+	if (!name) return false;
+	const archiveScope = dirname(archived.path);
+	// Both lookups ascend the same tree once they reach the archived scope.
+	// A dependency found before that shared lookup can change the binding.
+	for (
+		let scope = dirname(source.path);
+		;
+		scope = dirname(scope)
+	) {
+		if (scope === archiveScope) return true;
+		if (scope === dirname(scope)) return false;
+		const found = await stat(
+			join(scope, "node_modules", name),
+		).then(
+			(entry) => entry.isDirectory(),
+			(error: NodeJS.ErrnoException) => {
+				if (missingPath(error)) return false;
+				throw error;
+			},
+		);
+		if (found) return false;
 	}
-	return true;
 }
 
 async function manifestEntrypoints(
@@ -348,22 +376,10 @@ async function manifestEntrypoints(
 ): Promise<ArchiveRequest[]> {
 	const entries = new Map<string, ArchiveLookup>();
 	const packageURL = pathToFileURL(directory + sep);
-	const exportMap =
-		manifest.exports &&
-		typeof manifest.exports === "object" &&
-		!Array.isArray(manifest.exports) &&
-		Object.keys(manifest.exports).some((key) =>
-			key.startsWith("."),
-		)
-			? Object.entries(manifest.exports)
-			: [[".", manifest.exports] as const];
-	const patterns = packagePatterns(
-		exportMap
-			.map(([key]) => key)
-			.filter((key) => key.startsWith("./")),
+	const exportMap = Object.entries(
+		packageExportMap(manifest.exports),
 	);
-	const exactExports = new Set(exportMap.map(([key]) => key));
-	const targets: { key: string; match: RegExp; url: URL }[] = [];
+	const targets: { match: RegExp; url: URL }[] = [];
 	const addExport = (url: URL, key: string) => {
 		const file = packageFilePath(url);
 		if (!file) return;
@@ -371,7 +387,9 @@ async function manifestEntrypoints(
 			packageURL.pathname.length,
 		);
 		if (
-			!patterns.some((pattern) => pattern.key === key) ||
+			!key.startsWith("./") ||
+			key.indexOf("*") === -1 ||
+			key.indexOf("*") !== key.lastIndexOf("*") ||
 			!subpath.includes("*")
 		) {
 			entries.set(file, "exact");
@@ -393,7 +411,7 @@ async function manifestEntrypoints(
 				parts.slice(1).join("(?:\\1)") +
 				"$",
 		);
-		targets.push({ key, match, url });
+		targets.push({ match, url });
 	};
 	if (
 		manifest.exports === undefined ||
@@ -435,34 +453,20 @@ async function manifestEntrypoints(
 			ignore: ["**/node_modules/**"],
 		})) {
 			const path = join(directory, file);
-			for (const { key, match, url } of targets) {
+			for (const { match, url } of targets) {
 				const capture = match.exec(file)?.[1];
 				if (!capture) continue;
-				const reachable = canReachWildcard(
-					capture,
-					(spelling) => {
-						const subpath = key.replace("*", () => spelling);
-						if (
-							exactExports.has(subpath) &&
-							!subpath.includes("*") &&
-							!subpath.endsWith("/")
-						)
-							return false;
-						const selected = patterns.find((pattern) =>
-							patternMatches(subpath, pattern),
-						);
-						if (
-							selected?.key !== key ||
-							invalidPackageSegment(spelling)
-						)
-							return false;
-						const target = new URL(
-							url.href.replaceAll("*", () => spelling),
-						);
-						return packageFilePath(target) === path;
-					},
+				const spelling = capture
+					.split("/")
+					.map(encodeURIComponent)
+					.join("/");
+				// Exact and narrower exports only block individual request spellings.
+				// URL parsing can normalize other spellings to the same wildcard file.
+				const target = new URL(
+					url.href.replaceAll("*", () => spelling),
 				);
-				if (reachable) entries.set(path, "exact");
+				if (packageFilePath(target) === path)
+					entries.set(path, "exact");
 			}
 		}
 	}
@@ -742,32 +746,28 @@ async function verifyLocalRuntimeFiles(
 			const scope = await sourceScope(candidate);
 			if (!scope) continue;
 			const archived = archivedScope(candidate);
-			const packageURL = pathToFileURL(
-				dirname(scope.path) + sep,
-			);
-			const archivedURL =
-				archived && pathToFileURL(dirname(archived.path) + sep);
 			for (const { specifier, mode } of privateImports) {
 				const selected = resolvePrivateImport(
 					specifier,
-					scope.metadata.imports,
-					packageURL,
+					scope,
 					mode,
 				);
 				const packed =
-					archivedURL &&
-					resolvePrivateImport(
-						specifier,
-						archived?.metadata.imports,
-						archivedURL,
-						mode,
-					);
-				const bareTargetChangedScope =
+					archived &&
+					resolvePrivateImport(specifier, archived, mode);
+				const dependencyChanged =
 					typeof selected === "string" &&
 					!isBuiltin(selected) &&
-					scope.path !== archived?.path;
+					archived !== undefined &&
+					scope.path !== archived.path &&
+					selected === packed &&
+					!(await hasSameDependencyLookup(
+						selected,
+						scope,
+						archived,
+					));
 				if (
-					bareTargetChangedScope ||
+					dependencyChanged ||
 					targetIdentity(selected) !== targetIdentity(packed)
 				)
 					requirePacked(scope.path);

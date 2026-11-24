@@ -7134,6 +7134,7 @@ ${f.index}`,
 		omissionAllowed?: boolean;
 		required?: string;
 		alsoResolves?: Record<string, string>;
+		installedFiles?: Record<string, string>;
 		imported?: string;
 	};
 	it.each<ArchiveResolutionCase>([
@@ -7616,8 +7617,8 @@ ${f.index}`,
 			required: "encoded bypass",
 		},
 		{
-			name: "omits wildcard files when both raw and escaped forms are blocked",
-			specifier: "linked/features/%27",
+			name: "keeps wildcard files reached through a URL-normalized spelling",
+			specifier: "linked/features/%2\t7",
 			manifest: {
 				exports: {
 					"./features/*": "./src/*.cjs",
@@ -7626,16 +7627,51 @@ ${f.index}`,
 				},
 			},
 			files: {
-				"src/'.cjs": 'module.exports = "unused";',
+				"src/'.cjs": 'module.exports = "normalized wildcard";',
 				"override.cjs": 'module.exports = "override";',
 			},
 			omitted: "src/'.cjs",
-			omissionAllowed: true,
-			required: "override",
-			alsoResolves: { "linked/features/'": "override" },
+			required: "normalized wildcard",
+			alsoResolves: {
+				"linked/features/'": "override",
+				"linked/features/%27": "override",
+			},
 		},
-		{
-			name: "keeps the package scope of an identical bare private target",
+		...([false, true] as const).map((shadowed) => ({
+			name: shadowed
+				? "keeps a private import scope with a different dependency lookup"
+				: "accepts an omitted scope with the same private dependency lookup",
+			manifest: { imports: { "#fmt": "fmt" } },
+			files: {
+				"index.cjs":
+					'module.exports = require("./nested/index.cjs");',
+				"nested/index.cjs": 'module.exports = require("#fmt");',
+				"nested/package.json": '{"imports":{"#fmt":"fmt"}}',
+				...(shadowed
+					? {
+							"nested/node_modules/fmt/index.js":
+								'module.exports = "nearby";',
+						}
+					: {}),
+			},
+			installedFiles: {
+				"node_modules/fmt/index.js":
+					'module.exports = "shared";',
+			},
+			omitted: "nested/package.json",
+			omissionAllowed: !shadowed,
+			required: shadowed ? "nearby" : "shared",
+		})),
+		...(
+			[
+				"nested/package.json",
+				"nested/feature.cjs",
+				undefined,
+			] as const
+		).map((omitted) => ({
+			name: omitted
+				? `checks the package self-reference after omitting ${omitted}`
+				: "keeps a complete package self-reference",
 			manifest: {
 				imports: { "#feature": "linked/feature" },
 				exports: {
@@ -7653,9 +7689,37 @@ ${f.index}`,
 					'{"name":"linked","imports":{"#feature":"linked/feature"},"exports":{"./feature":"./feature.cjs"}}',
 				"nested/feature.cjs": 'module.exports = "nested";',
 			},
-			omitted: "nested/package.json",
+			omitted,
 			required: "nested",
-		},
+		})),
+		...([false, true] as const).map((omitsSelected) => ({
+			name: omitsSelected
+				? "checks the selected import-mode self-reference"
+				: "allows the unselected require-mode self-reference to be omitted",
+			files: {
+				"index.cjs":
+					'module.exports = require("./nested/index.mjs").default;',
+				"nested/index.mjs":
+					'export { default } from "#feature";',
+				"nested/package.json": JSON.stringify({
+					name: "@fixture/inner",
+					imports: { "#feature": "@fixture/inner/features/foo" },
+					exports: {
+						"./features/*": {
+							import: "./esm/*.mjs",
+							require: "./cjs/*.cjs",
+						},
+					},
+				}),
+				"nested/esm/foo.mjs": 'export default "self import";',
+				"nested/cjs/foo.cjs": 'module.exports = "self require";',
+			},
+			omitted: omitsSelected
+				? "nested/esm/foo.mjs"
+				: "nested/cjs/foo.cjs",
+			omissionAllowed: !omitsSelected,
+			required: "self import",
+		})),
 	])(
 		"validates Node archive resolution ($name)",
 		async ({
@@ -7668,13 +7732,19 @@ ${f.index}`,
 			required,
 			imported,
 			alsoResolves,
+			installedFiles,
 		}) => {
 			const f = await fixture();
 			const linked = new URL("packages/linked/", f.root);
-			for (const [path, contents] of Object.entries(files)) {
-				const file = new URL(path, linked);
-				await mkdir(new URL(".", file), { recursive: true });
-				await writeFile(file, contents);
+			for (const [base, entries] of [
+				[linked, files],
+				[f.root, installedFiles ?? {}],
+			] as const) {
+				for (const [path, contents] of Object.entries(entries)) {
+					const file = new URL(path, base);
+					await mkdir(new URL(".", file), { recursive: true });
+					await writeFile(file, contents);
+				}
 			}
 			await writeFile(
 				new URL("package.json", linked),
@@ -7691,7 +7761,9 @@ ${f.index}`,
 					),
 				}),
 			);
-			await mkdir(new URL("node_modules/", f.root));
+			await mkdir(new URL("node_modules/", f.root), {
+				recursive: true,
+			});
 			await symlink(
 				linked,
 				new URL("node_modules/linked", f.root),
