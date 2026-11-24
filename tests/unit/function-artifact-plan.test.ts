@@ -1382,9 +1382,16 @@ describe("Function Artifact mutation plans", () => {
 		},
 	);
 
-	it.each(["bundle", "install"] as const)(
-		"accounts for extensionless emitted ES modules (%s)",
-		async (dependencyStrategy) => {
+	it.each(
+		(["bundle", "install"] as const).flatMap(
+			(dependencyStrategy) =>
+				(["import", "dynamic import", "require"] as const).map(
+					(loader) => ({ dependencyStrategy, loader }),
+				),
+		),
+	)(
+		"accounts for extensionless emitted ES modules ($loader, $dependencyStrategy)",
+		async ({ dependencyStrategy, loader }) => {
 			const f = await fixture();
 			await writeFile(
 				new URL("runtime-helper", f.server),
@@ -1396,7 +1403,12 @@ describe("Function Artifact mutation plans", () => {
 			);
 			await writeFile(
 				new URL("index.js", f.server),
-				"import './runtime-helper';" + f.index,
+				{
+					import: "import './runtime-helper';",
+					"dynamic import": "await import('./runtime-helper');",
+					require:
+						"import {createRequire} from 'node:module'; createRequire(import.meta.url)('./runtime-helper');",
+				}[loader] + f.index,
 			);
 			await mkdir(new URL("node_modules/example/", f.root), {
 				recursive: true,
@@ -1440,6 +1452,61 @@ describe("Function Artifact mutation plans", () => {
 					},
 				});
 			}
+		},
+	);
+
+	it.each([
+		"new URL",
+		"import.meta.resolve",
+		"require.resolve",
+	] as const)(
+		"keeps a parseable extensionless text asset through %s",
+		async (operation) => {
+			const f = await fixture();
+			const contents = "require(theme)";
+			await writeFile(new URL("template", f.server), contents);
+			const preamble =
+				'import { readFileSync } from "node:fs"; import { createRequire } from "node:module";';
+			const target =
+				operation === "new URL"
+					? 'new URL("./template", import.meta.url)'
+					: operation === "import.meta.resolve"
+						? 'new URL(import.meta.resolve("./template"))'
+						: 'createRequire(import.meta.url).resolve("./template")';
+			await writeFile(
+				new URL("index.js", f.server),
+				`${preamble} export const text = readFileSync(${target}, "utf8");\n${f.index}`,
+			);
+			const check = async (cwd: string) => {
+				const result = await promisify(execFile)(
+					process.execPath,
+					[
+						"--input-type=module",
+						"-e",
+						'import { text } from "./index.js"; console.log(text);',
+					],
+					{ cwd },
+				);
+				expect(result.stdout.trim()).toBe(contents);
+			};
+			await check(fileURLToPath(f.server));
+			const before = await snapshot(f.directory);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(f.build, f.routePlan, {
+					...settings,
+					dependencyStrategy: "install",
+				}),
+			);
+			expect(await snapshot(f.directory)).toEqual(before);
+			await Effect.runPromise(
+				FunctionArtifact.applyPreparation(plan),
+			);
+			const isolated = await mkdtemp(
+				join(tmpdir(), "extensionless-text-"),
+			);
+			directories.push(isolated);
+			await cp(f.server, isolated, { recursive: true });
+			await check(isolated);
 		},
 	);
 
@@ -8019,6 +8086,13 @@ ${f.index}`,
 						: "ERR_UNSUPPORTED_DIR_IMPORT",
 			})),
 		),
+		{
+			name: "preserves the directory error for an export of the archive root",
+			manifest: { exports: "./" },
+			files: {},
+			esmProbe: "directory-error",
+			imported: "ERR_UNSUPPORTED_DIR_IMPORT",
+		},
 		...(
 			[
 				"legacy subpath",
@@ -8171,6 +8245,7 @@ ${f.index}`,
 		}) => {
 			const f = await fixture();
 			const linked = new URL("packages/linked/", f.root);
+			await mkdir(linked, { recursive: true });
 			for (const [base, entries] of [
 				[linked, files],
 				[f.root, installedFiles ?? {}],
@@ -8424,9 +8499,26 @@ ${f.index}`,
 			entry: "../feature/index.js",
 			invoke: "req.resolve",
 		},
+		{ request: ".", entry: "index.js", invoke: "req.resolve" },
+		{
+			request: "..",
+			entry: "../index.js",
+			invoke: "req.resolve",
+		},
+		{
+			request: "../",
+			entry: "../index.js",
+			invoke: "req.resolve",
+		},
+		{
+			request: "./feature/.",
+			entry: "feature/main.cjs.json",
+			invoke: "req",
+			bom: true,
+		},
 	])(
 		"checks CommonJS directory resolution for $request and $invoke ($entry)",
-		async ({ request, entry, invoke }) => {
+		async ({ request, entry, invoke, bom }) => {
 			const f = await fixture();
 			const feature = new URL("feature/", f.server);
 			const selected = new URL(entry, f.server);
@@ -8446,7 +8538,7 @@ ${f.index}`,
 			if (entry.endsWith(".json")) {
 				await writeFile(
 					new URL("package.json", feature),
-					'{"main":"./main.cjs"}',
+					(bom ? "\uFEFF" : "") + '{"main":"./main.cjs"}',
 				);
 				await writeFile(
 					new URL("feature.js", f.server),
@@ -8497,6 +8589,30 @@ ${f.index}`,
 			);
 		},
 	);
+
+	it("tracks the loader role returned by a bare CommonJS directory request", async () => {
+		const f = await fixture();
+		const feature = new URL("feature/", f.server);
+		await mkdir(feature);
+		await writeFile(
+			new URL("index.js", feature),
+			"export const runtime = process;",
+		);
+		await writeFile(
+			new URL("request.mjs", feature),
+			'import {createRequire} from "node:module"; const req = createRequire(import.meta.url); req(".").runtime.getBuiltinModule("node:module").createRequire(import.meta.url)("example");',
+		);
+		await expect(
+			Effect.runPromise(
+				FunctionArtifact.planPreparation(f.build, f.routePlan, {
+					...settings,
+					dependencyStrategy: "bundle",
+				}),
+			),
+		).rejects.toThrow(
+			/unresolved runtime package imports.*example/,
+		);
+	});
 
 	it.each(["ancestor marker", "empty shadow"] as const)(
 		"detects local provenance for the installed ancestor package: %s",

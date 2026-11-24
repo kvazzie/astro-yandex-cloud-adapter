@@ -825,7 +825,7 @@ async function verifyLocalRuntimeFiles(
 			if (
 				lookup === "import" &&
 				(await statInstalledPath(target))?.isDirectory() &&
-				target !== directory
+				resolve(target) !== resolve(directory)
 			) {
 				const relativeTarget = archivePath(target);
 				if (

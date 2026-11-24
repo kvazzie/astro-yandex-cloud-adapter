@@ -24,4 +24,7 @@ import errors and relative CommonJS resolver targets against the
 artifact, and skip files during installed package directory
 lookup. Preserve directory errors for package-root imports and
 distinguish URL-only resolution. Follow retained CommonJS
-directory entrypoints.
+directory entrypoints. Determine whether extensionless files are
+modules from their load references. Preserve package-root
+directory errors, accept BOMs in retained manifests, and validate
+bare CommonJS directory requests.

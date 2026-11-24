@@ -9,13 +9,7 @@ import {
 	type SyntaxNode,
 } from "../../../.emittedModules.ts";
 import { isBuiltin } from "node:module";
-import {
-	basename,
-	dirname,
-	extname,
-	join,
-	resolve,
-} from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
 	PlannedFile,
@@ -81,7 +75,9 @@ export function findRuntimePackageImports(
 			file?.contents !== undefined &&
 			file.path !== "package.json"
 		) {
-			const metadata: unknown = JSON.parse(file.contents);
+			const metadata: unknown = JSON.parse(
+				file.contents.replace(/^\uFEFF/, ""),
+			);
 			if (
 				metadata &&
 				typeof metadata === "object" &&
@@ -97,14 +93,39 @@ export function findRuntimePackageImports(
 		}
 		return emittedIndex(target);
 	};
-	const sources = new Map<
-		string,
-		{ program: SyntaxNode; path: string }
-	>();
+	const isJavaScript = (path: string) => /\.m?js$/.test(path);
+	const programs = new Map<string, SyntaxNode>();
 	const modules = new Map<
 		string,
 		{ namespace: EmittedNamespace; inspect: () => void }
 	>();
+	const loadEmittedModule = (
+		url: URL,
+	): EmittedNamespace | undefined => {
+		const loaded = modules.get(url.href);
+		if (loaded) return loaded.namespace;
+		const sourceURL = new URL(url);
+		sourceURL.search = "";
+		sourceURL.hash = "";
+		const file = emittedFiles.get(sourceURL.href);
+		if (
+			!file ||
+			(!isJavaScript(file.path) &&
+				(extname(file.path) || file.contents === undefined))
+		)
+			return undefined;
+		if (file.contents === undefined)
+			throw new Error(
+				`Missing computed module contents for ${file.path}.`,
+			);
+		let program = programs.get(sourceURL.href);
+		if (!program) {
+			program = parseModule(file.contents);
+			programs.set(sourceURL.href, program);
+		}
+		addModule(url, program, file.path);
+		return modules.get(url.href)?.namespace;
+	};
 	const addModule = (
 		url: URL,
 		program: SyntaxNode,
@@ -143,14 +164,10 @@ export function findRuntimePackageImports(
 				throw error;
 			}
 			const instance = pathToFileURL(sourcePath);
-			const source = sources.get(instance.href);
-			if (!source) return undefined;
 			// Match Node's file resolution by retaining only nonempty query and fragment values.
 			instance.search = local.search;
 			instance.hash = local.hash;
-			if (!modules.has(instance.href))
-				addModule(instance, source.program, source.path);
-			return modules.get(instance.href)?.namespace;
+			return loadEmittedModule(instance);
 		};
 		const resolveRequire = (
 			specifier: string,
@@ -168,8 +185,8 @@ export function findRuntimePackageImports(
 					: emittedFile(target)) ?? emittedDirectory(target);
 			return candidate &&
 				(resolveOnly ||
-					modules.has(candidate) ||
-					/\.(json|node)$/.test(candidate))
+					/\.(json|node)$/.test(candidate) ||
+					loadEmittedModule(new URL(candidate)))
 				? candidate
 				: undefined;
 		};
@@ -226,34 +243,11 @@ export function findRuntimePackageImports(
 			},
 		});
 	};
-	for (const file of files) {
-		const path = basename(file.path);
-		const isJavaScript = /\.m?js$/.test(path);
-		if (
-			!isJavaScript &&
-			(extname(path) || file.contents === undefined)
-		)
-			continue;
-		if (file.contents === undefined)
-			throw new Error(
-				`Missing computed module contents for ${file.path}.`,
-			);
-		let program: SyntaxNode;
-		try {
-			program = parseModule(file.contents);
-		} catch (error) {
-			// Extensionless assets share a filename shape with Node ES modules.
-			if (!isJavaScript && error instanceof SyntaxError)
-				continue;
-			throw error;
-		}
-		sources.set(pathToFileURL(file.path).href, {
-			program,
-			path: file.path,
-		});
-	}
-	for (const [href, source] of sources)
-		addModule(new URL(href), source.program, source.path);
+	// A filename without an extension can also be a text or binary asset.
+	// Load it as a module only when an import or require selects it.
+	for (const [href, file] of emittedFiles)
+		if (isJavaScript(file.path))
+			loadEmittedModule(new URL(href));
 	// Linking is lazy so imports can refer to later files or to cyclic re-exports.
 	// Map iteration also inspects module instances discovered by the visitor.
 	for (const module of modules.values()) module.inspect();
@@ -308,7 +302,10 @@ function findImportedPackageSpecifiers(
 	};
 	const inspectModuleImport = (specifier: string): void => {
 		const url = URL.parse(specifier);
-		if (url?.protocol === "data:") {
+		if (
+			url?.protocol === "data:" ||
+			isRelativeSpecifier(specifier)
+		) {
 			resolveImport(specifier);
 		} else collectPackageImport(specifier, "import");
 	};
@@ -648,7 +645,7 @@ function findImportedPackageSpecifiers(
 					getStaticString(args[0]) ?? rejectDynamicImport();
 				if (
 					(requires || role === "resolveRequire") &&
-					isRelativeSpecifier(specifier) &&
+					isCommonJsRelativeSpecifier(specifier) &&
 					!resolveRequire(specifier, role === "resolveRequire")
 				)
 					rejectDynamicImport(
@@ -858,6 +855,16 @@ function isAstroLoggerImport(
 function isRelativeSpecifier(specifier: string): boolean {
 	return (
 		specifier.startsWith("./") || specifier.startsWith("../")
+	);
+}
+
+function isCommonJsRelativeSpecifier(
+	specifier: string,
+): boolean {
+	return (
+		specifier === "." ||
+		specifier === ".." ||
+		isRelativeSpecifier(specifier)
 	);
 }
 
@@ -1672,7 +1679,7 @@ function runtimeLoaderBindings(
 				if (
 					role === "require" &&
 					specifier &&
-					isRelativeSpecifier(specifier)
+					isCommonJsRelativeSpecifier(specifier)
 				)
 					return resolveRequire(specifier, seen);
 				return builtinModuleRole(specifier);
