@@ -142,6 +142,11 @@ function handler(event, context, previewUrl, policy) { return policy; }
 export { handler };
 `;
 	await writeFile(new URL("index.js", server), index);
+	// Astro emits an ESM server; keep runtime checks independent of TMPDIR's package scope.
+	await writeFile(
+		new URL("package.json", server),
+		'{"type":"module"}',
+	);
 	await writeFile(
 		new URL("foo.js", server),
 		"export const asset = new URL('./asset.bin', import.meta.url);\n",
@@ -1613,6 +1618,10 @@ describe("Function Artifact mutation plans", () => {
 	);
 
 	const ordinaryRequire = 'module.exports = require("example");';
+	// The nodejs22 runtime classifies an extensionless require target by its syntax.
+	// Node 26 applies the package type instead, so only an older host can witness it.
+	const hostRequireMatchesRuntime =
+		Number(process.versions.node.split(".")[0]) < 26;
 	const aliasedRequire =
 		'const load = require; module.exports = load("example");';
 	it.each([
@@ -1708,16 +1717,18 @@ describe("Function Artifact mutation plans", () => {
 					"import then require": `import { createRequire } from "node:module"; export async function observe() { try { await import("./${directory}optional"); } catch (error) { if (!(error instanceof ReferenceError)) throw error; } return createRequire(import.meta.url)("./${directory}optional"); }`,
 				}[loader] + `\n${f.index}`,
 			);
-			const { stdout } = await promisify(execFile)(
-				process.execPath,
-				[
-					"--input-type=module",
-					"-e",
-					'import { observe } from "./index.js"; console.log(await observe());',
-				],
-				{ cwd: fileURLToPath(f.server) },
-			);
-			expect(stdout.trim()).toBe("loaded");
+			if (loader === "import" || hostRequireMatchesRuntime) {
+				const { stdout } = await promisify(execFile)(
+					process.execPath,
+					[
+						"--input-type=module",
+						"-e",
+						'import { observe } from "./index.js"; console.log(await observe());',
+					],
+					{ cwd: fileURLToPath(f.server) },
+				);
+				expect(stdout.trim()).toBe("loaded");
+			}
 			const before = await snapshot(f.directory);
 			await expect(
 				Effect.runPromise(
