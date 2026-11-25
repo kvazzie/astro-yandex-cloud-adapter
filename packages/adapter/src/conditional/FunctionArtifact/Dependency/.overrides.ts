@@ -3,6 +3,22 @@ import npa from "npm-package-arg";
 import semver from "semver";
 import { parseRegistryRequirement } from "./Registry.ts";
 
+/** The declared requirement for a root edge in the detected installation. */
+export function applicationDependencyRequirement(
+	application: PackageJson | undefined,
+	name: string,
+	developmentFirst = true,
+): string | undefined {
+	const development = application?.devDependencies?.[name];
+	return (
+		(developmentFirst ? development : undefined) ??
+		application?.optionalDependencies?.[name] ??
+		application?.dependencies?.[name] ??
+		development ??
+		application?.peerDependencies?.[name]
+	);
+}
+
 /** The root application's npm override rules, inherited along dependency edges. */
 export class ApplicationOverrides {
 	private readonly application: PackageJson;
@@ -55,7 +71,11 @@ export class ApplicationOverrides {
 	forDependency(
 		name: string,
 		requested: string,
-	): { spec: string; context: ApplicationOverrides } {
+	): {
+		spec: string;
+		context: ApplicationOverrides;
+		useOverrideBase?: true;
+	} {
 		const rules = new Map<string, ApplicationOverrides>();
 		const contexts: ApplicationOverrides[] = [this];
 		for (
@@ -97,21 +117,26 @@ export class ApplicationOverrides {
 			);
 		});
 		if (!rule) return { spec: requested, context: this };
-		let spec =
-			rule.value && rule.value !== "*" ? rule.value : requested;
+		const replacement =
+			rule.value !== "*" ? rule.value : undefined;
+		let spec = replacement ?? requested;
 		if (spec.startsWith("$")) {
 			const reference = spec.slice(1);
-			const value =
-				this.application.devDependencies?.[reference] ??
-				this.application.optionalDependencies?.[reference] ??
-				this.application.dependencies?.[reference] ??
-				this.application.peerDependencies?.[reference];
+			const value = applicationDependencyRequirement(
+				this.application,
+				reference,
+			);
 			if (typeof value !== "string")
 				throw new Error(
 					`Unable to resolve application override reference ${spec}.`,
 				);
 			spec = value;
 		}
-		return { spec, context: rule };
+		return {
+			spec,
+			context: rule,
+			// npm uses the override root for matched edges, including * rules.
+			useOverrideBase: true,
+		};
 	}
 }

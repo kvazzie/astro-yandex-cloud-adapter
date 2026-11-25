@@ -10,6 +10,7 @@ import {
 	isSyntaxNode,
 	localModuleReferences,
 	parseModule,
+	readIdentifierBindings,
 	visitSyntax,
 	type SyntaxNode,
 } from "../../.emittedModules.ts";
@@ -311,6 +312,10 @@ export async function hasRuntimeImageCalls(
 		let imageCall = false;
 		const bindings = new Set(localImageExports.get(url));
 		const imports = new Set<string>();
+		const namespaces = new Map<
+			SyntaxNode,
+			ReadonlySet<string>
+		>();
 		visitSyntax(module.syntax, (node) => {
 			if (
 				node.type !== "ImportDeclaration" ||
@@ -326,19 +331,25 @@ export async function hasRuntimeImageCalls(
 					imports.add(specifier.local.name);
 			}
 			const reference = getStaticString(node.source);
-			if (!reference?.startsWith(".")) return;
-			const exported = imageExports.get(
-				new URL(reference, url).href,
-			);
+			const exported =
+				reference === "astro:assets"
+					? new Set(["getImage"])
+					: reference?.startsWith(".")
+						? imageExports.get(new URL(reference, url).href)
+						: undefined;
 			if (!exported) return;
 			for (const specifier of node.specifiers as unknown[]) {
 				if (
 					!isSyntaxNode(specifier) ||
-					!isSyntaxNode(specifier.imported) ||
 					!isSyntaxNode(specifier.local) ||
 					typeof specifier.local.name !== "string"
 				)
 					continue;
+				if (specifier.type === "ImportNamespaceSpecifier") {
+					namespaces.set(specifier.local, exported);
+					continue;
+				}
+				if (!isSyntaxNode(specifier.imported)) continue;
 				const name =
 					specifier.imported.name ??
 					getStaticString(specifier.imported);
@@ -346,18 +357,41 @@ export async function hasRuntimeImageCalls(
 					bindings.add(specifier.local.name);
 			}
 		});
+		const identifierBinding = namespaces.size
+			? readIdentifierBindings(module.syntax)
+			: undefined;
 		visitSyntax(module.syntax, (node) => {
 			if (
-				node.type === "CallExpression" &&
-				isSyntaxNode(node.callee) &&
-				node.callee.type === "Identifier" &&
-				typeof node.callee.name === "string" &&
-				(bindings.has(node.callee.name) ||
-					(!imageExports.has(url) &&
-						imports.has(node.callee.name) &&
-						/^getImage(?:\$\d+)?$/.test(node.callee.name)))
+				node.type !== "CallExpression" ||
+				!isSyntaxNode(node.callee)
 			)
-				imageCall = true;
+				return;
+			const callee = node.callee;
+			if (
+				callee.type === "Identifier" &&
+				typeof callee.name === "string"
+			) {
+				imageCall ||=
+					bindings.has(callee.name) ||
+					(!imageExports.has(url) &&
+						imports.has(callee.name) &&
+						/^getImage(?:\$\d+)?$/.test(callee.name));
+			} else if (
+				callee.type === "MemberExpression" &&
+				!callee.computed &&
+				isSyntaxNode(callee.object) &&
+				callee.object.type === "Identifier" &&
+				typeof callee.object.name === "string" &&
+				isSyntaxNode(callee.property) &&
+				typeof callee.property.name === "string"
+			) {
+				const declaration = identifierBinding?.(callee.object);
+				imageCall ||=
+					declaration !== undefined &&
+					namespaces
+						.get(declaration)
+						?.has(callee.property.name) === true;
+			}
 		});
 		if (imageCall) return true;
 		pending.push(

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { dirname, join } from "node:path";
 
 const command = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => {
@@ -149,6 +150,40 @@ describe("install registry metadata", () => {
 			cpu: ["x64"],
 			libc: ["glibc"],
 		});
+	});
+	it("launches the npm CLI with Node and separate arguments on Windows", async () => {
+		metadata({ version: "1.0.0" });
+		const platform = Object.getOwnPropertyDescriptor(
+			process,
+			"platform",
+		)!;
+		const root = new URL("file:///application/");
+		vi.stubEnv("npm_execpath", undefined);
+		try {
+			Object.defineProperty(process, "platform", {
+				value: "win32",
+			});
+			await npmRegistry.resolve("@scope/package", "1.0.0", root);
+		} finally {
+			Object.defineProperty(process, "platform", platform);
+		}
+		expect(command).toHaveBeenCalledWith(
+			process.execPath,
+			[
+				join(
+					dirname(process.execPath),
+					"node_modules",
+					"npm",
+					"bin",
+					"npm-cli.js",
+				),
+				"view",
+				"--json",
+				"--",
+				"@scope/package@1.0.0",
+			],
+			expect.objectContaining({ cwd: root, timeout: 30_000 }),
+		);
 	});
 	it("bounds registry requests and excludes npm private diagnostics from errors", async () => {
 		command.mockRejectedValue(
