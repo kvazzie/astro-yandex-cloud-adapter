@@ -20,10 +20,7 @@ import {
 	formatNpmLockfile,
 } from "./Dependency/Metadata.ts";
 import { type Registry } from "./Dependency/Registry.ts";
-import {
-	findRuntimePackageImports,
-	type PackageSubpathRequests,
-} from "./Dependency/ImportSpecifier.ts";
+import { traceRuntimeDependencies } from "./Dependency/Trace.ts";
 import { planLocalArchives } from "./Dependency/Archive.ts";
 import { resolvePinnedRuntimeDependencies } from "./Dependency";
 
@@ -32,23 +29,34 @@ export async function planPackageFiles(
 	strategy: PreparationSettings["dependencyStrategy"],
 	appRoot: URL,
 	registry: Registry,
+	serverDirectory: URL,
 	includeLocal = false,
+	includeDependencies: readonly string[] = [],
 ): Promise<PlannedFile[]> {
-	const requests: PackageSubpathRequests = new Map();
-	const dependencyNames = findRuntimePackageImports(
+	if (
+		strategy === "bundle" &&
+		files.some((file) => file.path.endsWith(".node"))
+	)
+		throw new Error(
+			'The Function Artifact contains a native runtime module, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", which keeps runtime package imports with exact package metadata and a lockfile.',
+		);
+	if (files.some((file) => file.path.endsWith(".cjs")))
+		throw new Error(
+			"The function artifact contains an unsupported CommonJS module. V1 function artifacts must use ESM.",
+		);
+	const trace = await traceRuntimeDependencies(
 		files,
-		strategy,
-		includeLocal ? requests : undefined,
+		serverDirectory,
 	);
 	if (strategy === "install") {
 		const graph = await resolvePinnedRuntimeDependencies(
 			appRoot,
-			dependencyNames,
+			new Set([...trace.packages, ...includeDependencies]),
 			registry,
 			includeLocal,
 		);
 		const { dependencies: pinned, files: archives } =
-			await planLocalArchives(graph, requests);
+			await planLocalArchives(graph, trace);
 		return [
 			...archives,
 			{
@@ -61,6 +69,7 @@ export async function planPackageFiles(
 			},
 		];
 	}
+	const dependencyNames = trace.packages;
 	if (dependencyNames.has("sharp"))
 		throw new Error(
 			'The Function Artifact contains the native runtime dependency sharp, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install", which keeps runtime package imports with exact package metadata and a lockfile.',

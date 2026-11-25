@@ -112,7 +112,9 @@ export function planPreparation(
 						settings.dependencyStrategy,
 						build.config.root,
 						registry,
+						build.config.build.server,
 						settings.includeLocal ?? false,
+						settings.includeDependencies ?? [],
 					);
 				} catch (cause) {
 					throw new Errors.UnresolvedDependency({

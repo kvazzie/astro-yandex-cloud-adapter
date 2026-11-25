@@ -39,7 +39,7 @@ export function visitSyntax(
 	}
 }
 
-export interface LexicalScope<Binding> {
+interface LexicalScope<Binding> {
 	parent?: LexicalScope<Binding>;
 	varScope: boolean;
 	bindings: Map<string, Binding>;
@@ -47,7 +47,7 @@ export interface LexicalScope<Binding> {
 }
 
 /** Builds the lexical environments before consumers inspect references. */
-export function readLexicalScopes<Binding>(
+function readLexicalScopes<Binding>(
 	program: SyntaxNode,
 	declare: (
 		node: SyntaxNode,
@@ -121,7 +121,7 @@ export function readLexicalScopes<Binding>(
 	return scopes;
 }
 
-export function lookupLexicalBinding<Binding>(
+function lookupLexicalBinding<Binding>(
 	scopes: ReadonlyMap<SyntaxNode, LexicalScope<Binding>>,
 	value: SyntaxNode,
 ): Binding | undefined {
@@ -262,7 +262,7 @@ export function getStaticString(
 }
 
 /** Reads the fixed specifier of a syntax-level module edge. */
-export function staticModuleReference(
+function staticModuleReference(
 	node: SyntaxNode,
 ): string | undefined {
 	if (
@@ -274,18 +274,15 @@ export function staticModuleReference(
 		return getStaticString(node.source);
 }
 
-export function staticLocalAssetReference(
+function staticLocalAssetReference(
 	node: SyntaxNode,
-	bindingOf?: (identifier: SyntaxNode) => unknown,
 ): string | undefined {
 	if (
 		node.type !== "NewExpression" ||
 		!isSyntaxNode(node.callee) ||
 		node.callee.type !== "Identifier" ||
 		node.callee.name !== "URL" ||
-		!Array.isArray(node.arguments) ||
-		// A lexical URL binding is not the global constructor.
-		bindingOf?.(node.callee) !== undefined
+		!Array.isArray(node.arguments)
 	)
 		return;
 	const [source, base] = node.arguments as unknown[];

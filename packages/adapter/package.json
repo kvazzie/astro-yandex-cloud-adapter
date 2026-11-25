@@ -52,6 +52,7 @@
 	"dependencies": {
 		"@effect/platform": "^0.97.2",
 		"@effect/platform-node": "^0.108.2",
+		"@vercel/nft": "^1.11.12",
 		"acorn": "^8.18.0",
 		"effect": "^3.22.2",
 		"effectify": "^0.3.1",

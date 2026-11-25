@@ -161,6 +161,38 @@ The passthrough image service in the example avoids runtime Sharp transformation
 Static image processing happens during the build. Dependency installation follows
 [Yandex's Node.js documentation](https://yandex.cloud/en/docs/functions/lang/nodejs/dependencies).
 
+#### How runtime dependencies are discovered
+
+The adapter traces the emitted server with
+[`@vercel/nft`](https://github.com/vercel/nft), the file tracer used by Astro's
+Vercel and Netlify adapters. It finds fixed `import`, `import()`, `require()`,
+`createRequire(import.meta.url)` loaders, and files read through
+`new URL(…, import.meta.url)`. This is a deliberate trade-off, recorded in
+[ADR 0011](../../docs/adr/0011-discover-runtime-dependencies-with-vercel-nft.md):
+loads that static tracing cannot follow are not discovered and are not rejected at
+build time. The deployed function then fails with `Cannot find module`. Known
+cases:
+
+- `process.getBuiltinModule("module").createRequire(…)` loads;
+- an inline `createRequire(import.meta.url)("pkg")` call;
+- `import()` or `require()` with a computed specifier, such as
+  `import(process.env.PLUGIN)`;
+- files reached only through `require.resolve` or `import.meta.resolve`;
+- a loader chosen at runtime, such as `flag ? moduleA : moduleB`.
+
+With `dependencyStrategy: "install"`, list such packages in
+`includeDependencies` so they are pinned in the lockfile:
+
+```js
+adapter: yandexCloud({
+  target: "object-storage-functions",
+  dependencyStrategy: "install",
+  includeDependencies: ["my-runtime-plugin"],
+}),
+```
+
+With `bundle`, import the package with a fixed specifier so Vite bundles it.
+
 ## Build, inspect, and preview
 
 Run these commands in your application:

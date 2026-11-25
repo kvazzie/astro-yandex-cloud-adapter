@@ -15,7 +15,6 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { resolvePinnedRuntimeDependencies } from "../../packages/adapter/src/conditional/FunctionArtifact/Dependency";
-import { findRuntimePackageImports } from "../../packages/adapter/src/conditional/FunctionArtifact/Dependency/ImportSpecifier.ts";
 import { formatNpmLockfile } from "../../packages/adapter/src/conditional/FunctionArtifact/Dependency/Metadata.ts";
 import type { RegistryVersionMetadata } from "../../packages/adapter/src/conditional/FunctionArtifact/Dependency/Registry.ts";
 
@@ -710,32 +709,6 @@ describe("runtime dependency regressions", () => {
 		}
 	});
 
-	it("keeps real builtin imports out of package delivery", () => {
-		expect([
-			...findRuntimePackageImports(
-				[
-					{
-						path: "index.js",
-						contents:
-							"import 'events'; import 'node:events'; import 'buffer'; import 'node:process';",
-					},
-				],
-				"install",
-			),
-		]).toEqual([]);
-		expect([
-			...findRuntimePackageImports(
-				[
-					{
-						path: "index.js",
-						contents: "import 'events/events.js';",
-					},
-				],
-				"install",
-			),
-		]).toEqual(["events"]);
-	});
-
 	it("uses the locked optional variant version instead of selecting a newer registry version", async () => {
 		const root = await mkdtemp(
 			join(tmpdir(), "yandex-optional-lock-"),
@@ -980,83 +953,6 @@ try {
 			}
 		},
 	);
-
-	it.each([
-		"import {createRequire as make} from 'node:module'; const req = make(import.meta.url); req('nanoid');",
-		"import * as mod from 'module'; const req = mod.createRequire(import.meta.url); const alias = req; alias(`nanoid`);",
-		"import {createRequire} from 'module'; createRequire(import.meta.url)('nanoid');",
-		"const mod = await import('node:module'); const req=mod.createRequire(import.meta.url); req('nanoid');",
-		"const {createRequire} = await import('node:module'); const req=createRequire(import.meta.url); req('nanoid');",
-		"const {createRequire: make} = await import('module'); const req=make(import.meta.url); req('nanoid');",
-		"import * as mod from 'node:module'; const {createRequire: make}=mod; const req=make(import.meta.url); req('nanoid');",
-		"import {'createRequire' as make} from 'node:module'; const req=make(import.meta.url); req('nanoid');",
-		"import {createRequire} from 'node:module'; const req=createRequire(import.meta.url); const lookup=req.resolve; lookup('nanoid');",
-		"import {createRequire} from 'node:module'; const req=createRequire(import.meta.url); function shadow(req) { req(name); } req('nanoid');",
-	])(
-		"accounts for fixed createRequire loads: %s",
-		(contents) => {
-			expect([
-				...findRuntimePackageImports(
-					[{ path: "index.js", contents }],
-					"install",
-				),
-			]).toEqual(["nanoid"]);
-		},
-	);
-
-	it.each([
-		"req(name)",
-		"req.resolve(name)",
-		"consume(req)",
-		"export {req}",
-		"const {resolve} = req; resolve(name)",
-		"req = other",
-		"req.resolve('nanoid', {paths: [otherDirectory]})",
-		"const resolve=req.resolve; resolve('nanoid', {paths: [otherDirectory]})",
-	])("rejects unaccounted createRequire loading: %s", (load) => {
-		const contents = `import {createRequire} from 'node:module'; const req = createRequire(import.meta.url); ${load};`;
-		expect(() =>
-			findRuntimePackageImports(
-				[{ path: "index.js", contents }],
-				"install",
-			),
-		).toThrow(/unresolved dynamic/);
-	});
-
-	it("rejects new.target.url as an unaccounted loader scope", () => {
-		const contents =
-			"import {createRequire} from 'node:module'; function Loader() {const req=createRequire(new.target.url); return req('nanoid');}";
-		expect(() =>
-			findRuntimePackageImports(
-				[{ path: "index.js", contents }],
-				"install",
-			),
-		).toThrow(/unresolved dynamic/);
-	});
-
-	it("rejects Node module promises escaping lexical loader analysis", () => {
-		const contents =
-			"const mod=import('node:module'); mod.then(m => m.createRequire(import.meta.url)(name));";
-		expect(() =>
-			findRuntimePackageImports(
-				[{ path: "index.js", contents }],
-				"install",
-			),
-		).toThrow(/unresolved dynamic/);
-	});
-
-	it("does not mistake a shadowed or local createRequire for Node's binding", () => {
-		for (const contents of [
-			"function createRequire() { return () => {}; } const req = createRequire(); req(name);",
-			"import {createRequire} from 'node:module'; function local(createRequire) { const req = createRequire(); req(name); }",
-		])
-			expect([
-				...findRuntimePackageImports(
-					[{ path: "index.js", contents }],
-					"install",
-				),
-			]).toEqual([]);
-	});
 
 	it("locates import-only and subpath-only installed packages without executing them", async () => {
 		const root = await mkdtemp(

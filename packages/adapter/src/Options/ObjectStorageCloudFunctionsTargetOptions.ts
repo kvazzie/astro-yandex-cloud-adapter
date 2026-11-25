@@ -28,6 +28,7 @@ const objectStorageCloudFunctionsTargetOptionsDefaultValues = {
 	target: "object-storage-functions",
 	dependencyStrategy: "bundle",
 	includeLocal: false,
+	includeDependencies: [] as string[],
 	functions: "shared",
 	apiGateway: false,
 	recursive404: false,
@@ -51,6 +52,11 @@ export const ObjectStorageCloudFunctionsTargetOptions = S.extend(
 			objectStorageCloudFunctionsTargetOptionsDefaultValues.dependencyStrategy,
 		),
 		includeLocal: optionalWithDefault(S.Boolean, false),
+		// Packages that dependency tracing cannot see; see ADR 0011.
+		includeDependencies: optionalWithDefault(
+			S.Array(S.String.pipe(S.minLength(1))),
+			[],
+		),
 		functions: optionalWithDefault(
 			S.Literal("shared"),
 			objectStorageCloudFunctionsTargetOptionsDefaultValues.functions,
@@ -76,6 +82,12 @@ export const ObjectStorageCloudFunctionsTargetOptions = S.extend(
 			!options.includeLocal ||
 			options.dependencyStrategy === "install" ||
 			"includeLocal requires dependencyStrategy: install.",
+	),
+	S.filter(
+		(options) =>
+			options.includeDependencies.length === 0 ||
+			options.dependencyStrategy === "install" ||
+			"includeDependencies requires dependencyStrategy: install.",
 	),
 	S.annotations({ parseOptions: { onExcessProperty: "error" } }),
 );

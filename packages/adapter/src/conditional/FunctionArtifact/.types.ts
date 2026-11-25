@@ -15,6 +15,8 @@ export interface PreparationSettings {
 	readonly dependencyStrategy: "bundle" | "install";
 	readonly recursive404: boolean;
 	readonly includeLocal?: boolean;
+	/** Extra runtime packages to pin that dependency tracing cannot see; see ADR 0011. */
+	readonly includeDependencies?: readonly string[];
 }
 export interface FunctionArtifactDescriptor {
 	readonly id: string;

@@ -96,6 +96,7 @@ export const make = (
 								dependencyStrategy: options.dependencyStrategy,
 								recursive404: options.recursive404,
 								includeLocal: options.includeLocal,
+								includeDependencies: options.includeDependencies,
 							},
 						);
 						return yield* FunctionArtifact.applyPreparation(

@@ -11,7 +11,6 @@ import {
 	readFile,
 	readlink,
 	readdir,
-	realpath,
 	rm,
 	symlink,
 	writeFile,
@@ -22,6 +21,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import * as Effect from "effect/Effect";
+import * as S from "effect/Schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as FunctionArtifact from "../../packages/adapter/src/conditional/FunctionArtifact";
@@ -746,463 +746,6 @@ describe("Function Artifact mutation plans", () => {
 	);
 
 	it.each(
-		(
-			[
-				[
-					"export const runtime={};",
-					"import * as ns from './bridge.js';const key='runtime';const {[key]:ignored,...copy}=ns;const {runtime:proc=process}=copy;",
-				],
-				[
-					"export const runtime={};",
-					"import * as ns from './bridge.js';const key=process.env.KEY ?? 'runtime';const {[key]:ignored,...copy}=ns;const {runtime:proc=process}=copy;",
-				],
-				[
-					"export const runtime=process;",
-					"import * as ns from './bridge.js';const flag=Math.random()<2;const selected=flag?ns:null;const proc=selected.runtime;",
-				],
-				[
-					"export const runtime=process;",
-					"import * as ns from './bridge.js';const selected=globalThis.missing||ns;const proc=selected.runtime;",
-				],
-				[
-					"export const runtime={};",
-					"import * as a from './bridge.js';import * as b from './other.js';const flag=Math.random()>2;const selected=flag?a:b;const {runtime:proc=process}=selected;",
-				],
-				[
-					"export const runtime={};",
-					"import * as ns from './bridge.js';const selected=Math.random()>2?ns:{};const {runtime:proc=process}=selected;",
-				],
-				[
-					"export const runtime={};",
-					"import * as ns from './bridge.js';const undefined={};const selected=Math.random()>2?ns:undefined;const {runtime:proc=process}=selected;",
-				],
-				[
-					"export * as runtime from './other.js';",
-					"import * as a from './bridge.js';import * as b from './process.js';const selected=Math.random()>2?a:b;const {runtime:proc}=selected;",
-				],
-				[
-					"export * from './r1.js';export * from './r2.js';",
-					"import * as a from './bridge.js';import * as b from './process.js';const selected=Math.random()>2?a:b;const proc=selected.runtime;",
-				],
-				[
-					"export * from './r1.js';export * from './r2.js';",
-					"import * as a from './bridge.js';import * as b from './namespace.js';const selected=Math.random()>2?b:a;const {runtime:proc=process}=selected;",
-					"tracked",
-				],
-				[
-					"export * from './r1.js';export * from './r2.js';",
-					"import * as a from './bridge.js';import * as b from './inner-namespace.js';const selected=Math.random()<2?b:a;const {runtime:loaders=process}=selected;const proc=loaders.inner;",
-					"rejected",
-				],
-			] as const
-		).flatMap((row) =>
-			(["bundle", "install"] as const).map(
-				(dependencyStrategy) => ({
-					bridge: row[0],
-					consumer: row[1],
-					outcome: row.length === 3 ? row[2] : undefined,
-					dependencyStrategy,
-				}),
-			),
-		),
-	)(
-		"never accepts a loader transferred through a namespace without its package: %j",
-		async ({
-			bridge,
-			consumer,
-			outcome,
-			dependencyStrategy,
-		}) => {
-			const f = await fixture();
-			await writeFile(new URL("bridge.js", f.server), bridge);
-			await writeFile(
-				new URL("other.js", f.server),
-				"export const unrelated=1;",
-			);
-			await writeFile(
-				new URL("process.js", f.server),
-				"export const runtime=process;",
-			);
-			await writeFile(
-				new URL("namespace.js", f.server),
-				"export * as runtime from './other.js';",
-			);
-			await writeFile(
-				new URL("inner.js", f.server),
-				"export const inner=process;",
-			);
-			await writeFile(
-				new URL("inner-namespace.js", f.server),
-				"export * as runtime from './inner.js';",
-			);
-			for (const ambiguous of ["r1.js", "r2.js"])
-				await writeFile(
-					new URL(ambiguous, f.server),
-					"export const runtime={};",
-				);
-			await writeFile(
-				new URL("index.js", f.server),
-				consumer +
-					"export const packageValue=proc.getBuiltinModule('module').createRequire(import.meta.url)('example');" +
-					f.index,
-			);
-			await mkdir(new URL("node_modules/example/", f.root), {
-				recursive: true,
-			});
-			await writeFile(
-				new URL("node_modules/example/package.json", f.root),
-				'{"name":"example","version":"1.2.3"}',
-			);
-			await writeFile(
-				new URL("node_modules/example/index.js", f.root),
-				'module.exports = "loaded";',
-			);
-			const { stdout } = await promisify(execFile)(
-				process.execPath,
-				[
-					"--input-type=module",
-					"--eval",
-					`const m=await import(${JSON.stringify(new URL("index.js", f.server).href)});process.stdout.write(m.packageValue);`,
-				],
-				{ cwd: f.directory },
-			);
-			expect(stdout).toBe("loaded");
-			const before = await snapshot(f.directory);
-			const result = await Effect.runPromise(
-				Effect.either(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{ ...settings, dependencyStrategy },
-						{
-							resolve: () =>
-								Promise.resolve({ version: "1.2.3" }),
-						},
-					),
-				),
-			);
-			expect(await snapshot(f.directory)).toEqual(before);
-			if (outcome === "rejected") {
-				expect(result._tag).toBe("Left");
-				if (result._tag === "Left")
-					expect(result.left.message).toMatch(
-						/different loader roles/,
-					);
-			}
-			if (
-				outcome === "tracked" &&
-				dependencyStrategy === "install"
-			)
-				expect(result._tag).toBe("Right");
-			if (result._tag === "Left") {
-				expect(result.left.message).toMatch(
-					/example|unresolved dynamic/,
-				);
-				return;
-			}
-			expect(dependencyStrategy).toBe("install");
-			const lock = result.right.mutations.find(
-				(m) =>
-					m.kind === "writeFile" &&
-					m.path.pathname.endsWith("package-lock.json"),
-			);
-			expect(
-				lock?.kind === "writeFile" && JSON.parse(lock.contents),
-			).toMatchObject({
-				packages: {
-					"node_modules/example": { version: "1.2.3" },
-				},
-			});
-		},
-	);
-
-	it.each(
-		(
-			[
-				[
-					"import * as proc from 'node:process';export {proc};",
-					"import {proc} from './bridge.js';",
-				],
-				[
-					"const runtime=globalThis.process;export default runtime;",
-					"import proc from './bridge.js';",
-				],
-				[
-					"export {runtime as proc} from './origin.js';",
-					"import * as ns from './bridge.js';const {proc}=ns;",
-				],
-				[
-					"export * from './origin.js';",
-					"import {runtime as proc} from './bridge.js';",
-				],
-				[
-					"export {runtime as proc} from './origin.js';",
-					"import * as ns from './bridge.js';const {['proc']:proc}=ns;",
-				],
-				[
-					"export * as ns from './origin.js';",
-					"import {ns} from './bridge.js';const proc=ns.runtime;",
-				],
-				[
-					"export const runtime=process;",
-					"import {createRequire} from 'node:module';const {runtime:proc}=createRequire(import.meta.url)('./bridge.mjs');",
-					"bridge.mjs",
-				],
-				[
-					'const runtime=process;export {runtime as "module.exports"};',
-					"import {createRequire} from 'node:module';const proc=createRequire(import.meta.url)('./bridge.mjs');",
-					"bridge.mjs",
-				],
-				[
-					'export {runtime as "module.exports"} from "./origin.js";',
-					"import {createRequire} from 'node:module';const proc=createRequire(import.meta.url)('./bridge.mjs');",
-					"bridge.mjs",
-				],
-				[
-					'const value="ordinary";export {value as "module.exports"};export const runtime=process;',
-					"import * as ns from './bridge.js';const proc=ns.runtime;",
-				],
-				[
-					"export const runtime=process;",
-					"import {createRequire} from 'node:module';const proc=createRequire(import.meta.url)('./bridge').runtime;",
-				],
-				[
-					"export const runtime=process;export const label='fixture';",
-					"import * as ns from './bridge.js';const {label,...copy}=ns;const proc=copy.runtime;",
-				],
-				[
-					"export const runtime=process;",
-					"import * as ns from './bridge.js';const {runtime:proc=null}=ns;",
-				],
-				[
-					"export const runtime=process;export const label='fixture';",
-					"import * as ns from './bridge.js';const {label,...copy}=ns;const {['runtime']:proc=null}=copy;",
-				],
-				[
-					"export const label='fixture';",
-					"import * as ns from './bridge.js';const {missing:proc=process}=ns;",
-				],
-				[
-					"export const runtime=undefined;",
-					"import * as ns from './bridge.js';const {runtime:proc=process}=ns;",
-				],
-				[
-					"export const runtime=void 0;",
-					"import * as ns from './bridge.js';const {runtime:proc=process}=ns;",
-				],
-				[
-					"export let runtime={};runtime=undefined;",
-					"import * as ns from './bridge.js';const {runtime:proc=process}=ns;",
-				],
-				[
-					"if(false){var runtime={}}export {runtime};",
-					"import * as ns from './bridge.js';const {runtime:proc=process}=ns;",
-				],
-				[
-					"export * from './ordinary-a.mjs';export * from './ordinary-b.mjs';",
-					"import * as ns from './bridge.js';const {runtime:proc=process}=ns;",
-				],
-				[
-					"export * from './ordinary-a.mjs?one';export * from './ordinary-a.mjs?two';",
-					"import * as ns from './bridge.js';const {runtime:proc=process}=ns;",
-				],
-				[
-					"export * from './ordinary-a.mjs#one';export * from './ordinary-a.mjs#two';",
-					"import * as ns from './bridge.js';const {runtime:proc=process}=ns;",
-				],
-				[
-					"export const runtime={};",
-					"import * as ns from './bridge.js';const {...copy}=ns;copy.runtime=undefined;const {runtime:proc=process}=copy;",
-				],
-				[
-					"export * as runtime from './ordinary-a.mjs';",
-					"import * as ns from './bridge.js';const {...copy}=ns;copy.runtime=undefined;const {runtime:proc=process}=copy;",
-				],
-				[
-					"export const runtime={};",
-					"import * as ns from './bridge.js';const {...copy}=ns;function clear(o){o.runtime=undefined;}clear(copy);const {runtime:proc=process}=copy;",
-				],
-			] as const
-		).flatMap(([bridge, consumer, file]) =>
-			(["bundle", "install"] as const).map(
-				(dependencyStrategy) => ({
-					bridge,
-					consumer,
-					file,
-					dependencyStrategy,
-				}),
-			),
-		),
-	)(
-		"tracks process bindings across emitted modules: %j",
-		async ({ bridge, consumer, file, dependencyStrategy }) => {
-			const f = await fixture();
-			const bridgeFile = file ?? "bridge.js";
-			for (const ordinaryFile of [
-				"ordinary-a.mjs",
-				"ordinary-b.mjs",
-			])
-				await writeFile(
-					new URL(ordinaryFile, f.server),
-					"export const runtime={};",
-				);
-			await writeFile(
-				new URL("origin.js", f.server),
-				`export * from './${bridgeFile}';export const runtime=process;`,
-			);
-			await writeFile(new URL(bridgeFile, f.server), bridge);
-			await writeFile(
-				new URL("index.js", f.server),
-				consumer +
-					"export const packageValue=proc.getBuiltinModule('module').createRequire(import.meta.url)('example');" +
-					f.index,
-			);
-			await mkdir(new URL("node_modules/example/", f.root), {
-				recursive: true,
-			});
-			await writeFile(
-				new URL("node_modules/example/package.json", f.root),
-				'{"name":"example","version":"1.2.3"}',
-			);
-			if (
-				bridge.includes('from "./origin.js"') ||
-				bridge.includes("./ordinary-a.mjs?") ||
-				bridge.includes("./ordinary-a.mjs#") ||
-				bridge.startsWith("export * as runtime")
-			) {
-				await writeFile(
-					new URL("node_modules/example/index.js", f.root),
-					'module.exports = "interop fixture";',
-				);
-				const { stdout } = await promisify(execFile)(
-					process.execPath,
-					[
-						"--input-type=module",
-						"--eval",
-						`const m=await import(${JSON.stringify(new URL("index.js", f.server).href)});process.stdout.write(m.packageValue);`,
-					],
-					{ cwd: f.directory },
-				);
-				expect(stdout).toBe("interop fixture");
-			}
-			const before = await snapshot(f.directory);
-			const result = await Effect.runPromise(
-				Effect.either(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{ ...settings, dependencyStrategy },
-						{
-							resolve: () =>
-								Promise.resolve({ version: "1.2.3" }),
-						},
-					),
-				),
-			);
-			expect(await snapshot(f.directory)).toEqual(before);
-			if (dependencyStrategy === "bundle") {
-				expect(result._tag).toBe("Left");
-				if (result._tag === "Left")
-					expect(result.left.message).toContain("example");
-				return;
-			}
-			if (result._tag === "Left") throw result.left;
-			const lock = result.right.mutations.find(
-				(m) =>
-					m.kind === "writeFile" &&
-					m.path.pathname.endsWith("package-lock.json"),
-			);
-			expect(
-				lock?.kind === "writeFile" && JSON.parse(lock.contents),
-			).toMatchObject({
-				packages: {
-					"node_modules/example": { version: "1.2.3" },
-				},
-			});
-		},
-	);
-
-	it.each(
-		(
-			[
-				"import * as ns from './bridge.mjs';",
-				"import {createRequire} from 'node:module';const ns=createRequire(import.meta.url)('./bridge.mjs');",
-				"import * as bridge from './bridge.mjs';const {...ns}=bridge;",
-				"import * as ns from './origin.mjs';",
-				"import * as ns from './imported.mjs';",
-				"import * as ns from './diamond.mjs';",
-				"import * as ns from './same-instance.mjs';",
-				"import * as ns from './empty-query.mjs';",
-				"import * as ns from './empty-fragment.mjs';",
-			] as const
-		).flatMap((consumer) =>
-			(["bundle", "install"] as const).map(
-				(dependencyStrategy) => ({
-					consumer,
-					dependencyStrategy,
-				}),
-			),
-		),
-	)(
-		"keeps a defined ordinary export instead of its loader default: %j",
-		async ({ consumer, dependencyStrategy }) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("bridge.mjs", f.server),
-				'const ordinary={getBuiltinModule(name){return "ordinary:"+name}};export {ordinary as runtime};',
-			);
-			await writeFile(
-				new URL("origin.mjs", f.server),
-				"export {runtime} from './bridge.mjs';",
-			);
-			await writeFile(
-				new URL("imported.mjs", f.server),
-				"import {runtime as imported} from './bridge.mjs';export const runtime=imported;",
-			);
-			await writeFile(
-				new URL("forward.mjs", f.server),
-				"import {runtime as original} from './bridge.mjs';export {original as runtime};",
-			);
-			await writeFile(
-				new URL("diamond.mjs", f.server),
-				"export * from './bridge.mjs';export * from './origin.mjs';export * from './forward.mjs';",
-			);
-			await writeFile(
-				new URL("same-instance.mjs", f.server),
-				"export * from './bridge.mjs?one#same';export * from '././br%69dge.mjs?one#same';",
-			);
-			await writeFile(
-				new URL("empty-query.mjs", f.server),
-				"export * from './bridge.mjs';export * from './bridge.mjs?';",
-			);
-			await writeFile(
-				new URL("empty-fragment.mjs", f.server),
-				"export * from './bridge.mjs';export * from './bridge.mjs#';",
-			);
-			await writeFile(
-				new URL("index.js", f.server),
-				consumer +
-					'const {runtime: proc = process}=ns; const name="custom";export const value=proc.getBuiltinModule(name);' +
-					f.index,
-			);
-			const before = await snapshot(f.directory);
-			const resolve = vi.fn(() =>
-				Promise.reject(new Error("Unexpected registry lookup")),
-			);
-			await Effect.runPromise(
-				FunctionArtifact.planPreparation(
-					f.build,
-					f.routePlan,
-					{ ...settings, dependencyStrategy },
-					{ resolve },
-				),
-			);
-			expect(resolve).not.toHaveBeenCalled();
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(
 		["./optional%zz.mjs", "./optional%2Fmodule.mjs"].flatMap(
 			(specifier) =>
 				(["bundle", "install"] as const).map(
@@ -1243,184 +786,6 @@ describe("Function Artifact mutation plans", () => {
 			);
 			expect(resolve).not.toHaveBeenCalled();
 			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(
-		(
-			[
-				{
-					bridge:
-						"export const runtime=process;export const label='fixture';",
-					read: "import * as ns from './bridge.mjs';const proc=ns[process.env.RUNTIME_EXPORT];",
-					reject: true,
-				},
-				{
-					bridge:
-						"export const runtime=process;export const label='fixture';",
-					read: "import {createRequire} from 'node:module';const ns=createRequire(import.meta.url)('./bridge.mjs');const proc=ns[process.env.RUNTIME_EXPORT];",
-					reject: true,
-				},
-				{
-					bridge:
-						"export const runtime=process;export const label='fixture';",
-					read: "import * as ns from './bridge.mjs';const {...copy}=ns;const proc=copy[process.env.RUNTIME_EXPORT];",
-					reject: true,
-				},
-				{
-					bridge:
-						"export const runtime=process;export const label='fixture';",
-					read: "import * as ns from './bridge.mjs';const {[process.env.RUNTIME_EXPORT]:proc}=ns;",
-					reject: true,
-				},
-				{
-					bridge:
-						"export const runtime=process;export const label='fixture';",
-					read: "import * as ns from './bridge.mjs';const {runtime,...copy}=ns;export const data=copy[process.env.RUNTIME_EXPORT];",
-					reject: false,
-				},
-				{
-					bridge:
-						"export const runtime=process;export const label='fixture';",
-					read: "import * as ns from './bridge.mjs';export const data=ns['label'];",
-					reject: false,
-				},
-				{
-					bridge: "export * from './other.mjs';",
-					read: "import * as ns from './bridge.mjs';const proc=ns[process.env.RUNTIME_EXPORT];",
-					reject: true,
-				},
-				{
-					bridge: "export * as group from './other.mjs';",
-					read: "import * as ns from './bridge.mjs';const proc=ns[process.env.RUNTIME_EXPORT].runtime;",
-					reject: true,
-				},
-				{
-					bridge: "export const label='fixture';",
-					read: "import * as ns from './bridge.mjs';export const data=ns[process.env.RUNTIME_EXPORT];",
-					reject: false,
-				},
-			] as const
-		).flatMap((example) =>
-			(["bundle", "install"] as const).map(
-				(dependencyStrategy) => ({
-					...example,
-					dependencyStrategy,
-				}),
-			),
-		),
-	)(
-		"guards unresolved computed reads of module namespaces: %j",
-		async ({ bridge, read, reject, dependencyStrategy }) => {
-			const f = await fixture();
-			await writeFile(new URL("bridge.mjs", f.server), bridge);
-			await writeFile(
-				new URL("other.mjs", f.server),
-				"export * from './bridge.mjs';export const runtime=process;",
-			);
-			await writeFile(
-				new URL("index.js", f.server),
-				read +
-					(reject
-						? "proc.getBuiltinModule('module').createRequire(import.meta.url)('example');"
-						: "") +
-					f.index,
-			);
-			const before = await snapshot(f.directory);
-			const result = await Effect.runPromise(
-				Effect.either(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{
-							...settings,
-							dependencyStrategy,
-						},
-					),
-				),
-			);
-			expect(await snapshot(f.directory)).toEqual(before);
-			expect(result._tag).toBe(reject ? "Left" : "Right");
-			if (result._tag === "Left")
-				expect(result.left.message).toContain(
-					"namespace lookup must use a fixed property",
-				);
-		},
-	);
-
-	it.each(["bundle", "install"] as const)(
-		"treats an ordinary CommonJS interop return as distinct from the ESM namespace (%s)",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("bridge.mjs", f.server),
-				'const value={runtime:{getBuiltinModule(){return "local"}}};export {value as "module.exports"};export const runtime=process;',
-			);
-			await writeFile(
-				new URL("index.js", f.server),
-				"import {createRequire} from 'node:module';const {runtime}=createRequire(import.meta.url)('./bridge.mjs');export const getter=runtime.getBuiltinModule;" +
-					f.index,
-			);
-			const before = await snapshot(f.directory);
-			await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(["bundle", "install"] as const)(
-		"rejects a relative runtime require with no retained file (%s)",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				"import {createRequire} from 'node:module';createRequire(import.meta.url)('./missing');" +
-					f.index,
-			);
-			const before = await snapshot(f.directory);
-			const result = await Effect.runPromise(
-				Effect.either(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{ ...settings, dependencyStrategy },
-					),
-				),
-			);
-			expect(result._tag).toBe("Left");
-			if (result._tag === "Left")
-				expect(result.left.message).toContain("./missing");
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(["bundle", "install"] as const)(
-		"prefers a retained exact file over a CommonJS .js fallback (%s)",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("bridge", f.server),
-				"export const runtime={value:1};",
-			);
-			await writeFile(
-				new URL("bridge.js", f.server),
-				"export const runtime=process;",
-			);
-			await writeFile(
-				new URL("index.js", f.server),
-				"import {createRequire} from 'node:module';const {runtime}=createRequire(import.meta.url)('./bridge'); use(runtime.getBuiltinModule);" +
-					f.index,
-			);
-			await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
 		},
 	);
 
@@ -1546,38 +911,10 @@ describe("Function Artifact mutation plans", () => {
 		},
 	);
 
-	it.each(["bundle", "install"] as const)(
-		"preserves ordinary namespace members alongside process exports (%s)",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("bridge.js", f.server),
-				"export * from './other.js';export const ordinary={getBuiltinModule(){return 'local'}};",
-			);
-			await writeFile(
-				new URL("other.js", f.server),
-				"export * from './bridge.js';export const runtime=process;export const ordinary=process;",
-			);
-			await writeFile(
-				new URL("index.js", f.server),
-				"import * as ns from './bridge.js';export const data=[ns.ordinary.getBuiltinModule('custom'),ns.runtime.env];" +
-					f.index,
-			);
-			const before = await snapshot(f.directory);
-			await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
 	it.each(
 		(["bundle", "install"] as const).flatMap(
 			(dependencyStrategy) =>
-				(["import", "dynamic import", "require"] as const).map(
+				(["import", "dynamic import"] as const).map(
 					(loader) => ({ dependencyStrategy, loader }),
 				),
 		),
@@ -1598,8 +935,6 @@ describe("Function Artifact mutation plans", () => {
 				{
 					import: "import './runtime-helper';",
 					"dynamic import": "await import('./runtime-helper');",
-					require:
-						"import {createRequire} from 'node:module'; createRequire(import.meta.url)('./runtime-helper');",
 				}[loader] + f.index,
 			);
 			await mkdir(new URL("node_modules/example/", f.root), {
@@ -1703,44 +1038,25 @@ describe("Function Artifact mutation plans", () => {
 	);
 
 	it.each([
-		{ file: "optional", dynamic: true, accepted: true },
+		{ file: "optional" },
 		{
 			file: "nested/esm/optional",
-			dynamic: true,
-			accepted: true,
 		},
 		{
 			file: "nested/optional",
-			dynamic: true,
-			accepted: true,
 			source: "module.exports = ;",
 		},
 		{
 			file: "nested/optional",
-			dynamic: true,
-			accepted: true,
 			source: "export const ready = true;",
 			manifest: "{",
 		},
-		{
-			file: "nested/optional",
-			dynamic: false,
-			accepted: false,
-			source: "export const ready = true;",
-			manifest: "{",
-			rejection: /in JSON at position/,
-		},
-		{ file: "optional", dynamic: false, accepted: false },
-		{ file: "optional.mjs", dynamic: true, accepted: false },
 	])(
-		"preserves an optional extensionless import fallback ($file, dynamic: $dynamic, manifest: $manifest)",
+		"preserves an optional extensionless import fallback ($file, manifest: $manifest)",
 		async ({
 			file,
-			dynamic,
-			accepted,
 			source: contents = "export const broken = ;",
 			manifest = '{"type":"commonjs"}',
-			rejection = /Unexpected token/,
 		}) => {
 			const f = await fixture();
 			if (file.startsWith("nested/")) {
@@ -1758,9 +1074,7 @@ describe("Function Artifact mutation plans", () => {
 			}
 			await writeFile(new URL(file, f.server), contents);
 			const request = JSON.stringify("./" + file);
-			const source = dynamic
-				? `export async function observe() { try { const loaded = await import(${request}); return loaded.default; } catch (error) { if (!(error instanceof SyntaxError) && error?.code !== "ERR_INVALID_PACKAGE_CONFIG") throw error; return "fallback"; } }`
-				: `import ${request};`;
+			const source = `export async function observe() { try { const loaded = await import(${request}); return loaded.default; } catch (error) { if (!(error instanceof SyntaxError) && error?.code !== "ERR_INVALID_PACKAGE_CONFIG") throw error; return "fallback"; } }`;
 			await writeFile(
 				new URL("index.js", f.server),
 				source + f.index,
@@ -1777,20 +1091,14 @@ describe("Function Artifact mutation plans", () => {
 				);
 				expect(stdout.trim()).toBe("fallback");
 			};
-			if (accepted) await check(fileURLToPath(f.server));
+			await check(fileURLToPath(f.server));
 			const before = await snapshot(f.directory);
-			const planning = Effect.runPromise(
+			const plan = await Effect.runPromise(
 				FunctionArtifact.planPreparation(f.build, f.routePlan, {
 					...settings,
 					dependencyStrategy: "install",
 				}),
 			);
-			if (!accepted) {
-				await expect(planning).rejects.toThrow(rejection);
-				expect(await snapshot(f.directory)).toEqual(before);
-				return;
-			}
-			const plan = await planning;
 			expect(await snapshot(f.directory)).toEqual(before);
 			await Effect.runPromise(
 				FunctionArtifact.applyPreparation(plan),
@@ -1801,279 +1109,6 @@ describe("Function Artifact mutation plans", () => {
 			directories.push(isolated);
 			await cp(f.server, isolated, { recursive: true });
 			await check(isolated);
-		},
-	);
-
-	const ordinaryRequire = 'module.exports = require("example");';
-	// The nodejs22 runtime classifies an extensionless require target by its syntax.
-	// Node 26 applies the package type instead, so only an older host can witness it.
-	const hostRequireMatchesRuntime =
-		Number(process.versions.node.split(".")[0]) < 26;
-	const aliasedRequire =
-		'const load = require; module.exports = load("example");';
-	it.each([
-		{
-			metadata: { type: "commonjs" },
-			syntax: "wrapper return",
-			source: `${ordinaryRequire} return;`,
-		},
-		{
-			metadata: { type: "commonjs" },
-			syntax: "ordinary require",
-			source: ordinaryRequire,
-		},
-		{
-			metadata: {},
-			syntax: "wrapper return",
-			source: `${ordinaryRequire} return;`,
-		},
-		{
-			metadata: {},
-			syntax: "ordinary require",
-			source: ordinaryRequire,
-		},
-		{
-			metadata: {},
-			syntax: "aliased require",
-			source: aliasedRequire,
-		},
-		{
-			metadata: {},
-			syntax: "var redeclaration",
-			source:
-				'var require = module.require.bind(module); module.exports = require("example");',
-		},
-		{
-			directory: "vendor/node_modules/demo/",
-			syntax: "aliased require",
-			source: aliasedRequire,
-		},
-		{
-			directory: "",
-			loader: "require",
-			syntax: "aliased require",
-			source: aliasedRequire,
-		},
-		{
-			directory: "",
-			loader: "import then require",
-			syntax: "aliased require",
-			source: aliasedRequire,
-		},
-		{
-			metadata: { type: "commonjs" },
-			file: "helper.js",
-			syntax: "aliased require",
-			source: aliasedRequire,
-		},
-		{
-			metadata: {},
-			file: "helper.js",
-			syntax: "aliased require",
-			source: aliasedRequire,
-		},
-	])(
-		"rejects a CommonJS module ($directory$file, $metadata, $loader, $syntax)",
-		async ({
-			directory = "nested/",
-			metadata,
-			loader = "import",
-			file = "optional",
-			source,
-		}) => {
-			const f = await fixture();
-			await mkdir(new URL(directory, f.server), {
-				recursive: true,
-			});
-			await writeFile(
-				new URL("package.json", f.server),
-				'{"type":"module"}',
-			);
-			if (metadata)
-				await writeFile(
-					new URL(`${directory}package.json`, f.server),
-					JSON.stringify(metadata),
-				);
-			await writeFile(
-				new URL(`${directory}${file}`, f.server),
-				source,
-			);
-			await mkdir(new URL("node_modules/example/", f.root), {
-				recursive: true,
-			});
-			await writeFile(
-				new URL("node_modules/example/package.json", f.root),
-				'{"name":"example","version":"1.2.3"}',
-			);
-			await writeFile(
-				new URL("node_modules/example/index.js", f.root),
-				'module.exports = "loaded";',
-			);
-			await writeFile(
-				new URL("index.js", f.server),
-				{
-					import: `export async function observe() { return (await import("./${directory}${file}")).default; }`,
-					require: `import { createRequire } from "node:module"; export function observe() { return createRequire(import.meta.url)("./${directory}${file}"); }`,
-					"import then require": `import { createRequire } from "node:module"; export async function observe() { try { await import("./${directory}${file}"); } catch (error) { if (!(error instanceof ReferenceError)) throw error; } return createRequire(import.meta.url)("./${directory}${file}"); }`,
-				}[loader] + `\n${f.index}`,
-			);
-			if (loader === "import" || hostRequireMatchesRuntime) {
-				const { stdout } = await promisify(execFile)(
-					process.execPath,
-					[
-						"--input-type=module",
-						"-e",
-						'import { observe } from "./index.js"; console.log(await observe());',
-					],
-					{ cwd: fileURLToPath(f.server) },
-				);
-				expect(stdout.trim()).toBe("loaded");
-			}
-			const before = await snapshot(f.directory);
-			await expect(
-				Effect.runPromise(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{ ...settings, dependencyStrategy: "install" },
-					),
-				),
-			).rejects.toThrow(
-				`unsupported CommonJS module at ${directory}${file}.`,
-			);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each([
-		...[
-			'const __filename = "entry";',
-			"let require;",
-			"const { nested: [module] } = { nested: [] };",
-			"class exports {}",
-		].map((declaration) => ({
-			directory: "nested/",
-			manifest: "{}",
-			declaration,
-		})),
-		{
-			directory: "vendor/node_modules/demo/",
-			manifest: '{"type":"module"}',
-			declaration: "/* explicit ESM scope */",
-		},
-	])(
-		"loads an extensionless file in $directory as ESM ($manifest, $declaration)",
-		async ({ directory, manifest, declaration }) => {
-			const f = await fixture();
-			await mkdir(new URL(directory, f.server), {
-				recursive: true,
-			});
-			await writeFile(
-				new URL("package.json", f.server),
-				'{"type":"module"}',
-			);
-			await writeFile(
-				new URL(`${directory}package.json`, f.server),
-				manifest,
-			);
-			await writeFile(
-				new URL(`${directory}shadowing`, f.server),
-				`${declaration} globalThis.example = import("example");`,
-			);
-			await mkdir(new URL("node_modules/example/", f.root), {
-				recursive: true,
-			});
-			await writeFile(
-				new URL("node_modules/example/package.json", f.root),
-				'{"name":"example","version":"1.2.3"}',
-			);
-			await writeFile(
-				new URL("node_modules/example/index.js", f.root),
-				'module.exports = "loaded";',
-			);
-			await writeFile(
-				new URL("index.js", f.server),
-				`export async function observe() { await import("./${directory}shadowing"); return (await globalThis.example).default; }\n${f.index}`,
-			);
-			const { stdout } = await promisify(execFile)(
-				process.execPath,
-				[
-					"--input-type=module",
-					"-e",
-					'import { observe } from "./index.js"; console.log(await observe());',
-				],
-				{ cwd: fileURLToPath(f.server) },
-			);
-			expect(stdout.trim()).toBe("loaded");
-			const before = await snapshot(f.directory);
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(
-					f.build,
-					f.routePlan,
-					{ ...settings, dependencyStrategy: "install" },
-					{
-						resolve: () => Promise.resolve({ version: "1.2.3" }),
-					},
-				),
-			);
-			expect(await snapshot(f.directory)).toEqual(before);
-			const lock = plan.mutations.find(
-				(m) =>
-					m.kind === "writeFile" &&
-					m.path.pathname.endsWith("package-lock.json"),
-			);
-			expect(
-				lock?.kind === "writeFile" && JSON.parse(lock.contents),
-			).toMatchObject({
-				packages: {
-					"node_modules/example": { version: "1.2.3" },
-				},
-			});
-		},
-	);
-
-	it.each(
-		["process", "node:process"].flatMap((specifier) =>
-			[false, true].flatMap((namespace) =>
-				(["bundle", "install"] as const).map(
-					(dependencyStrategy) => ({
-						specifier,
-						namespace,
-						dependencyStrategy,
-					}),
-				),
-			),
-		),
-	)(
-		"rejects direct process object reexports across emitted modules: %j",
-		async ({ specifier, namespace, dependencyStrategy }) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("bridge.js", f.server),
-				namespace
-					? `export * as proc from '${specifier}';`
-					: `export {default as proc} from '${specifier}';`,
-			);
-			await writeFile(
-				new URL("index.js", f.server),
-				`import {proc} from './bridge.js';proc.getBuiltinModule('module').createRequire(import.meta.url)('node:path');${f.index}`,
-			);
-			const before = await snapshot(f.directory);
-			const result = await Effect.runPromise(
-				Effect.either(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{ ...settings, dependencyStrategy },
-					),
-				),
-			);
-			expect(result).toMatchObject({ _tag: "Left" });
-			if (result._tag === "Left")
-				expect(result.left.message).toContain(
-					"Node loader re-exports cannot be tracked across modules",
-				);
-			expect(await snapshot(f.directory)).toEqual(before);
 		},
 	);
 
@@ -3311,66 +2346,6 @@ describe("Function Artifact mutation plans", () => {
 			expect(
 				await readFile(new URL("index.js", f.server), "utf8"),
 			).toContain("data:text/javascript");
-		},
-	);
-
-	it.each(
-		[
-			"import proc from 'node:process';export const env=proc.env;",
-			"const p=typeof process==='object'?process:{};export const env=p.env;",
-			"const {env}=typeof process==='object'?process:{};export {env};",
-			"function observe(process){const p=typeof process==='object'?process:{};p.getBuiltinModule('module').createRequire(import.meta.url)('local-helper');}",
-			"function run(p=process){return p.env}run();",
-			"function run(p=process){var p={};var p={env:'ok'};return p.env}run();",
-
-			"function run({env}=process){return env}run();",
-			"function run(process,p=process){p.getBuiltinModule('module').createRequire(import.meta.url)('local-helper')}",
-			"function run(p=process){var p={getBuiltinModule(){return {createRequire(){return ()=>{}}}}};p.getBuiltinModule('module').createRequire(import.meta.url)('local-helper')}run();",
-			"import * as proc from 'process';export {proc};",
-			"let p=process;p=process;export const env=p.env;",
-			"let p=process;p=globalThis.process;export const env=p.env;",
-			"let env;({env}=process);export {env};",
-			"function observe(process){let p;p=process;p.getBuiltinModule('module').createRequire(import.meta.url)('local-helper');}",
-			"function observe(globalThis){let p;p=globalThis.process;p.getBuiltinModule('module').createRequire(import.meta.url)('local-helper');}",
-			"const process={env:{}};let p;p=process;export {p};",
-			"function observe(process){process.getBuiltinModule('module').createRequire(import.meta.url)('local-helper');}",
-			"function observe(globalThis){globalThis.process.getBuiltinModule('module').createRequire(import.meta.url)('local-helper');}",
-			"const process={getBuiltinModule(){return {createRequire(){return ()=>{}}}}};process.getBuiltinModule('module').createRequire(import.meta.url)('local-helper');",
-			"process.getBuiltinModule('fs');",
-			"typeof process.getBuiltinModule;",
-			"export const {env}=process;",
-			"const p=process;consume(p);",
-			"function inspect(Object){return Object.prototype.toString.call(process)}",
-			"const p=globalThis.process || {};export {p as runtimeProcess};",
-			"const isNode=typeof process!=='undefined' && Object.prototype.toString.call(process)==='[object process]';",
-			"const hrtime=typeof process === 'object' && 'hrtime' in process && typeof process.hrtime.bigint === 'function' ? process.hrtime : undefined;",
-			"const hasStdout=typeof process === 'object' && process !== null && typeof process.stdout === 'object' && process.stdout !== null;",
-			"const p=globalThis.process || {}; const args=p.argv || []; const env=p.env || {};",
-			"const p=globalThis.process ?? {}; const args=p.argv || [];",
-			"const {env}=process;export const value=env.NODE_ENV;",
-		].flatMap((source) =>
-			["bundle", "install"].map((dependencyStrategy) => ({
-				source,
-				dependencyStrategy: dependencyStrategy as
-					"bundle" | "install",
-			})),
-		),
-	)(
-		"keeps builtin process observations and shadowed bindings ordinary: %j",
-		async ({ source, dependencyStrategy }) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				source + f.index,
-			);
-			const before = await snapshot(f.directory);
-			await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(await snapshot(f.directory)).toEqual(before);
 		},
 	);
 
@@ -6699,47 +5674,6 @@ ${f.index}`,
 	});
 
 	it.each(
-		[
-			{ member: "createRequire() {}", allowed: true },
-			{ member: "static createRequire() {}", allowed: true },
-			{ member: "createRequire = 1;", allowed: true },
-			{ member: "static createRequire = 1;", allowed: true },
-			{ member: "[createRequire]() {}", allowed: false },
-			{ member: "value = createRequire;", allowed: false },
-		].flatMap((c) =>
-			(["bundle", "install"] as const).map(
-				(dependencyStrategy) => ({ ...c, dependencyStrategy }),
-			),
-		),
-	)(
-		"distinguishes class member keys from loader reads: %j",
-		async ({ member, allowed, dependencyStrategy }) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				`import {createRequire} from 'node:module';class C {${member}}
-${f.index}`,
-			);
-			const before = await snapshot(f.directory);
-			const result = await Effect.runPromise(
-				Effect.either(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{ ...settings, dependencyStrategy },
-					),
-				),
-			);
-			expect(result._tag).toBe(allowed ? "Right" : "Left");
-			if (result._tag === "Left")
-				expect(result.left).toMatchObject({
-					_tag: "UnresolvedDependency",
-				});
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(
 		["nested", "hoisted"].flatMap((placement) =>
 			["optionalDependencies", "dependencies"].map(
 				(leafKind) => ({ placement, leafKind }),
@@ -6842,43 +5776,6 @@ ${f.index}`,
 				expect(entries[0]![1]).toMatchObject(expected);
 			}
 			expect(registry.resolve).not.toHaveBeenCalled();
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(
-		["require", "__require"].flatMap((name) =>
-			["factory", "local"].flatMap((kind) =>
-				(["bundle", "install"] as const).map(
-					(dependencyStrategy) => ({
-						name,
-						kind,
-						dependencyStrategy,
-					}),
-				),
-			),
-		),
-	)(
-		"distinguishes $kind bindings named $name from unbound loaders under $dependencyStrategy",
-		async ({ name, kind, dependencyStrategy }) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				`${
-					kind === "factory"
-						? `import {createRequire as ${name}} from 'node:module'; const load = ${name}(import.meta.url); load('node:path');`
-						: `function ${name}(value) {return value;} ${name}(import.meta.url);`
-				}
-${f.index}`,
-			);
-			const before = await snapshot(f.directory);
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(plan.plannedOutput.functions).toHaveLength(1);
 			expect(await snapshot(f.directory)).toEqual(before);
 		},
 	);
@@ -7069,115 +5966,6 @@ ${f.index}`,
 					new Map(),
 				),
 			).toBe(expected);
-		},
-	);
-
-	it.each(
-		[
-			"default-target",
-			"shadowed-target",
-			"reassigned-target",
-			"redeclared-target",
-			"normalize-argument",
-			"reassigned-normalizer",
-			"unrelated-dispatch",
-			"missing-case",
-		].flatMap((kind) =>
-			(["bundle", "install"] as const).map(
-				(dependencyStrategy) => ({ kind, dependencyStrategy }),
-			),
-		),
-	)(
-		"rejects dynamic imports outside the recognized Astro logger dispatch: %j",
-		async ({ kind, dependencyStrategy }) => {
-			const f = await fixture();
-			const source = `let z = e => e; async function a(e) { ${kind === "redeclared-target" ? "var" : "let"} n = z(e.entrypoint); ${kind === "redeclared-target" ? "var n = e.config.other;" : ""} switch(e.${kind === "unrelated-dispatch" ? "handler" : "entrypoint"}) {
-			case "astro/logger/node": return {};
-			case "astro/logger/console": return {};
-			case "${kind === "missing-case" ? "custom/json" : "astro/logger/json"}": return {};
-			case "astro/logger/compose": ${kind === "reassigned-normalizer" ? "z = () => e.config.other;" : ""} return (e.config?.loggers ?? []).map(async config => import(z(config.${kind === "normalize-argument" ? "custom" : "entrypoint"})));
-			default: ${kind === "shadowed-target" ? "{ const n = e.config.other; return import(n); }" : ""} ${kind === "reassigned-target" ? "n = e.config.other;" : ""} return import(${kind === "default-target" ? "process.env.RUNTIME_PACKAGE" : "n"});
-		}}`;
-			const file =
-				kind === "unrelated-dispatch"
-					? "chunks/remote-fixture.js"
-					: "index.js";
-			await mkdir(new URL("chunks/", f.server), {
-				recursive: true,
-			});
-			await writeFile(
-				new URL(file, f.server),
-				source + (file === "index.js" ? f.index : ""),
-			);
-			const before = await snapshot(f.directory);
-			const outcome = await Effect.runPromise(
-				Effect.either(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{ ...settings, dependencyStrategy },
-					),
-				),
-			);
-			expect(outcome).toMatchObject({
-				_tag: "Left",
-				left: { _tag: "UnresolvedDependency" },
-			});
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(
-		[false, true].flatMap((renamed) =>
-			(["bundle", "install"] as const).flatMap(
-				(dependencyStrategy) =>
-					["index.js", "chunks/remote-fixture.js"].map(
-						(file) => ({
-							renamed,
-							dependencyStrategy,
-							file,
-						}),
-					),
-			),
-		),
-	)(
-		"retains Astro logger dispatch after identifier minification: %j",
-		async ({ renamed, dependencyStrategy, file }) => {
-			const f = await fixture();
-			const [load, config, target, normalize] = renamed
-				? ["a", "e", "n", "z"]
-				: [
-						"loadLoggerDestination",
-						"loggerConfig",
-						"entrypoint",
-						"normalizeEntrypoint",
-					];
-			const source = `function ${normalize}(x) { return x instanceof URL ? x.href : x; } async function ${load}(${config}) {
-			${renamed ? "let unused," : "const"} ${target} = ${normalize}(${config}.entrypoint);
-			switch (${config}.entrypoint) {
-				case "astro/logger/node": return {};
-				case "astro/logger/console": return {};
-				case "astro/logger/json": return {};
-				case "astro/logger/compose": return Promise.all((${config}.config?.loggers ?? []).map(async loggerConfig => (await import(${normalize}(loggerConfig.entrypoint))).default(loggerConfig.config)));
-				default: return import(${target});
-			}
-		}`;
-			await mkdir(new URL("chunks/", f.server), {
-				recursive: true,
-			});
-			await writeFile(
-				new URL(file, f.server),
-				source + (file === "index.js" ? f.index : ""),
-			);
-			const before = await snapshot(f.directory);
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(plan.plannedOutput.functions).toHaveLength(1);
-			expect(await snapshot(f.directory)).toEqual(before);
 		},
 	);
 
@@ -7654,26 +6442,6 @@ ${f.index}`,
 		},
 	);
 
-	it.each(["bundle", "install"] as const)(
-		"keeps public export labels separate from lexical loader reads (%s)",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				"import {createRequire} from 'node:module';const value = createRequire(import.meta.url)('node:path').sep;export {value as createRequire};" +
-					f.index,
-			);
-			const before = await snapshot(f.directory);
-			await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
 	it("pins nested optional lock entries when the application root is a symlink", async () => {
 		const f = await fixture();
 		const aliasParent = await mkdtemp(
@@ -7756,47 +6524,6 @@ ${f.index}`,
 			},
 		});
 	});
-
-	it.each(
-		[
-			"export {createRequire as make} from 'node:module';",
-			"export {default as mod} from 'module';",
-			"export {Module as mod} from 'node:module';",
-			"export * as mod from 'node:module';",
-			"export * from 'module';",
-			"export {'createRequire' as make} from 'node:module';",
-		].flatMap((source) =>
-			(["bundle", "install"] as const).map(
-				(dependencyStrategy) => ({ source, dependencyStrategy }),
-			),
-		),
-	)(
-		"rejects untracked builtin loader re-exports: %j",
-		async ({ source, dependencyStrategy }) => {
-			const f = await fixture();
-			await writeFile(new URL("bridge.js", f.server), source);
-			const before = await snapshot(f.directory);
-			const outcome = await Effect.runPromise(
-				Effect.either(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{ ...settings, dependencyStrategy },
-					),
-				),
-			);
-			expect(outcome).toMatchObject({
-				_tag: "Left",
-				left: {
-					_tag: "UnresolvedDependency",
-					message: expect.stringMatching(
-						/unresolved dynamic/,
-					) as string,
-				},
-			});
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
 	it.each([
 		{ exported: "h as handler, other", other: true },
 		{ exported: "default as handler, other", other: true },
@@ -8053,542 +6780,47 @@ ${f.index}`,
 
 	it.each([
 		{
-			mode: "pattern target omitted",
-			excluded: "src/features/a.js",
+			name: "packs the entry of a local package",
+			files: { "index.cjs": 'module.exports = "entry";' },
+			required: "entry",
 		},
 		{
-			mode: "pattern import omitted",
-			excluded: "src/helper.js",
-		},
-		{ mode: "pattern complete" },
-		{
-			mode: "directory main omitted",
-			excluded: "nested/main.cjs",
-		},
-		{
-			mode: "directory manifest omitted",
-			excluded: "nested/package.json",
-		},
-		{ mode: "directory complete" },
-	])(
-		"validates resolver-selected local archive files ($mode)",
-		async ({ mode, excluded }) => {
-			const f = await fixture();
-			const linked = new URL("packages/linked/", f.root);
-			const pattern = mode.startsWith("pattern");
-			const files: Record<string, string> = pattern
-				? {
-						"src/features/a.js":
-							'export { default } from "../helper.js";',
-						"src/features/internal/private.js":
-							'export default "private";',
-						"src/helper.js": 'export default "pattern helper";',
-					}
-				: {
-						"index.cjs": 'module.exports = require("./nested");',
-						"nested/package.json": '{"main":"main.cjs"}',
-						"nested/main.cjs":
-							'module.exports = "selected main";',
-						"nested/index.js":
-							'module.exports = "fallback index";',
-					};
-			for (const [path, contents] of Object.entries(files)) {
-				await mkdir(new URL(".", new URL(path, linked)), {
-					recursive: true,
-				});
-				await writeFile(new URL(path, linked), contents);
-			}
-			await writeFile(
-				new URL("package.json", linked),
-				JSON.stringify({
-					name: "linked",
-					version: "1.0.0",
-					type: pattern ? "module" : "commonjs",
-					exports: pattern
-						? {
-								"./features/*": {
-									default: "./src/features/*.js",
-								},
-								"./features/internal/*": null,
-							}
-						: "./index.cjs",
-					files: Object.keys(files).filter(
-						(path) => path !== excluded,
-					),
-				}),
-			);
-			await mkdir(new URL("node_modules/", f.root));
-			await symlink(
-				linked,
-				new URL("node_modules/linked", f.root),
-				"dir",
-			);
-			const specifier = pattern ? "linked/features/a" : "linked";
-			const require = createRequire(
-				new URL("package.json", f.root),
-			);
-			if (pattern) {
-				expect(require.resolve(specifier)).toBe(
-					await realpath(new URL("src/features/a.js", linked)),
-				);
-				expect(() => {
-					require.resolve("linked/features/internal/private");
-				}).toThrow(/not defined by "exports"/);
-				expect(
-					require.resolve("linked/features/%69nternal/private"),
-				).toBe(
-					await realpath(
-						new URL("src/features/internal/private.js", linked),
-					),
-				);
-			} else expect(require(specifier)).toBe("selected main");
-			await writeFile(
-				new URL("index.js", f.server),
-				`import '${specifier}';${f.index}`,
-			);
-			const before = await snapshot(f.directory);
-			const planning = Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy: "install",
-					includeLocal: true,
-				}),
-			);
-			if (excluded)
-				await expect(planning).rejects.toThrow(
-					`omits ${excluded}`,
-				);
-			else
-				expect(
-					(await planning).plannedOutput.functions,
-				).toHaveLength(1);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	type ArchiveResolutionCase = {
-		name: string;
-		files: Record<string, string>;
-		pattern?: unknown;
-		specifier?: string;
-		manifest?: Record<string, unknown>;
-		omitted?: string;
-		omissionAllowed?: boolean;
-		required?: string;
-		alsoResolves?: Record<string, string>;
-		installedFiles?: Record<string, string>;
-		fmtBinding?: "absent" | "shared" | "symlink" | "distinct";
-		imported?: string;
-		emittedLoader?:
-			"require" | "require-resolve" | "import-resolve";
-		bracketResolver?: boolean;
-		rejection?: string;
-		manifestBom?: boolean;
-		esmProbe?: "directory-error" | "url";
-		alsoImport?: boolean;
-	};
-	it.each<ArchiveResolutionCase>([
-		{
-			name: "decodes the directory of an export pattern",
-			pattern: "./src/my%20features/*.cjs",
+			name: "rejects an omitted relative require",
 			files: {
-				"src/my features/a.cjs": 'module.exports = "encoded";',
-			},
-			omitted: "src/my features/a.cjs",
-			required: "encoded",
-		},
-		{
-			name: "retains the decoded export target",
-			pattern: "./src/my%20features/*.cjs",
-			files: {
-				"src/my features/a.cjs": 'module.exports = "encoded";',
-			},
-			required: "encoded",
-		},
-		{
-			name: "ignores a default export shadowed by the node condition",
-			pattern: {
-				node: "./node/*.cjs",
-				default: "./fallback/*.cjs",
-			},
-			files: {
-				"node/a.cjs": 'module.exports = "node";',
-				"fallback/a.cjs": 'module.exports = "default";',
-			},
-			omitted: "fallback/a.cjs",
-			omissionAllowed: true,
-			required: "node",
-			imported: "node",
-		},
-		{
-			name: "probes the next condition if the selected condition has no matching child",
-			pattern: {
-				node: { browser: "./browser/*.cjs" },
-				default: "./fallback/*.cjs",
-			},
-			files: {
-				"browser/a.cjs": 'module.exports = "browser";',
-				"fallback/a.cjs": 'module.exports = "default";',
-			},
-			omitted: "browser/a.cjs",
-			omissionAllowed: true,
-			required: "default",
-			imported: "default",
-		},
-		...(["esm/a.mjs", "cjs/a.cjs", undefined] as const).map(
-			(omitted) => ({
-				name: omitted
-					? `checks both Node loaders when ${omitted} is omitted`
-					: "preserves different wildcard targets for import and require after installation",
-				pattern: {
-					import: "./esm/*.mjs",
-					require: "./cjs/*.cjs",
-				},
-				files: {
-					"esm/a.mjs": 'export default "import";',
-					"cjs/a.cjs": 'module.exports = "require";',
-				},
-				omitted,
-				required: "require",
-				imported: "import",
-			}),
-		),
-		{
-			name: "requires the fallback index's format-defining package scope",
-			files: {
-				"index.cjs":
-					'module.exports = require("./nested").default;',
-				"nested/index.js": 'export default "module index";',
-				"nested/package.json": '{"type":"module"}',
-			},
-			omitted: "nested/package.json",
-			required: "module index",
-		},
-		{
-			name: "accepts a fallback index without a separate package scope",
-			files: {
-				"index.cjs": 'module.exports = require("./nested");',
-				"nested/index.js": 'module.exports = "regular index";',
-			},
-			required: "regular index",
-		},
-		{
-			name: "follows require in an extensionless file",
-			files: {
-				"index.cjs": 'module.exports = require("./run");',
-				run: 'module.exports = require("./helper.cjs");',
+				"index.cjs": 'module.exports = require("./helper.cjs");',
 				"helper.cjs": 'module.exports = "helper";',
 			},
 			omitted: "helper.cjs",
 			required: "helper",
 		},
 		{
-			name: "follows require before a CommonJS top-level return",
-			files: {
-				"index.cjs":
-					'module.exports = require("./helper.cjs"); return;',
-				"helper.cjs": 'module.exports = "wrapped";',
-			},
-			omitted: "helper.cjs",
-			required: "wrapped",
-		},
-		...(["./nested/.", "./nested/", "./nested"] as const).map(
-			(specifier) => ({
-				name: `preserves CommonJS lookup intent for ${specifier}`,
-				files: {
-					"index.cjs": `module.exports = require(${JSON.stringify(specifier)});`,
-					"nested.js": 'module.exports = "file";',
-					"nested/package.json": '{"main":"main.cjs"}',
-					"nested/main.cjs": 'module.exports = "directory";',
-				},
-				omitted: "nested/main.cjs",
-				omissionAllowed: specifier === "./nested",
-				required:
-					specifier === "./nested" ? "file" : "directory",
-			}),
-		),
-		...[
-			"./../outside.cjs",
-			"./dist/%2e%2e/invalid.cjs",
-			"./node_modules/invalid.cjs",
-		].map((invalid) => ({
-			name: "skips an invalid package export target " + invalid,
-			manifest: { exports: [invalid, "./dist/entry.cjs"] },
-			files: {
-				"dist/entry.cjs": 'module.exports = "array entry";',
-			},
-			omitted: "dist/entry.cjs",
-			required: "array entry",
-		})),
-		{
-			name: "does not fall through a valid missing export target",
-			manifest: { exports: ["./missing.cjs", "./fallback.cjs"] },
-			files: { "fallback.cjs": 'module.exports = "fallback";' },
-			omitted: "fallback.cjs",
-			omissionAllowed: true,
-		},
-		{
-			name: "checks the root index after an unresolved legacy main",
-			manifest: {
-				exports: undefined,
-				main: "./dist/missing.js",
-			},
-			files: {
-				"index.js": 'module.exports = require("./helper.cjs");',
-				"helper.cjs": 'module.exports = "legacy fallback";',
-			},
-			omitted: "helper.cjs",
-			required: "legacy fallback",
-		},
-		{
-			name: "retains Node's legacy main priority over a root index",
-			manifest: { exports: undefined, main: "./dist/entry" },
-			files: {
-				"index.js": 'module.exports = require("./unused.cjs");',
-				"unused.cjs": 'module.exports = "unused";',
-				"dist/entry.js": 'module.exports = "legacy main";',
-			},
-			omitted: "unused.cjs",
-			omissionAllowed: true,
-			required: "legacy main",
-		},
-		...([false, true] as const).flatMap(
-			(complete): ArchiveResolutionCase[] => [
-				{
-					name: `checks a legacy ESM subpath (complete: ${complete})`,
-					specifier: "linked/tools.cjs",
-					manifest: { exports: null },
-					files: {
-						"index.js": 'module.exports = "root";',
-						"tools.cjs": 'module.exports = "legacy tools";',
-					},
-					omitted: complete ? undefined : "tools.cjs",
-					required: "legacy tools",
-					imported: "legacy tools",
-				},
-				{
-					name: `checks a legacy CommonJS directory subpath (complete: ${complete})`,
-					specifier: "linked/tools",
-					emittedLoader: "require" as const,
-					manifest: { exports: null },
-					files: {
-						"index.js": 'module.exports = "root";',
-						"tools/package.json": '{"main":"./entry.js"}',
-						"tools/entry.js":
-							'module.exports = require("./helper.json");',
-						"tools/helper.json": '"legacy directory"',
-					},
-					omitted: complete ? undefined : "tools/helper.json",
-					required: "legacy directory",
-				},
-			],
-		),
-		...(["tools", "tools/.", "tools/sub/.."] as const).map(
-			(request) => ({
-				name: `matches Node's CommonJS lookup for ${request} with a sibling file`,
-				specifier: `linked/${request}`,
-				emittedLoader: "require" as const,
-				manifest: { exports: null },
-				files: {
-					"index.js": 'module.exports = "root";',
-					"tools.js": 'module.exports = "file";',
-					"tools/package.json": '{"main":"./entry.js"}',
-					"tools/sub/marker.txt": "keeps the subdirectory",
-					"tools/entry.js": 'module.exports = "directory";',
-				},
-				omitted: "tools/entry.js",
-				omissionAllowed: request === "tools",
-				required: request === "tools" ? "file" : "directory",
-			}),
-		),
-		...(
-			[
-				{
-					emittedLoader: "require-resolve",
-					bracketResolver: false,
-				},
-				{
-					emittedLoader: "require-resolve",
-					bracketResolver: true,
-				},
-				{
-					emittedLoader: "import-resolve",
-					bracketResolver: false,
-				},
-			] as const
-		).flatMap(({ emittedLoader, bracketResolver }) =>
-			[false, true].map((omitSelected) => ({
-				name: bracketResolver
-					? `checks bracket resolver (selected file omitted: ${omitSelected})`
-					: `checks ${emittedLoader} (selected file omitted: ${omitSelected})`,
-				specifier: "linked/tools%20tag.cjs",
-				emittedLoader,
-				bracketResolver,
-				manifest: { exports: null },
-				files: {
-					"index.js": 'module.exports = "root";',
-					"tools%20tag.cjs":
-						'module.exports = "literal filename";',
-					"tools tag.cjs": 'module.exports = "URL pathname";',
-				},
-				omitted:
-					(emittedLoader === "require-resolve") === omitSelected
-						? "tools%20tag.cjs"
-						: "tools tag.cjs",
-				// require.resolve requires the file; import.meta.resolve only forms its URL.
-				omissionAllowed:
-					emittedLoader === "import-resolve" || !omitSelected,
-				required:
-					emittedLoader === "require-resolve"
-						? "literal filename"
-						: undefined,
-				...(emittedLoader === "import-resolve"
-					? {
-							esmProbe: "url" as const,
-							imported: "tools%20tag.cjs",
-						}
-					: {}),
-			})),
-		),
-		{
-			name: "follows an extensionless exact ESM entry",
-			manifest: { exports: "./entry", type: "module" },
-			files: {
-				entry:
-					'import value from "./helper.js"; export { value }; export default value;',
-				"helper.js": 'export default "extensionless exact";',
-			},
-			omitted: "helper.js",
-			imported: "extensionless exact",
-			required: "extensionless exact",
-		},
-		{
-			name: "treats an extensionless URL asset as payload",
-			manifest: { exports: "./index.mjs", type: "module" },
-			files: {
-				"index.mjs":
-					'export default new URL("./notes", import.meta.url).pathname.endsWith("notes") ? "asset" : "other";',
-				notes: 'require("./unused.cjs");',
-				"unused.cjs": 'module.exports = "unused";',
-			},
-			omitted: "unused.cjs",
-			omissionAllowed: true,
-			required: "asset",
-		},
-		...(["exact", "pattern", "require"] as const).map(
-			(mode) => ({
-				name: "checks a local private import using " + mode,
-				manifest:
-					mode === "require"
-						? {
-								imports: {
-									"#feature": {
-										import: "./unreachable.cjs",
-										require: "./features/actual.cjs",
-									},
-								},
-							}
-						: {
-								exports: "./index.mjs",
-								imports:
-									mode === "pattern"
-										? { "#feature/*": "./features/*.cjs" }
-										: { "#feature": "./features/actual.cjs" },
-							},
-				files: Object.fromEntries([
-					mode === "require"
-						? [
-								"index.cjs",
-								'module.exports = require("#feature");',
-							]
-						: [
-								"index.mjs",
-								"export { default } from " +
-									JSON.stringify(
-										mode === "pattern"
-											? "#feature/actual"
-											: "#feature",
-									) +
-									";",
-							],
-					[
-						"features/actual.cjs",
-						'module.exports = "private entry";',
-					],
-				]),
-				omitted: "features/actual.cjs",
-				required: "private entry",
-			}),
-		),
-		{
-			name: "uses the importing file's own package scope",
-			files: {
-				"index.cjs":
-					'module.exports = require("./nested/index.cjs");',
-				"nested/index.cjs":
-					'module.exports = require("#feature");',
-				"nested/package.json":
-					'{"imports":{"#feature":"./actual.cjs"}}',
-				"nested/actual.cjs":
-					'module.exports = "nested private entry";',
-			},
-			omitted: "nested/actual.cjs",
-			required: "nested private entry",
-		},
-		{
-			name: "preserves the manifest needed by a private import",
-			files: {
-				"index.cjs":
-					'module.exports = require("./nested/index.cjs");',
-				"nested/index.cjs":
-					'module.exports = require("#feature");',
-				"nested/package.json":
-					'{"imports":{"#feature":"./actual.cjs"}}',
-				"nested/actual.cjs":
-					'module.exports = "nested private entry";',
-			},
-			omitted: "nested/package.json",
-			required: "nested private entry",
-		},
-		{
-			name: "does not interpret an external private import as a local path",
-			manifest: {
-				exports: "./index.mjs",
-				imports: { "#os-path": ["path", "./unused.cjs"] },
-			},
-			files: {
-				"index.mjs":
-					'import value from "#os-path"; export default typeof value.join;',
-				"unused.cjs": 'module.exports = "unused";',
-			},
-			omitted: "unused.cjs",
-			omissionAllowed: true,
-			required: "function",
-		},
-		{
-			name: "ignores CommonJS loader names shadowed by parameters",
-			files: {
-				"index.cjs":
-					'function render(require) { return require("./fixture.cjs"); } module.exports = render(x => x); return;',
-				"fixture.cjs": 'module.exports = "unused";',
-			},
-			omitted: "fixture.cjs",
-			omissionAllowed: true,
-			required: "./fixture.cjs",
-		},
-		{
-			name: "retains explicit Node createRequire bindings",
+			name: "rejects an omitted ES module import",
 			manifest: { exports: "./index.mjs" },
 			files: {
-				"index.mjs":
-					'import { createRequire } from "node:module"; const require = createRequire(import.meta.url); export default require("./helper.cjs");',
-				"helper.cjs": 'module.exports = "explicit loader";',
+				"index.mjs": 'export { default } from "./helper.mjs";',
+				"helper.mjs": 'export default "esm";',
 			},
-			omitted: "helper.cjs",
-			required: "explicit loader",
+			omitted: "helper.mjs",
+			required: "esm",
 		},
 		{
-			name: "requires a URL asset without a leading dot",
+			name: "rejects an omitted export-map target",
+			specifier: "linked/feature",
+			manifest: {
+				exports: {
+					".": "./index.cjs",
+					"./feature": "./feature.cjs",
+				},
+			},
+			files: {
+				"index.cjs": 'module.exports = "entry";',
+				"feature.cjs": 'module.exports = "feature";',
+			},
+			omitted: "feature.cjs",
+			required: "feature",
+		},
+		{
+			name: "rejects an omitted asset read through new URL",
 			manifest: { exports: "./index.mjs" },
 			files: {
 				"index.mjs":
@@ -8599,54 +6831,14 @@ ${f.index}`,
 			required: "runtime data",
 		},
 		{
-			name: "checks a wildcard reached by the encoded spelling of an overridden export",
-			specifier: "linked/features/a%20b",
-			manifest: {
-				exports: {
-					"./features/*": "./src/*.cjs",
-					"./features/a b": "./override.cjs",
-				},
-			},
+			name: "allows omitting a file the package never loads",
 			files: {
-				"src/a b.cjs": 'module.exports = "encoded wildcard";',
-				"override.cjs": 'module.exports = "raw override";',
+				"index.cjs": 'module.exports = "entry";',
+				"unused.cjs": 'module.exports = "unused";',
 			},
-			omitted: "src/a b.cjs",
-			required: "encoded wildcard",
-		},
-		{
-			name: "checks a reachable wildcard when raw and canonical spellings use exact exports",
-			specifier: "linked/features/%61%20b",
-			manifest: {
-				exports: {
-					"./features/*": "./src/*.cjs",
-					"./features/a b": "./override.cjs",
-					"./features/a%20b": "./override.cjs",
-				},
-			},
-			files: {
-				"src/a b.cjs": 'module.exports = "unused";',
-				"override.cjs": 'module.exports = "override";',
-			},
-			omitted: "src/a b.cjs",
-			alsoResolves: {
-				"linked/features/a b": "override",
-				"linked/features/a%20b": "override",
-			},
-			required: "unused",
-			imported: "unused",
-		},
-		{
-			name: "ignores an asset of a shadowed URL constructor",
-			manifest: { exports: "./index.mjs" },
-			files: {
-				"index.mjs":
-					'const URL = class { constructor(value) { this.value = value; } }; export default new URL("payload.txt", import.meta.url).value;',
-				"payload.txt": "unused",
-			},
-			omitted: "payload.txt",
+			omitted: "unused.cjs",
 			omissionAllowed: true,
-			required: "payload.txt",
+			required: "entry",
 		},
 		{
 			name: "rejects a relative import outside the package",
@@ -8661,647 +6853,23 @@ ${f.index}`,
 			rejection: "outside the package",
 		},
 		{
-			name: "scans an extensionless CommonJS file required from a module scope",
-			manifest: { type: "module" },
-			files: {
-				"index.cjs": 'module.exports = require("./run");',
-				run: 'module.exports = require("./helper.cjs");',
-				"helper.cjs": 'module.exports = "helper";',
-			},
-			omitted: "helper.cjs",
-			required: "helper",
-		},
-		{
-			name: "scans CommonJS reached through an unregistered extension",
-			files: {
-				"index.cjs":
-					'module.exports = require("./adapter.cts");',
-				"adapter.cts":
-					'module.exports = require("./helper.cjs");',
-				"helper.cjs": 'module.exports = "helper";',
-			},
-			omitted: "helper.cjs",
-			required: "helper",
-		},
-		{
-			name: "allows a resolve-only request for an omitted file",
-			specifier: "linked/templates.js",
-			manifest: { exports: undefined },
-			files: {
-				"index.cjs": 'module.exports = "index";',
-				"templates.js": 'module.exports = "templates";',
-			},
-			omitted: "templates.js",
-			omissionAllowed: true,
-			emittedLoader: "import-resolve",
-			esmProbe: "url",
-			imported: "templates.js",
-		},
-		{
-			name: "does not scan a JavaScript-shaped URL asset as a module",
-			manifest: { exports: "./index.mjs", type: "module" },
-			files: {
-				"index.mjs":
-					'import {readFileSync} from "node:fs"; export default String(readFileSync(new URL("./template.js", import.meta.url), "utf8").includes("sample"));',
-				"template.js": 'import "./sample.js";',
-				"sample.js": 'export default "sample";',
-			},
-			omitted: "sample.js",
-			omissionAllowed: true,
-			required: "true",
-		},
-		{
-			name: "scans a JavaScript file also reached by a module edge",
-			manifest: { exports: "./index.mjs", type: "module" },
-			files: {
-				"index.mjs":
-					'import "./template.js"; export default new URL("./template.js", import.meta.url).pathname.endsWith("template.js") ? "module" : "other";',
-				"template.js": 'import "./sample.js";',
-				"sample.js": 'export default "sample";',
-			},
-			omitted: "sample.js",
-			required: "module",
-		},
-		...(
-			[
-				{
-					name: "root selects a file",
-					manifest: { imports: { "#feature": "./root.cjs" } },
-					omissionAllowed: false,
-				},
-				{
-					name: "root has no imports map",
-					manifest: {},
-					omissionAllowed: false,
-				},
-				{
-					name: "root blocks the private import",
-					manifest: { imports: { "#feature": null } },
-					omissionAllowed: true,
-				},
-				{
-					name: "root has an empty imports map",
-					manifest: { imports: {} },
-					omissionAllowed: true,
-				},
-			] as const
-		).map(({ name, manifest, omissionAllowed }) => ({
-			name: `preserves the require error when ${name}`,
-			manifest,
-			files: {
-				"index.cjs":
-					'module.exports = require("./nested/index.cjs");',
-				"root.cjs": 'module.exports = "root";',
-				"nested/index.cjs":
-					'try { module.exports = require("#feature"); } catch (error) { if (error.code !== "ERR_PACKAGE_IMPORT_NOT_DEFINED") throw error; module.exports = "fallback"; }',
-				"nested/package.json": '{"imports":{"#feature":null}}',
-			},
-			omitted: "nested/package.json",
-			omissionAllowed,
-			required: "fallback",
-		})),
-		{
-			name: "follows the wrapper require before a later var initializer",
-			files: {
-				"index.cjs":
-					'module.exports = require("./helper.cjs"); var require = value => value;',
-				"helper.cjs": 'module.exports = "wrapper loader";',
-			},
-			omitted: "helper.cjs",
-			required: "wrapper loader",
-		},
-		{
-			name: "does not use the wrapper require after an unconditional initializer",
-			files: {
-				"index.cjs":
-					'var require = value => value; module.exports = require("./helper.cjs");',
-				"helper.cjs": 'module.exports = "unused";',
-			},
-			omitted: "helper.cjs",
-			omissionAllowed: true,
-			required: "./helper.cjs",
-		},
-		{
-			name: "retains the wrapper require when a conditional initializer need not execute",
-			files: {
-				"index.cjs":
-					'if (false) { var require = value => value; } module.exports = require("./helper.cjs");',
-				"helper.cjs":
-					'module.exports = "conditional wrapper loader";',
-			},
-			omitted: "helper.cjs",
-			required: "conditional wrapper loader",
-		},
-		{
-			name: "ignores a new.target asset base",
-			manifest: { exports: "./index.mjs" },
-			files: {
-				"index.mjs":
-					'class Result { static url = "https://example.test/"; constructor() { this.path = new URL("payload.txt", new.target.url).href; } } export default new Result().path;',
-				"payload.txt": "unused",
-			},
-			omitted: "payload.txt",
-			omissionAllowed: true,
-			required: "https://example.test/payload.txt",
-		},
-		{
-			name: "keeps bracket-form import.meta URLs",
-			manifest: { exports: "./index.mjs" },
-			files: {
-				"index.mjs":
-					'import { readFileSync } from "node:fs"; export default readFileSync(new URL("payload.txt", import.meta["url"]), "utf8");',
-				"payload.txt": "bracket asset",
-			},
-			omitted: "payload.txt",
-			required: "bracket asset",
-		},
-		{
-			name: "finds a partially escaped wildcard when every initial spelling is overridden",
-			specifier: "linked/features/%61%20b",
-			manifest: {
-				exports: {
-					"./features/*": "./src/*.cjs",
-					"./features/a b": "./override.cjs",
-					"./features/a%20b": "./override.cjs",
-					"./features/%61%20%62": "./override.cjs",
-				},
-			},
-			files: {
-				"src/a b.cjs": 'module.exports = "partial";',
-				"override.cjs": 'module.exports = "override";',
-			},
-			omitted: "src/a b.cjs",
-			required: "partial",
-		},
-		{
-			name: "checks encoded wildcard paths past a literal pattern exclusion",
-			specifier: "linked/features/%69nternal/private",
-			manifest: {
-				exports: {
-					"./features/*": "./src/*.cjs",
-					"./features/internal/*": null,
-				},
-			},
-			files: {
-				"src/internal/private.cjs":
-					'module.exports = "encoded bypass";',
-			},
-			omitted: "src/internal/private.cjs",
-			required: "encoded bypass",
-		},
-		{
-			name: "keeps wildcard files reached through a URL-normalized spelling",
-			specifier: "linked/features/%2\t7",
-			manifest: {
-				exports: {
-					"./features/*": "./src/*.cjs",
-					"./features/'": "./override.cjs",
-					"./features/%27": "./override.cjs",
-				},
-			},
-			files: {
-				"src/'.cjs": 'module.exports = "normalized wildcard";',
-				"override.cjs": 'module.exports = "override";',
-			},
-			omitted: "src/'.cjs",
-			required: "normalized wildcard",
-			alsoResolves: {
-				"linked/features/'": "override",
-				"linked/features/%27": "override",
-			},
-		},
-		{
-			name: "checks the fallback after an invalid self export in a private target array",
-			files: {
-				"index.cjs":
-					'module.exports = require("./nested/index.cjs");',
-				"nested/index.cjs":
-					'module.exports = require("#feature");',
-				"nested/package.json": JSON.stringify({
-					name: "inner",
-					imports: {
-						"#feature": ["inner/feature", "./fallback.cjs"],
-					},
-					exports: { "./feature": "invalid-target" },
-				}),
-				"nested/fallback.cjs": 'module.exports = "fallback";',
-			},
-			omitted: "nested/fallback.cjs",
-			required: "fallback",
-		},
-		...([true, false] as const).map((exported) => ({
-			name: `does not retry a private target array for a ${exported ? "missing file" : "blocked subpath"}`,
-			files: {
-				"index.cjs":
-					'module.exports = require("./nested/index.cjs");',
-				"nested/index.cjs":
-					'try { module.exports = require("#feature"); } catch (error) { module.exports = error.code; }',
-				"nested/package.json": JSON.stringify({
-					name: "inner",
-					imports: {
-						"#feature": ["inner/feature", "./fallback.cjs"],
-					},
-					exports: {
-						"./feature": exported ? "./missing.cjs" : null,
-					},
-				}),
-				"nested/fallback.cjs": 'module.exports = "unused";',
-			},
-			omitted: "nested/fallback.cjs",
-			omissionAllowed: true,
-			required: exported
-				? "MODULE_NOT_FOUND"
-				: "ERR_PACKAGE_PATH_NOT_EXPORTED",
-		})),
-		...(
-			[
-				"invalid",
-				"invalid capture",
-				"blocked",
-				"missing target",
-				"selected",
-			] as const
-		).flatMap((target) =>
-			(target === "blocked" ||
-			target === "missing target" ||
-			target === "invalid capture"
-				? [false]
-				: [false, true]
-			).map((complete) => {
-				const fallback = target === "invalid";
-				const selected = target === "selected";
-				return {
-					name: `validates a private external array with a ${target} export (complete: ${complete})`,
-					fmtBinding: "shared" as const,
-					manifest: {
-						dependencies: { fmt: "workspace:*" },
-						imports: {
-							"#feature": [
-								target === "invalid capture"
-									? "fmt/features/node_modules/tool"
-									: "fmt/features/tool.cjs?variant",
-								"./fallback.cjs",
-							],
-						},
-					},
-					files: {
-						"index.cjs":
-							'try { module.exports = require("#feature"); } catch (error) { module.exports = error.code; }',
-						"fallback.cjs": 'module.exports = "fallback";',
-					},
-					installedFiles: {
-						"packages/fmt/package.json": JSON.stringify({
-							name: "fmt",
-							version: "1.0.0",
-							exports: {
-								"./features/*": {
-									invalid: "invalid-target",
-									"invalid capture": "./src/*.cjs",
-									blocked: null,
-									"missing target": "./src/missing/*.cjs",
-									selected: "./src/*.js",
-								}[target],
-							},
-							files:
-								complete || !selected ? ["src/tool.cjs"] : [],
-						}),
-						"packages/fmt/src/tool.cjs":
-							'module.exports = "external";',
-					},
-					omitted: selected
-						? complete
-							? undefined
-							: "src/tool.cjs"
-						: complete
-							? undefined
-							: "fallback.cjs",
-					omissionAllowed: !fallback && !selected,
-					required: fallback
-						? "fallback"
-						: selected
-							? "external"
-							: target === "blocked"
-								? "ERR_PACKAGE_PATH_NOT_EXPORTED"
-								: target === "invalid capture"
-									? "ERR_INVALID_MODULE_SPECIFIER"
-									: "MODULE_NOT_FOUND",
-				};
-			}),
-		),
-		{
-			name: "checks the file selected by a wildcard request with URL search",
-			specifier: "linked/features/entry.cjs?variant",
-			manifest: { exports: { "./features/*": "./src/*.js" } },
-			files: { "src/entry.cjs": 'module.exports = "variant";' },
-			omitted: "src/entry.cjs",
-			required: "variant",
-		},
-		...([false, true] as const).map((declared) => ({
-			name: `preserves a private external binding with its original scope (declared: ${declared})`,
-			fmtBinding: "shared" as const,
-			manifest: {
-				imports: { "#fmt": "fmt/entry.cjs" },
-				...(declared
-					? { dependencies: { fmt: "workspace:*" } }
-					: {}),
-			},
-			files: {
-				"index.cjs": 'module.exports = require("#fmt");',
-			},
-			installedFiles: {
-				"packages/fmt/package.json":
-					'{"name":"fmt","version":"1.0.0"}',
-				"packages/fmt/entry.cjs":
-					'module.exports = "fmt entry";',
-			},
-			rejection: declared
-				? undefined
-				: 'cannot preserve private dependency "fmt"',
-			required: "fmt entry",
-		})),
-		...([false, true] as const).map((declared) => ({
-			name: `skips a file shadowing the external package (declared: ${declared})`,
-			fmtBinding: "shared" as const,
-			manifest: {
-				imports: { "#fmt": "fmt/entry.cjs" },
-				...(declared
-					? { dependencies: { fmt: "workspace:*" } }
-					: {}),
-			},
-			files: {
-				"index.cjs": 'module.exports = require("#fmt");',
-				"node_modules/fmt": "a file cannot provide the package",
-			},
-			installedFiles: {
-				"packages/fmt/package.json":
-					'{"name":"fmt","version":"1.0.0"}',
-				"packages/fmt/entry.cjs":
-					'module.exports = "ancestor fmt";',
-			},
-			rejection: declared
-				? undefined
-				: 'cannot preserve private dependency "fmt"',
-			required: "ancestor fmt",
-		})),
-		...([false, true] as const).flatMap((external) =>
-			([false, true] as const).map(
-				(packed): ArchiveResolutionCase => ({
-					name: `preserves directory import errors (external: ${external}, packed: ${packed})`,
-					fmtBinding: external ? "shared" : undefined,
-					manifest: {
-						imports: {
-							"#entry": external ? "fmt/feature" : "./folder",
-						},
-						...(external
-							? { dependencies: { fmt: "workspace:*" } }
-							: {}),
-					},
-					files: {
-						"index.cjs":
-							'module.exports = import("#entry").then(() => "loaded", error => { if (error.code !== "ERR_UNSUPPORTED_DIR_IMPORT") throw error; return "directory fallback"; });',
-						...(!external
-							? { "folder/marker.txt": "keeps the directory" }
-							: {}),
-					},
-					installedFiles: external
-						? {
-								"packages/fmt/package.json": JSON.stringify({
-									name: "fmt",
-									version: "1.0.0",
-									exports: { "./feature": "./folder" },
-									files: packed ? ["folder/marker.txt"] : [],
-								}),
-								"packages/fmt/folder/marker.txt":
-									"keeps the directory",
-							}
-						: undefined,
-					omitted:
-						!external && !packed
-							? "folder/marker.txt"
-							: undefined,
-					rejection: packed
-						? undefined
-						: "omits directory folder",
-					required: "directory fallback",
-				}),
-			),
-		),
-		...(
-			[
-				"root import",
-				"resolve-only",
-				"resolve and import",
-			] as const
-		).flatMap((operation) =>
-			[false, true].map((packed): ArchiveResolutionCase => ({
-				name: `checks observed ${operation} for a directory (packed: ${packed})`,
-				specifier:
-					operation === "root import"
-						? "linked"
-						: "linked/folder",
-				manifest: {
-					exports:
-						operation === "root import"
-							? "./folder"
-							: { "./folder": "./folder" },
-				},
-				files: { "folder/marker.txt": "keeps the directory" },
-				omitted: packed ? undefined : "folder/marker.txt",
-				omissionAllowed: operation === "resolve-only",
-				rejection:
-					!packed && operation !== "resolve-only"
-						? "omits directory folder"
-						: undefined,
-				emittedLoader:
-					operation === "root import"
-						? undefined
-						: "import-resolve",
-				esmProbe:
-					operation === "resolve-only"
-						? "url"
-						: "directory-error",
-				alsoImport: operation === "resolve and import",
-				imported:
-					operation === "resolve-only"
-						? "folder"
-						: "ERR_UNSUPPORTED_DIR_IMPORT",
-			})),
-		),
-		{
-			name: "preserves a BOM in the root archive manifest",
+			name: "accepts a manifest with a byte order mark",
 			manifestBom: true,
-			files: { "index.cjs": 'module.exports = "root";' },
-			required: "root",
+			files: { "index.cjs": 'module.exports = "bom";' },
+			required: "bom",
 		},
-		{
-			name: "preserves a BOM in a nested directory manifest and archive scope",
-			files: {
-				"index.cjs": 'module.exports = require("./nested");',
-				"nested/package.json":
-					'\uFEFF{"main":"./entry.js","imports":{"#feature":"./value.cjs"}}',
-				"nested/entry.js":
-					'module.exports = require("#feature");',
-				"nested/value.cjs": 'module.exports = "nested";',
-			},
-			required: "nested",
-		},
-		{
-			name: "preserves the directory error for an export of the archive root",
-			manifest: { exports: "./" },
-			files: {},
-			esmProbe: "directory-error",
-			imported: "ERR_UNSUPPORTED_DIR_IMPORT",
-		},
-		...(
-			[
-				"legacy subpath",
-				"exported subpath",
-				"legacy root",
-				"directory",
-			] as const
-		).map((target) => ({
-			name: `keeps the external private fallback for a missing ${target}`,
-			fmtBinding: "shared" as const,
-			manifest: {
-				imports: {
-					"#fmt":
-						target === "legacy root" ? "fmt" : "fmt/entry.cjs",
-				},
-			},
-			files: {
-				"index.cjs":
-					'try { module.exports = require("#fmt"); } catch (error) { if (error.code !== "MODULE_NOT_FOUND") throw error; module.exports = "fallback"; }',
-			},
-			installedFiles: {
-				"packages/fmt/package.json": JSON.stringify({
-					name: "fmt",
-					version: "1.0.0",
-					...(target === "exported subpath"
-						? { exports: { "./entry.cjs": "./entry.cjs" } }
-						: {}),
-				}),
-				...(target === "directory"
-					? {
-							"packages/fmt/entry.cjs/marker.txt":
-								"keeps the directory",
-						}
-					: {}),
-			},
-			required: "fallback",
-		})),
-		...(
-			["absent", "shared", "symlink", "distinct"] as const
-		).map((fmtBinding) => ({
-			name: `checks the private dependency binding in the artifact: ${fmtBinding}`,
-			fmtBinding,
-			manifest: {
-				imports: { "#fmt": "fmt" },
-				...(fmtBinding === "absent"
-					? {}
-					: { dependencies: { fmt: "workspace:*" } }),
-			},
-			files: {
-				"index.cjs":
-					'module.exports = require("./nested/index.cjs");',
-				"nested/index.cjs": 'module.exports = require("#fmt");',
-				"nested/package.json": '{"imports":{"#fmt":"fmt"}}',
-				...(fmtBinding === "distinct"
-					? {
-							"nested/node_modules/fmt/package.json":
-								'{"name":"fmt","version":"1.0.0"}',
-							"nested/node_modules/fmt/index.js":
-								'module.exports = "nearby";',
-						}
-					: {}),
-			},
-			installedFiles: {
-				"packages/fmt/index.js": 'module.exports = "shared";',
-				"packages/fmt/package.json":
-					'{"name":"fmt","version":"1.0.0"}',
-			},
-			omitted: "nested/package.json",
-			omissionAllowed:
-				fmtBinding === "shared" || fmtBinding === "symlink",
-			required: fmtBinding === "distinct" ? "nearby" : "shared",
-		})),
-		...(
-			[
-				"nested/package.json",
-				"nested/feature.cjs",
-				undefined,
-			] as const
-		).map((omitted) => ({
-			name: omitted
-				? `checks the package self-reference after omitting ${omitted}`
-				: "keeps a complete package self-reference",
-			manifest: {
-				imports: { "#feature": "linked/feature" },
-				exports: {
-					".": "./index.cjs",
-					"./feature": "./root.cjs",
-				},
-			},
-			files: {
-				"index.cjs":
-					'module.exports = require("./nested/index.cjs");',
-				"root.cjs": 'module.exports = "root";',
-				"nested/index.cjs":
-					'module.exports = require("#feature");',
-				"nested/package.json":
-					'{"name":"linked","imports":{"#feature":"linked/feature"},"exports":{"./feature":"./feature.cjs"}}',
-				"nested/feature.cjs": 'module.exports = "nested";',
-			},
-			omitted,
-			required: "nested",
-		})),
-		...([false, true] as const).map((omitsSelected) => ({
-			name: omitsSelected
-				? "checks the selected import-mode self-reference"
-				: "allows the unselected require-mode self-reference to be omitted",
-			files: {
-				"index.cjs":
-					'module.exports = require("./nested/index.mjs").default;',
-				"nested/index.mjs":
-					'export { default } from "#feature";',
-				"nested/package.json": JSON.stringify({
-					name: "@fixture/inner",
-					imports: { "#feature": "@fixture/inner/features/foo" },
-					exports: {
-						"./features/*": {
-							import: "./esm/*.mjs",
-							require: "./cjs/*.cjs",
-						},
-					},
-				}),
-				"nested/esm/foo.mjs": 'export default "self import";',
-				"nested/cjs/foo.cjs": 'module.exports = "self require";',
-			},
-			omitted: omitsSelected
-				? "nested/esm/foo.mjs"
-				: "nested/cjs/foo.cjs",
-			omissionAllowed: !omitsSelected,
-			required: "self import",
-		})),
 	])(
 		"validates Node archive resolution ($name)",
 		async ({
 			files,
-			pattern,
 			specifier: explicitSpecifier,
 			manifest,
 			omitted,
 			omissionAllowed,
 			required,
-			imported,
-			alsoResolves,
 			installedFiles,
-			fmtBinding,
-			emittedLoader,
-			bracketResolver,
 			rejection,
 			manifestBom,
-			esmProbe,
-			alsoImport,
 		}) => {
 			const f = await fixture();
 			const linked = new URL("packages/linked/", f.root);
@@ -9310,7 +6878,9 @@ ${f.index}`,
 				[linked, files],
 				[f.root, installedFiles ?? {}],
 			] as const) {
-				for (const [path, contents] of Object.entries(entries)) {
+				for (const [path, contents] of Object.entries(
+					entries as Record<string, string>,
+				)) {
 					const file = join(fileURLToPath(base), path);
 					await mkdir(dirname(file), { recursive: true });
 					await writeFile(file, contents);
@@ -9323,9 +6893,7 @@ ${f.index}`,
 						name: "linked",
 						version: "1.0.0",
 						type: "commonjs",
-						exports: pattern
-							? { "./features/*": pattern }
-							: "./index.cjs",
+						exports: "./index.cjs",
 						...manifest,
 						files: Object.keys(files).filter(
 							(path) => path !== omitted,
@@ -9340,87 +6908,23 @@ ${f.index}`,
 				new URL("node_modules/linked", f.root),
 				"dir",
 			);
-			if (fmtBinding) {
-				const fmt = new URL("packages/fmt/", f.root);
-				await symlink(
-					fmt,
-					new URL("node_modules/fmt", f.root),
-					"dir",
-				);
-				if (fmtBinding === "symlink") {
-					await mkdir(new URL("nested/node_modules/", linked), {
-						recursive: true,
-					});
-					await symlink(
-						fmt,
-						new URL("nested/node_modules/fmt", linked),
-						"dir",
-					);
-				}
-			}
-			const specifier =
-				explicitSpecifier ??
-				(pattern ? "linked/features/a" : "linked");
+			const specifier = explicitSpecifier ?? "linked";
 			const assertNodeLoads = async (directory: string) => {
-				const require = createRequire(
+				const loaded: unknown = await createRequire(
 					join(directory, "package.json"),
-				);
-				if (required !== undefined) {
-					const loaded: unknown = await require(
-						emittedLoader === "require-resolve"
-							? require.resolve(specifier)
-							: specifier,
-					);
-					const value =
-						loaded &&
+				)(specifier);
+				expect(
+					loaded &&
 						typeof loaded === "object" &&
 						"default" in loaded
-							? loaded.default
-							: loaded;
-					expect(value).toBe(required);
-				} else if (emittedLoader !== "import-resolve") {
-					expect(() => {
-						require(specifier);
-					}).toThrow(/Cannot find module/);
-				}
-				for (const [request, expected] of Object.entries(
-					alsoResolves ?? {},
-				))
-					expect(require(request)).toBe(expected);
-				if (imported !== undefined) {
-					const request = JSON.stringify(specifier);
-					const result = await promisify(execFile)(
-						process.execPath,
-						[
-							"--input-type=module",
-							"-e",
-							esmProbe === "url"
-								? `console.log(new URL(import.meta.resolve(${request})).pathname.split("/").at(-1));`
-								: esmProbe === "directory-error"
-									? `${alsoImport ? `import.meta.resolve(${request});` : ""} try { await import(${request}); } catch (error) { console.log(error.code); }`
-									: emittedLoader === "import-resolve"
-										? `const { resolve: select } = import.meta; console.log((await import(select(${request}))).default);`
-										: `import value from ${request}; console.log(value);`,
-						],
-						{ cwd: directory },
-					);
-					expect(result.stdout.trim()).toBe(imported);
-				}
+						? loaded.default
+						: loaded,
+				).toBe(required);
 			};
 			await assertNodeLoads(fileURLToPath(f.root));
 			await writeFile(
 				new URL("index.js", f.server),
-				`${
-					emittedLoader === "require"
-						? `import { createRequire } from "node:module"; createRequire(import.meta.url)(${JSON.stringify(specifier)});`
-						: emittedLoader === "require-resolve"
-							? `import { createRequire } from "node:module"; const req = createRequire(import.meta.url); const select = req${bracketResolver ? '["resolve"]' : ".resolve"}; select(${JSON.stringify(specifier)});`
-							: emittedLoader === "import-resolve"
-								? `const { resolve: select } = import.meta; select(${JSON.stringify(specifier)});${alsoImport ? ` await import(${JSON.stringify(specifier)});` : ""}`
-								: esmProbe === "directory-error"
-									? `try { await import(${JSON.stringify(specifier)}); } catch (error) { if (error.code !== "ERR_UNSUPPORTED_DIR_IMPORT") throw error; }`
-									: `import ${JSON.stringify(specifier)};`
-				}${f.index}`,
+				`import ${JSON.stringify(specifier)};${f.index}`,
 			);
 			const before = await snapshot(f.directory);
 			const outcome = await Effect.runPromise(
@@ -9439,9 +6943,7 @@ ${f.index}`,
 			const expectedRejection =
 				rejection ??
 				(omitted && !omissionAllowed
-					? fmtBinding === "absent"
-						? "fmt"
-						: `omits ${omitted}`
+					? `omits ${omitted}`
 					: undefined);
 			if (expectedRejection) {
 				expect(outcome._tag).toBe("Left");
@@ -9480,200 +6982,6 @@ ${f.index}`,
 			}
 		},
 	);
-
-	it.each([
-		{ resolver: ".resolve", retained: false },
-		{ resolver: '["resolve"]', retained: false },
-		{ resolver: ".resolve", retained: true },
-		{ resolver: '["resolve"]', retained: true },
-	])(
-		"checks the relative CommonJS resolver target ($resolver, retained: $retained)",
-		async ({ resolver, retained }) => {
-			const f = await fixture();
-			const relativeTarget = retained
-				? "./asset.bin"
-				: "../feature.cjs";
-			const file = new URL(relativeTarget, f.server);
-			if (!retained)
-				await writeFile(file, 'module.exports = "source only";');
-			const entry = new URL("index.js", f.server);
-			const source = `import {createRequire} from "node:module"; const req = createRequire(import.meta.url); export const resolved = req${resolver}(${JSON.stringify(relativeTarget)});`;
-			await writeFile(entry, `${source}\n${f.index}`);
-			expect(createRequire(entry).resolve(relativeTarget)).toBe(
-				await realpath(file),
-			);
-			const before = await snapshot(f.directory);
-			const planning = Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy: "install",
-				}),
-			);
-			if (!retained) {
-				await expect(planning).rejects.toThrow(
-					/does not name a retained file/,
-				);
-				expect(await snapshot(f.directory)).toEqual(before);
-				return;
-			}
-			const plan = await planning;
-			expect(await snapshot(f.directory)).toEqual(before);
-			await Effect.runPromise(
-				FunctionArtifact.applyPreparation(plan),
-			);
-			const isolated = await mkdtemp(
-				join(tmpdir(), "relative-resolver-"),
-			);
-			directories.push(isolated);
-			await cp(f.server, isolated, { recursive: true });
-			expect(
-				createRequire(join(isolated, "index.js")).resolve(
-					relativeTarget,
-				),
-			).toBe(await realpath(join(isolated, "asset.bin")));
-		},
-	);
-
-	it.each([
-		{
-			request: "./feature",
-			entry: "feature/index.js",
-			invoke: "req",
-		},
-		{
-			request: "./feature/",
-			entry: "feature/index.js",
-			invoke: "req.resolve",
-		},
-		{
-			request: "./feature/sub/..",
-			entry: "feature/main.cjs.json",
-			invoke: 'req["resolve"]',
-		},
-		{
-			request: "./feature",
-			entry: "feature.js",
-			invoke: "req.resolve",
-		},
-		{
-			request: "../feature/",
-			entry: "../feature/index.js",
-			invoke: "req.resolve",
-		},
-		{ request: ".", entry: "index.js", invoke: "req.resolve" },
-		{
-			request: "..",
-			entry: "../index.js",
-			invoke: "req.resolve",
-		},
-		{
-			request: "../",
-			entry: "../index.js",
-			invoke: "req.resolve",
-		},
-		{
-			request: "./feature/.",
-			entry: "feature/main.cjs.json",
-			invoke: "req",
-			bom: true,
-		},
-	])(
-		"checks CommonJS directory resolution for $request and $invoke ($entry)",
-		async ({ request, entry, invoke, bom }) => {
-			const f = await fixture();
-			const feature = new URL("feature/", f.server);
-			const selected = new URL(entry, f.server);
-			await mkdir(new URL(".", selected), { recursive: true });
-			await mkdir(feature, { recursive: true });
-			await writeFile(
-				selected,
-				entry.endsWith(".json")
-					? '"selected"'
-					: 'export default "selected";',
-			);
-			if (entry === "feature.js" || entry.endsWith(".json"))
-				await writeFile(
-					new URL("index.js", feature),
-					'export default "wrong index";',
-				);
-			if (entry.endsWith(".json")) {
-				await writeFile(
-					new URL("package.json", feature),
-					(bom ? "\uFEFF" : "") + '{"main":"./main.cjs"}',
-				);
-				await writeFile(
-					new URL("feature.js", f.server),
-					'export default "wrong file";',
-				);
-			}
-			const from = new URL("index.js", f.server);
-			await writeFile(
-				from,
-				`import {createRequire} from "node:module"; const req = createRequire(import.meta.url); export const selected = ${invoke}(${JSON.stringify(request)});\n${f.index}`,
-			);
-			expect(createRequire(from).resolve(request)).toBe(
-				await realpath(selected),
-			);
-			const planning = Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy: "install",
-				}),
-			);
-			if (entry.startsWith("../")) {
-				await expect(planning).rejects.toThrow(
-					/does not name a retained file/,
-				);
-				return;
-			}
-			await Effect.runPromise(
-				FunctionArtifact.applyPreparation(await planning),
-			);
-			const isolated = await mkdtemp(
-				join(tmpdir(), "directory-resolver-"),
-			);
-			directories.push(isolated);
-			await cp(f.server, isolated, { recursive: true });
-			const result = await promisify(execFile)(
-				process.execPath,
-				[
-					"--input-type=module",
-					"-e",
-					'import { selected } from "./index.js"; console.log(selected.default ?? selected);',
-				],
-				{ cwd: isolated },
-			);
-			expect(result.stdout.trim()).toBe(
-				invoke === "req"
-					? "selected"
-					: await realpath(join(isolated, entry)),
-			);
-		},
-	);
-
-	it("tracks the loader role returned by a bare CommonJS directory request", async () => {
-		const f = await fixture();
-		const feature = new URL("feature/", f.server);
-		await mkdir(feature);
-		await writeFile(
-			new URL("index.js", feature),
-			"export const runtime = process;",
-		);
-		await writeFile(
-			new URL("request.mjs", feature),
-			'import {createRequire} from "node:module"; const req = createRequire(import.meta.url); req(".").runtime.getBuiltinModule("node:module").createRequire(import.meta.url)("example");',
-		);
-		await expect(
-			Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy: "bundle",
-				}),
-			),
-		).rejects.toThrow(
-			/unresolved runtime package imports.*example/,
-		);
-	});
 
 	it.each(["ancestor marker", "empty shadow"] as const)(
 		"detects local provenance for the installed ancestor package: %s",
@@ -9744,269 +7052,9 @@ ${f.index}`,
 		},
 	);
 
-	it.each(
-		[
-			"import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); if (typeof load === 'function') load('node:fs');",
-			"import {createRequire} from 'node:module'; createRequire(import.meta['url'])('node:fs');",
-			"import {createRequire} from 'node:module'; if (typeof createRequire === 'function') {const load = createRequire(import.meta.url); load('node:fs');}",
-			"if(typeof import.meta.resolve === 'function') import.meta.resolve('node:fs');",
-		].flatMap((source) =>
-			(["bundle", "install"] as const).map(
-				(dependencyStrategy) => ({ source, dependencyStrategy }),
-			),
-		),
-	)(
-		"allows non-escaping Node loader observations: %j",
-		async ({ source, dependencyStrategy }) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				`${source}\n${f.index}`,
-			);
-			const before = await snapshot(f.directory);
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(plan.plannedOutput.functions).toHaveLength(1);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(["bundle", "install"] as const)(
-		"keeps the switch discriminant outside its case bindings for %s",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				`import {createRequire} from 'node:module'; const load = 0; switch(load) {default: const load = createRequire(import.meta.url); load("node:fs");}\n${f.index}`,
-			);
-			const before = await snapshot(f.directory);
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(plan.plannedOutput.functions).toHaveLength(1);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(
-		[
-			"import {createRequire} from 'node:module'; const load = 1; function run(value = load) {var load = createRequire(import.meta.url); load('node:fs');} run();",
-			"import {createRequire} from 'node:module'; const load = 1; const run = (value = load) => {var load = createRequire(import.meta.url); load('node:fs');}; run();",
-			"import {createRequire} from 'node:module'; const load = 1; function run({[load]: value}) {var load = createRequire(import.meta.url); load('node:fs');} run({1:0});",
-		].flatMap((source) =>
-			(["bundle", "install"] as const).map(
-				(dependencyStrategy) => ({ source, dependencyStrategy }),
-			),
-		),
-	)(
-		"keeps parameter expressions outside body var bindings: %j",
-		async ({ source, dependencyStrategy }) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				`${source}\n${f.index}`,
-			);
-			const before = await snapshot(f.directory);
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(plan.plannedOutput.functions).toHaveLength(1);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(["bundle", "install"] as const)(
-		"plans fixed Node module metadata destructuring for %s without mutations",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				`import * as mod from 'node:module'; const { builtinModules } = mod; console.log(builtinModules);\n${f.index}`,
-			);
-			const before = await snapshot(f.directory);
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(plan.plannedOutput.functions).toHaveLength(1);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(["bundle", "install"] as const)(
-		"keeps builtin and relative import.meta.resolve references local for %s",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				`import.meta.resolve('node:fs'); import.meta.resolve('./asset.bin');\n${f.index}`,
-			);
-			const before = await snapshot(f.directory);
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(plan.plannedOutput.functions).toHaveLength(1);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(
-		[
-			"export const {url} = import.meta;",
-			"const meta = import.meta; export const {url: moduleUrl, dirname, filename} = meta;",
-			"export const {'url': moduleUrl} = import.meta;",
-			"export var {url: moduleUrl} = import.meta; var moduleUrl = 'local-metadata';",
-		].flatMap((source) =>
-			(["bundle", "install"] as const).map(
-				(dependencyStrategy) => ({ source, dependencyStrategy }),
-			),
-		),
-	)(
-		"allows exported import.meta URL metadata without mutations: %j",
-		async ({ source, dependencyStrategy }) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				`${source}\n${f.index}`,
-			);
-			const before = await snapshot(f.directory);
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(plan.plannedOutput.functions).toHaveLength(1);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(["bundle", "install"] as const)(
-		"keeps fixed import.meta metadata and local resolutions available through aliases for %s",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				`const meta = import.meta; const {url, dirname, filename} = meta; console.log(url, dirname, filename, meta['url']); meta.resolve('node:fs'); meta.resolve('./asset.bin');\n${f.index}`,
-			);
-			const before = await snapshot(f.directory);
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(plan.plannedOutput.functions).toHaveLength(1);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(["bundle", "install"] as const)(
-		"keeps a shadowed import.meta alias local for %s",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				`const meta = import.meta; function unused(meta) {meta.resolve('not-a-runtime-package');}\n${f.index}`,
-			);
-			const before = await snapshot(f.directory);
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(plan.plannedOutput.functions).toHaveLength(1);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each(["bundle", "install"] as const)(
-		"keeps a function-local bare var from inheriting an outer Node loader for %s",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				`import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); function unused() {var load; load('not-a-node-loader');}\n${f.index}`,
-			);
-			const before = await snapshot(f.directory);
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(plan.plannedOutput.functions).toHaveLength(1);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
 	it.each([
-		"const p=(0,process);p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const fallback=null;const p=fallback ?? process;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const fallback={};const p=globalThis.process || fallback;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"function run(p=process){p.getBuiltinModule('module').createRequire(import.meta.url)('example');var p=null}run();",
-		"const p=typeof process==='object' && process;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"import proc from 'node:process';const p=proc.env && proc;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const p=typeof process==='object'?process:{};p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const p=typeof process==='undefined'?{}:process;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const p=typeof process==='object'?globalThis.process:{};p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"import proc from 'node:process';const p=typeof proc==='object'?proc:{};p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const p=typeof process==='object'?process:globalThis.process;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const p=typeof process==='object'?(process.env.NODE_ENV?process:globalThis.process):{};p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const {getBuiltinModule:get}=typeof process==='object'?process:{};get('module').createRequire(import.meta.url)('example');",
-		"function run(p=typeof process==='object'?process:{}){p.getBuiltinModule('module').createRequire(import.meta.url)('example')}run();",
-		"const p=process;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"function run(p=process){p.getBuiltinModule('module').createRequire(import.meta.url)('example')}run();",
-		"const run=(p=globalThis.process)=>p.getBuiltinModule('module').createRequire(import.meta.url)('example');run();",
-		"function run({getBuiltinModule:get}=process){get('module').createRequire(import.meta.url)('example')}run();",
-		"function run(p=process){var p;p.getBuiltinModule('module').createRequire(import.meta.url)('example')}run();",
-		"import proc from 'node:process';function run(p=proc){p.getBuiltinModule('module').createRequire(import.meta.url)('example')}run();",
-		"function run({proc=process}={}){proc.getBuiltinModule('module').createRequire(import.meta.url)('example')}run();",
-		"let stable=process;const p=(stable=process);p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"let env;const p=({env}=process);p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"import proc from 'node:process';proc.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const p=await import('node:process');p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const {getBuiltinModule:get}=await import('process');get('module').createRequire(import.meta.url)('example');",
-		"import {createRequire} from 'node:module';const req=createRequire(import.meta.url);const p=req('node:process');p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const p=process.getBuiltinModule('process');p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"import proc from 'node:process';const p=proc.getBuiltinModule('node:process');p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-
-		"import * as proc from 'node:process';proc.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"import {getBuiltinModule as get} from 'node:process';get('module').createRequire(import.meta.url)('example');",
-		"import {default as proc} from 'process';proc.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-
-		"process['getBuiltinModule']('node:module').createRequire(import.meta.url)('example');",
-		"const get=process.getBuiltinModule; get('module').createRequire(import.meta.url)('example');",
-		"const {getBuiltinModule:get}=process;get('module').createRequire(import.meta.url)('example');",
-		"process.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"globalThis.process.getBuiltinModule('node:module').createRequire(import.meta.url)('example');",
-		"const p=globalThis.process || {};p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const mod=process.getBuiltinModule('node:module'); const load=mod.createRequire(import.meta.url);load('example');",
-		"const {createRequire:make}=globalThis.process.getBuiltinModule('module');make(import.meta.url)('example');",
-		"import {createRequire} from 'node:module'; const req = createRequire(import.meta.url); const mod = req('node:module'); const load = mod.createRequire(import.meta.url); load('example');",
-		"import {createRequire} from 'node:module'; const req = createRequire(import.meta.url); const {createRequire: make} = req('module'); const load = make(import.meta.url); load('example');",
 		"import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); switch(load('example')) {default: const load = 0;}",
-		"import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); function run(value = load('example')) {var load = 0;} run();",
 		"const asset = import.meta.resolve('example/asset.css');",
-		"const meta = import.meta; const asset = meta.resolve('example/asset.css');",
-		"const meta = import.meta; const copy = meta; const locate = copy['resolve']; locate('example/asset.css');",
-		"const {resolve: locate, url} = import.meta; locate('example/asset.css');",
 	])(
 		"rejects a retained runtime package reference in a bundle before writing output: %s",
 		async (source) => {
@@ -10038,67 +7086,15 @@ ${f.index}`,
 	);
 
 	it.each([
-		"const p=(0,process);p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const fallback=null;const p=fallback ?? process;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const fallback={};const p=globalThis.process || fallback;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"function run(p=process){p.getBuiltinModule('module').createRequire(import.meta.url)('example');var p=null}run();",
-		"const p=typeof process==='object' && process;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"import proc from 'node:process';const p=proc.env && proc;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const p=typeof process==='object'?process:{};p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const p=typeof process==='undefined'?{}:process;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const p=typeof process==='object'?globalThis.process:{};p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"import proc from 'node:process';const p=typeof proc==='object'?proc:{};p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const p=typeof process==='object'?process:globalThis.process;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const p=typeof process==='object'?(process.env.NODE_ENV?process:globalThis.process):{};p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const {getBuiltinModule:get}=typeof process==='object'?process:{};get('module').createRequire(import.meta.url)('example');",
-		"function run(p=typeof process==='object'?process:{}){p.getBuiltinModule('module').createRequire(import.meta.url)('example')}run();",
-		"const p=process;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"function run(p=process){p.getBuiltinModule('module').createRequire(import.meta.url)('example')}run();",
-		"const run=(p=globalThis.process)=>p.getBuiltinModule('module').createRequire(import.meta.url)('example');run();",
-		"function run({getBuiltinModule:get}=process){get('module').createRequire(import.meta.url)('example')}run();",
-		"function run(p=process){var p;p.getBuiltinModule('module').createRequire(import.meta.url)('example')}run();",
-		"import proc from 'node:process';function run(p=proc){p.getBuiltinModule('module').createRequire(import.meta.url)('example')}run();",
-		"function run({proc=process}={}){proc.getBuiltinModule('module').createRequire(import.meta.url)('example')}run();",
-		"let stable=process;const p=(stable=process);p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"let env;const p=({env}=process);p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"import proc from 'node:process';proc.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const p=await import('node:process');p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const {getBuiltinModule:get}=await import('process');get('module').createRequire(import.meta.url)('example');",
-		"import {createRequire} from 'node:module';const req=createRequire(import.meta.url);const p=req('node:process');p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const p=process.getBuiltinModule('process');p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"import proc from 'node:process';const p=proc.getBuiltinModule('node:process');p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-
-		"import * as proc from 'node:process';proc.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"import {getBuiltinModule as get} from 'node:process';get('module').createRequire(import.meta.url)('example');",
-		"import {default as proc} from 'process';proc.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-
-		"process['getBuiltinModule']('node:module').createRequire(import.meta.url)('example');",
-		"const get=process.getBuiltinModule; get('module').createRequire(import.meta.url)('example');",
-		"const {getBuiltinModule:get}=process;get('module').createRequire(import.meta.url)('example');",
-		"process.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"globalThis.process.getBuiltinModule('node:module').createRequire(import.meta.url)('example');",
-		"const p=globalThis.process || {};p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-		"const mod=process.getBuiltinModule('node:module'); const load=mod.createRequire(import.meta.url);load('example');",
-		"const {createRequire:make}=globalThis.process.getBuiltinModule('module');make(import.meta.url)('example');",
-		"import {createRequire} from 'node:module'; const req = createRequire(import.meta.url); const mod = req('node:module'); const load = mod.createRequire(import.meta.url); load('example');",
-		"import {createRequire} from 'node:module'; const req = createRequire(import.meta.url); const {createRequire: make} = req('module'); const load = make(import.meta.url); load('example');",
 		"import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); switch(load('example')) {default: const load = 0;}",
-		"import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); function run(value = load('example')) {var load = 0;} run();",
 		"import value from 'example';",
 		"const asset = import.meta.resolve('example/asset.css');",
-		"const meta = import.meta; const asset = meta.resolve('example/asset.css');",
-		"const meta = import.meta; const copy = meta; const locate = copy['resolve']; locate('example/asset.css');",
-		"const {resolve: locate, url} = import.meta; locate('example/asset.css');",
-		"const meta = import.meta; const {resolve: locate} = meta; locate('example/asset.css');",
-		"var locate = import.meta.resolve; locate('example/asset.css'); var locate = import.meta.resolve;",
 		"import {createRequire} from 'node:module'; var load = createRequire(import.meta.url); load('example'); var load = createRequire(import.meta.url);",
 		"import {createRequire} from 'node:module'; var load; var load = createRequire(import.meta.url); load('example');",
-		"const locate = import.meta.resolve; const asset = locate('example/asset.css');",
 		"const asset = import.meta['resolve']('example/asset.css');",
 		"import {createRequire} from 'node:module'; var load = createRequire(import.meta.url); { var load; } load('example');",
 		"import {createRequire} from 'node:module'; var load = createRequire(import.meta.url); var load; load('example');",
 		"import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); load('example');",
-		"import {createRequire} from 'node:module'; class C {static {var createRequire = null;}} const load = createRequire(import.meta.url); load('example');",
 		"import {default as mod} from 'node:module'; const load = mod.createRequire(import.meta.url); load('example');",
 		"import * as mod from 'node:module'; const load = mod.default.createRequire(import.meta.url); load('example');",
 		"import * as mod from 'node:module'; const load = mod.createRequire(import.meta.url); load('example');",
@@ -10273,26 +7269,6 @@ ${f.index}`,
 			"node_modules/helper",
 		]);
 	});
-
-	it.each(["bundle", "install"] as const)(
-		"retains ordinary builtin metadata re-exports for %s",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("metadata.js", f.server),
-				"export {builtinModules as names} from 'node:module';",
-			);
-			const before = await snapshot(f.directory);
-			const plan = await Effect.runPromise(
-				FunctionArtifact.planPreparation(f.build, f.routePlan, {
-					...settings,
-					dependencyStrategy,
-				}),
-			);
-			expect(plan.plannedOutput.functions).toHaveLength(1);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
 
 	it("keeps the locked exact version of an absent optional dependency", async () => {
 		const f = await fixture();
@@ -11031,394 +8007,6 @@ ${f.index}`,
 		});
 	});
 
-	it.each(
-		[
-			'import {make} from "data:text/javascript,export%20%7BcreateRequire%20as%20make%7D%20from%20%22node%3Amodule%22";make(import.meta.url)("example");',
-			`await import("data:application/javascript;base64,${Buffer.from("export * from 'node:module'").toString("base64")}");`,
-			`export * from "data:text/javascript,${encodeURIComponent('import "data:text/javascript,export * from %27node:module%27"')}";`,
-			"import {register as installHooks} from 'node:module';installHooks('example',import.meta.url);",
-			"async function loadLoggerDestination(entrypoint){return import(entrypoint)}",
-			"const p=typeof process==='object'?process:{};p.getBuiltinModule(process.env.BUILTIN);",
-			"const p=typeof process==='object'?process:{};p[process.env.KEY]('module');",
-			"const p=typeof process==='object'?process:{};consume(p.getBuiltinModule);",
-			"const p=typeof process==='object'?process:{};export const {getBuiltinModule:get}=p;",
-			"import * as mod from 'node:module';const p=typeof process==='object'?process:mod;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-			"let p;p=process;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-			"let p;p=globalThis.process;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-			"import proc from 'node:process';let p;p=proc;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-			"const proc=process;let p;p=proc;p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-			"let p;p=globalThis.process||{};p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-			"let p;p=await import('node:process');p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-			"let p;p=process.getBuiltinModule('process');p.getBuiltinModule('module').createRequire(import.meta.url)('example');",
-			"let get;({getBuiltinModule:get}=process);get('module').createRequire(import.meta.url)('example');",
-			"function run({...p}=process){p.getBuiltinModule('module').createRequire(import.meta.url)('example')}run();",
-			"function run({['getBuiltinModule']:get}=process){get('module').createRequire(import.meta.url)('example')}run();",
-			"function run({getBuiltinModule:get=undefined}=process){get('module').createRequire(import.meta.url)('example')}run();",
-			"import proc from 'node:process';proc.getBuiltinModule(process.env.BUILTIN);",
-			"import * as proc from 'node:process';proc[process.env.KEY]('module');",
-			"import {getBuiltinModule as get} from 'node:process';consume(get);",
-			"import {getBuiltinModule as get} from 'process';get(process.env.BUILTIN);",
-			"const p=await import('node:process');p.getBuiltinModule(process.env.BUILTIN);",
-			"import {createRequire} from 'node:module';const req=createRequire(import.meta.url);req('process').getBuiltinModule(process.env.BUILTIN);",
-			"export {getBuiltinModule as get} from 'node:process';",
-			"export * from 'process';",
-			"var p=process;p.getBuiltinModule('module').createRequire(import.meta.url)('example');var p=null;",
-			"const {getBuiltinModule:get}=process;get(process.env.BUILTIN);",
-			"consume(process.getBuiltinModule);",
-			"process.getBuiltinModule(process.env.BUILTIN);",
-			"export const {getBuiltinModule:get}=process;",
-			"export const {'getBuiltinModule':get}=process;",
-			"var {getBuiltinModule:get}=process;get('module').createRequire(import.meta.url)('example');var get=null;",
-			"process[process.env.BUILTIN_GETTER]('module');",
-			"const p=globalThis.process || {};p.getBuiltinModule(process.env.BUILTIN);",
-			"globalThis.process.getBuiltinModule(process.env.BUILTIN);",
-			"import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); if(typeof load === 'function') consume(load);",
-			"import {createRequire} from 'node:module'; const load = createRequire(import.meta.url); load(process.env.RUNTIME_PACKAGE);",
-			"import * as mod from 'node:module'; const {builtinModules, createRequire: make} = mod; consume(make);",
-			"import * as mod from 'node:module'; const {builtinModules, createRequire: make} = mod; const load = make(import.meta.url); load(process.env.RUNTIME_PACKAGE);",
-			"import * as mod from 'node:module'; const {builtinModules, Module: moduleClass} = mod; consume(moduleClass);",
-			"import * as mod from 'node:module'; const {builtinModules, default: moduleClass} = mod; consume(moduleClass);",
-			"import * as mod from 'node:module'; const {register} = mod; register('example', import.meta.url);",
-			"import * as mod from 'node:module'; const {register: installHooks} = mod; installHooks('example', import.meta.url);",
-			"import * as mod from 'node:module'; const {builtinModules, 'register': installHooks} = mod; installHooks('example', import.meta.url);",
-			"const {register: installHooks} = await import('node:module'); installHooks('example', import.meta.url);",
-			"import {registerHooks} from 'node:module'; registerHooks({}); await import('example');",
-			"import {registerHooks as install} from 'node:module'; install({});",
-			"import * as mod from 'node:module'; const {registerHooks: install} = mod; install({});",
-			"import * as mod from 'node:module'; mod.registerHooks({});",
-			"const {registerHooks} = await import('node:module'); registerHooks({});",
-			"export {registerHooks} from 'node:module';",
-			"import.meta.resolve(process.env.RUNTIME_PACKAGE);",
-			"const locate = import.meta.resolve; locate(process.env.RUNTIME_PACKAGE);",
-			"consume(import.meta.resolve);",
-			"import.meta.resolve('example/asset.css', import.meta.url);",
-			"const meta = import.meta; meta.resolve(process.env.RUNTIME_PACKAGE);",
-			"const meta = import.meta; consume(meta);",
-			"consume(import.meta);",
-			"const meta = import.meta; meta[process.env.RESOLVER]('example');",
-			"import {createRequire} from 'node:module'; const req = createRequire(import.meta.url); req[process.env.RESOLVER]('example');",
-			"const meta = import.meta; const {resolve: locate} = meta; consume(locate);",
-			"const {resolve: locate} = import.meta; locate(process.env.RUNTIME_PACKAGE);",
-			"const meta = import.meta; export {meta};",
-			"export const meta = import.meta;",
-			"export const {resolve} = import.meta;",
-			"const meta = import.meta; export const {url, resolve: locate} = meta;",
-			"export const {'resolve': url} = import.meta;",
-			"export var {resolve: locate} = import.meta; locate('example/asset.css'); var locate = null;",
-			"var locate = import.meta.resolve; locate('example/asset.css'); var locate = null;",
-			"var {resolve: locate} = import.meta; locate('example/asset.css'); var locate = null;",
-			"var meta = import.meta; meta.resolve('example/asset.css'); var meta = null;",
-			"import {createRequire} from 'node:module'; var load = createRequire(import.meta.url); load('example'); var load = null;",
-			"var {createRequire: make} = await import('node:module'); const load = make(import.meta.url); load('example'); var make = null;",
-			"var locate = null; var locate = import.meta.resolve; locate('example/asset.css');",
-			"export var {'resolve': locate} = import.meta; locate('example/asset.css'); var locate = null;",
-			"export var {resolve} = import.meta; resolve('example/asset.css'); var resolve = null;",
-			"const meta = import.meta; export var {url, resolve: locate} = meta; locate('example/asset.css'); var locate = null;",
-			"const meta = import.meta; const {...copy} = meta; copy.resolve('example');",
-			"const meta = import.meta; meta.resolve('example/asset.css', meta.url);",
-			"import {createRequire} from 'node:module'; var load = createRequire(import.meta.url); var load; load(process.env.RUNTIME_PACKAGE);",
-		].flatMap((source) =>
-			(["bundle", "install"] as const).map(
-				(dependencyStrategy) => ({ source, dependencyStrategy }),
-			),
-		),
-	)(
-		"rejects unaccounted Node loader use before writing output: %j",
-		async ({ source, dependencyStrategy }) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				`${source}\n${f.index}`,
-			);
-			const before = await snapshot(f.directory);
-			const outcome = await Effect.runPromise(
-				Effect.either(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{ ...settings, dependencyStrategy },
-					),
-				),
-			);
-			expect(outcome).toMatchObject({
-				_tag: "Left",
-				left: {
-					_tag: "UnresolvedDependency",
-				},
-			});
-			expect(outcome).toHaveProperty(
-				"left.message",
-				expect.stringMatching(/unresolved dynamic/),
-			);
-			expect(await snapshot(f.directory)).toEqual(before);
-		},
-	);
-
-	it.each([
-		{ dynamic: true, accepted: true },
-		{ dynamic: false, accepted: false },
-	])(
-		"handles an inline module that fails to parse (dynamic: $dynamic)",
-		async ({ dynamic, accepted }) => {
-			const f = await fixture();
-			const request = JSON.stringify(
-				`data:text/javascript,${encodeURIComponent("export const = ;")}`,
-			);
-			await writeFile(
-				new URL("index.js", f.server),
-				(dynamic
-					? `export async function observe() { try { await import(${request}); } catch (error) { if (!(error instanceof SyntaxError)) throw error; return "fallback"; } }`
-					: `import ${request};`) + `\n${f.index}`,
-			);
-			if (dynamic) {
-				const { stdout } = await promisify(execFile)(
-					process.execPath,
-					[
-						"--input-type=module",
-						"-e",
-						'import { observe } from "./index.js"; console.log(await observe());',
-					],
-					{ cwd: fileURLToPath(f.server) },
-				);
-				expect(stdout.trim()).toBe("fallback");
-			}
-			const planning = Effect.runPromise(
-				FunctionArtifact.planPreparation(
-					f.build,
-					f.routePlan,
-					settings,
-				),
-			);
-			if (accepted)
-				await expect(planning).resolves.toBeDefined();
-			else await expect(planning).rejects.toThrow();
-		},
-	);
-
-	it.each(
-		[
-			'const require = typeof globalThis.require === "function" ? globalThis.require : createRequire(import.meta.url);export const value = require("example");',
-			'const load = Math.random() > 2 ? undefined : createRequire(import.meta.url);export const value = load("example");',
-			'const load = globalThis.missing || createRequire(import.meta.url);export const value = load("example");',
-			'const load = Math.random() > 2 ? null : createRequire(import.meta.url);export const value = load?.("example");',
-		].flatMap((source) =>
-			(["bundle", "install"] as const).map(
-				(dependencyStrategy) => ({
-					source,
-					dependencyStrategy,
-				}),
-			),
-		),
-	)(
-		"never accepts a conditional createRequire loader without its package: %j",
-		async ({ source, dependencyStrategy }) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				`import { createRequire } from "node:module";${source}\n${f.index}`,
-			);
-			await mkdir(new URL("node_modules/example/", f.root), {
-				recursive: true,
-			});
-			await writeFile(
-				new URL("node_modules/example/package.json", f.root),
-				'{"name":"example","version":"1.2.3"}',
-			);
-			await writeFile(
-				new URL("node_modules/example/index.js", f.root),
-				'module.exports = "loaded";',
-			);
-			const { stdout } = await promisify(execFile)(
-				process.execPath,
-				[
-					"--input-type=module",
-					"--eval",
-					`const m=await import(${JSON.stringify(new URL("index.js", f.server).href)});process.stdout.write(m.value);`,
-				],
-				{ cwd: f.directory },
-			);
-			expect(stdout).toBe("loaded");
-			const result = await Effect.runPromise(
-				Effect.either(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{ ...settings, dependencyStrategy },
-						{
-							resolve: () =>
-								Promise.resolve({ version: "1.2.3" }),
-						},
-					),
-				),
-			);
-			// Tracking or rejecting the selected loader are both safe; silent acceptance is not.
-			if (result._tag === "Left") {
-				expect(result.left.message).toMatch(
-					/example|unresolved dynamic/,
-				);
-				return;
-			}
-			expect(dependencyStrategy).toBe("install");
-			const lock = result.right.mutations.find(
-				(m) =>
-					m.kind === "writeFile" &&
-					m.path.pathname.endsWith("package-lock.json"),
-			);
-			expect(
-				lock?.kind === "writeFile" && JSON.parse(lock.contents),
-			).toMatchObject({
-				packages: {
-					"node_modules/example": { version: "1.2.3" },
-				},
-			});
-		},
-	);
-
-	it.each(["bundle", "install"] as const)(
-		"terminates on cyclic namespaces merged across branches (%s)",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			for (const name of ["a.mjs", "b.mjs"])
-				await writeFile(
-					new URL(name, f.server),
-					`export * as next from "./${name}"; export const value = 1;`,
-				);
-			await writeFile(
-				new URL("index.js", f.server),
-				`import * as a from "./a.mjs";import * as b from "./b.mjs";const selected = Math.random() > 2 ? a : b;const key = "next";export const value = selected[key];\n${f.index}`,
-			);
-			const result = await Effect.runPromise(
-				Effect.either(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{
-							...settings,
-							dependencyStrategy,
-						},
-					),
-				),
-			);
-			if (result._tag === "Left")
-				expect(String(result.left)).not.toMatch(/call stack/i);
-		},
-	);
-
-	it.each(
-		[
-			{
-				name: "a self namespace beside process",
-				files: {
-					"index.js":
-						"import * as self from './index.js';export const selected = Math.random() > 2 ? self : process;",
-				},
-			},
-			{
-				name: "a cyclic fallback namespace beside process",
-				files: {
-					"a.mjs":
-						"import * as wrapper from './wrapper.mjs';import * as empty from './empty.mjs';import * as b from './b.mjs';const { runtime: next = b } = Math.random() > 2 ? wrapper : empty;export { next };",
-					"wrapper.mjs": "export * as runtime from './a.mjs';",
-					"empty.mjs": "export const other = 1;",
-					"b.mjs": "export * as next from './b.mjs';",
-					"index.js":
-						"import * as a from './a.mjs';const selected = Math.random() > 2 ? process : a;export const cwd = typeof selected.cwd;",
-				},
-			},
-		].flatMap((row) =>
-			(["bundle", "install"] as const).map(
-				(dependencyStrategy) => ({
-					...row,
-					dependencyStrategy,
-				}),
-			),
-		),
-	)(
-		"terminates loader probes for $name ($dependencyStrategy)",
-		async ({ files, dependencyStrategy }) => {
-			const f = await fixture();
-			for (const [name, source] of Object.entries(
-				files as Record<string, string>,
-			))
-				await writeFile(
-					new URL(name, f.server),
-					name === "index.js" ? `${source}\n${f.index}` : source,
-				);
-			const result = await Effect.runPromise(
-				Effect.either(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{
-							...settings,
-							dependencyStrategy,
-						},
-					),
-				),
-			);
-			if (result._tag === "Left")
-				expect(String(result.left)).not.toMatch(/call stack/i);
-		},
-	);
-
-	it.each(["bundle", "install"] as const)(
-		"keeps a namespace default that matches the selected namespace (%s)",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("c.mjs", f.server),
-				"export const config = {};",
-			);
-			await writeFile(
-				new URL("wrapper.mjs", f.server),
-				"export * as runtime from './c.mjs';",
-			);
-			await writeFile(
-				new URL("empty.mjs", f.server),
-				"export const other = 1;",
-			);
-			await writeFile(
-				new URL("index.js", f.server),
-				`import * as c from './c.mjs';import * as w from './wrapper.mjs';import * as e from './empty.mjs';const { runtime: ns = c } = Math.random() > 2 ? w : e;const { config: value = process } = ns;const key = "a";export const out = value[key];\n${f.index}`,
-			);
-			await expect(
-				Effect.runPromise(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{
-							...settings,
-							dependencyStrategy,
-						},
-					),
-				),
-			).resolves.toBeDefined();
-		},
-	);
-
-	it.each(["bundle", "install"] as const)(
-		"keeps a local function named registerHooks ordinary (%s)",
-		async (dependencyStrategy) => {
-			const f = await fixture();
-			await writeFile(
-				new URL("index.js", f.server),
-				`function registerHooks(value) { return value; } registerHooks({}); import('node:path');\n${f.index}`,
-			);
-			await expect(
-				Effect.runPromise(
-					FunctionArtifact.planPreparation(
-						f.build,
-						f.routePlan,
-						{
-							...settings,
-							dependencyStrategy,
-						},
-					),
-				),
-			).resolves.toBeDefined();
-		},
-	);
-
 	it("stops applying on failure and retains earlier mutations without rollback", async () => {
 		const f = await fixture();
 		const first = new URL("first.txt", f.root);
@@ -11450,6 +8038,90 @@ ${f.index}`,
 			code: "ENOENT",
 		});
 	});
+
+	it.each([
+		{
+			dependencyStrategy: "install",
+			includeDependencies: ["example"],
+			valid: true,
+		},
+		{ dependencyStrategy: "install", valid: true },
+		{
+			dependencyStrategy: "bundle",
+			includeDependencies: ["example"],
+			valid: false,
+		},
+		{
+			dependencyStrategy: "install",
+			includeDependencies: [""],
+			valid: false,
+		},
+	] as const)(
+		"validates includeDependencies for $dependencyStrategy: $includeDependencies",
+		({ valid, ...options }) => {
+			const decoded = S.decodeUnknownEither(
+				Options.ObjectStorageCloudFunctionsTargetOptions,
+			)({ target: "object-storage-functions", ...options });
+			expect(decoded._tag).toBe(valid ? "Right" : "Left");
+			if (decoded._tag === "Right")
+				expect(decoded.right.includeDependencies).toEqual(
+					options.includeDependencies ?? [],
+				);
+		},
+	);
+
+	// ADR 0011: tracing does not follow getBuiltinModule loads; includeDependencies pins them.
+	it.each([[], ["example"]])(
+		"pins a getBuiltinModule runtime load only through includeDependencies %j",
+		async (...includeDependencies) => {
+			const f = await fixture();
+			await mkdir(new URL("node_modules/example/", f.root), {
+				recursive: true,
+			});
+			await writeFile(
+				new URL("node_modules/example/package.json", f.root),
+				'{"name":"example","version":"1.2.3"}',
+			);
+			await writeFile(
+				new URL("node_modules/example/index.js", f.root),
+				'module.exports = "loaded";',
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`export const load = () => process.getBuiltinModule("module").createRequire(import.meta.url)("example");\n${f.index}`,
+			);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					{
+						...settings,
+						dependencyStrategy: "install",
+						includeDependencies,
+					},
+					{
+						resolve: () => Promise.resolve({ version: "1.2.3" }),
+					},
+				),
+			);
+			const lock = plan.mutations.find(
+				(m) =>
+					m.kind === "writeFile" &&
+					m.path.pathname.endsWith("package-lock.json"),
+			);
+			const packages =
+				lock?.kind === "writeFile"
+					? (
+							JSON.parse(lock.contents) as {
+								packages: Record<string, unknown>;
+							}
+						).packages
+					: {};
+			expect(
+				Object.hasOwn(packages, "node_modules/example"),
+			).toBe(includeDependencies.length > 0);
+		},
+	);
 
 	it("keeps default objects private to the Options module", () => {
 		expect(
