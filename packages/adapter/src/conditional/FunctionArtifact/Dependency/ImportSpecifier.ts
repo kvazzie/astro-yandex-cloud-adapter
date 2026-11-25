@@ -1687,6 +1687,9 @@ function runtimeLoaderBindings(
 		}
 		return escapedRestBindings.has(binding);
 	};
+	const namespaceIds = new WeakMap<EmittedNamespace, number>();
+	let namespaceIdCount = 0;
+	const mergedNamespaces = new Map<string, EmittedNamespace>();
 	const roleOf = (
 		value: unknown,
 		seen = new Set<unknown>(),
@@ -1901,44 +1904,72 @@ function runtimeLoaderBindings(
 		const mergeNamespaces = (
 			namespaces: readonly EmittedNamespace[],
 			opaque: boolean,
-		): EmittedNamespace => ({
-			exportNames: (names) =>
-				new Set(
-					namespaces.flatMap((namespace) => [
-						...namespace.exportNames(new Set(names)),
-					]),
-				),
-			resolve: (name, path) => {
-				const selected = namespaces.map((namespace) =>
-					namespace.resolve(name, new Set(path)),
-				);
-				if (selected.includes(ambiguousExport))
-					return ambiguousExport;
-				const present = selected.filter(
-					(binding): binding is ExportBinding =>
-						binding !== undefined,
-				);
-				if (!present.length) return undefined;
-				// An ordinary value can lack any nested property the other branches define.
-				const role = mergeRoles(
-					present.map(({ role }) => role),
-					opaque ||
-						present.some(({ role }) => role === undefined),
-				);
-				// A property is defined only when every possible branch defines it.
-				const everyDefined =
-					!opaque &&
-					selected.every(
-						(binding) => binding?.isDefined?.() === true,
+		): EmittedNamespace => {
+			// The same inputs share one identity, so cycle detection still terminates.
+			const key = `${opaque ? "!" : ""}${namespaces
+				.map((namespace) => {
+					let id = namespaceIds.get(namespace);
+					if (id === undefined) {
+						id = ++namespaceIdCount;
+						namespaceIds.set(namespace, id);
+					}
+					return id;
+				})
+				.sort((first, second) => first - second)
+				.join(",")}`;
+			const cached = mergedNamespaces.get(key);
+			if (cached) return cached;
+			const merged: EmittedNamespace = {
+				exportNames: (names) =>
+					new Set(
+						namespaces.flatMap((namespace) => [
+							...namespace.exportNames(new Set(names)),
+						]),
+					),
+				resolve: (name, path) => {
+					const resolved = namespaces.map((namespace) =>
+						namespace.resolve(name, new Set(path)),
 					);
-				return {
-					...(present.find((binding) => binding.role === role) ??
-						present[0]),
-					role,
-					isDefined: everyDefined ? () => true : undefined,
-				};
-			},
-		});
+					// An ambiguous name is absent from that namespace object.
+					if (
+						resolved.length &&
+						resolved.every(
+							(binding) => binding === ambiguousExport,
+						)
+					)
+						return ambiguousExport;
+					const selected = resolved.map((binding) =>
+						binding === ambiguousExport ? undefined : binding,
+					);
+					const present = selected.filter(
+						(binding): binding is ExportBinding =>
+							binding !== undefined,
+					);
+					if (!present.length) return undefined;
+					// An ordinary value can lack any nested property the other branches define.
+					const role = mergeRoles(
+						present.map(({ role }) => role),
+						opaque ||
+							present.some(({ role }) => role === undefined),
+					);
+					// A property is defined only when every possible branch defines it.
+					const everyDefined =
+						!opaque &&
+						selected.every(
+							(binding) => binding?.isDefined?.() === true,
+						);
+					return {
+						...(present.find(
+							(binding) => binding.role === role,
+						) ?? present[0]),
+						role,
+						isDefined: everyDefined ? () => true : undefined,
+					};
+				},
+			};
+			mergedNamespaces.set(key, merged);
+			return merged;
+		};
 		const branchRole = (
 			branches: unknown[],
 		): LoaderRole | undefined => {

@@ -780,6 +780,10 @@ describe("Function Artifact mutation plans", () => {
 					"export * as runtime from './other.js';",
 					"import * as a from './bridge.js';import * as b from './process.js';const selected=Math.random()>2?a:b;const {runtime:proc}=selected;",
 				],
+				[
+					"export * from './r1.js';export * from './r2.js';",
+					"import * as a from './bridge.js';import * as b from './process.js';const selected=Math.random()>2?a:b;const proc=selected.runtime;",
+				],
 			] as const
 		).flatMap(([bridge, consumer]) =>
 			(["bundle", "install"] as const).map(
@@ -803,6 +807,11 @@ describe("Function Artifact mutation plans", () => {
 				new URL("process.js", f.server),
 				"export const runtime=process;",
 			);
+			for (const ambiguous of ["r1.js", "r2.js"])
+				await writeFile(
+					new URL(ambiguous, f.server),
+					"export const runtime={};",
+				);
 			await writeFile(
 				new URL("index.js", f.server),
 				consumer +
@@ -11222,6 +11231,36 @@ ${f.index}`,
 					"node_modules/example": { version: "1.2.3" },
 				},
 			});
+		},
+	);
+
+	it.each(["bundle", "install"] as const)(
+		"terminates on cyclic namespaces merged across branches (%s)",
+		async (dependencyStrategy) => {
+			const f = await fixture();
+			for (const name of ["a.mjs", "b.mjs"])
+				await writeFile(
+					new URL(name, f.server),
+					`export * as next from "./${name}"; export const value = 1;`,
+				);
+			await writeFile(
+				new URL("index.js", f.server),
+				`import * as a from "./a.mjs";import * as b from "./b.mjs";const selected = Math.random() > 2 ? a : b;const key = "next";export const value = selected[key];\n${f.index}`,
+			);
+			const result = await Effect.runPromise(
+				Effect.either(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						{
+							...settings,
+							dependencyStrategy,
+						},
+					),
+				),
+			);
+			if (result._tag === "Left")
+				expect(String(result.left)).not.toMatch(/call stack/i);
 		},
 	);
 
