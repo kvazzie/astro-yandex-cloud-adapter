@@ -1869,28 +1869,83 @@ function runtimeLoaderBindings(
 			}
 		}
 
-		// A selected branch keeps every loader role it can transfer.
+		// A merged property or branch keeps every loader role it can transfer.
+		const mergeRoles = (
+			roles: readonly (LoaderRole | undefined)[],
+			opaque: boolean,
+		): LoaderRole | undefined => {
+			const defined = [
+				...new Set(
+					roles.filter(
+						(role): role is LoaderRole => role !== undefined,
+					),
+				),
+			];
+			if (defined.includes("process")) return "process";
+			if (
+				defined.length === 1 &&
+				(typeof defined[0] !== "object" || !opaque)
+			)
+				return defined[0];
+			const namespaces = defined.filter(
+				(role): role is EmittedNamespace =>
+					typeof role === "object",
+			);
+			if (
+				namespaces.length &&
+				namespaces.length === defined.length
+			)
+				return mergeNamespaces(namespaces, opaque);
+			return defined.find((role) => typeof role !== "object");
+		};
+		const mergeNamespaces = (
+			namespaces: readonly EmittedNamespace[],
+			opaque: boolean,
+		): EmittedNamespace => ({
+			exportNames: (names) =>
+				new Set(
+					namespaces.flatMap((namespace) => [
+						...namespace.exportNames(new Set(names)),
+					]),
+				),
+			resolve: (name, path) => {
+				const selected = namespaces.map((namespace) =>
+					namespace.resolve(name, new Set(path)),
+				);
+				if (selected.includes(ambiguousExport))
+					return ambiguousExport;
+				const present = selected.filter(
+					(binding): binding is ExportBinding =>
+						binding !== undefined,
+				);
+				if (!present.length) return undefined;
+				// An ordinary value can lack any nested property the other branches define.
+				const role = mergeRoles(
+					present.map(({ role }) => role),
+					opaque ||
+						present.some(({ role }) => role === undefined),
+				);
+				// A property is defined only when every possible branch defines it.
+				const everyDefined =
+					!opaque &&
+					selected.every(
+						(binding) => binding?.isDefined?.() === true,
+					);
+				return {
+					...(present.find((binding) => binding.role === role) ??
+						present[0]),
+					role,
+					isDefined: everyDefined ? () => true : undefined,
+				};
+			},
+		});
 		const branchRole = (
 			branches: unknown[],
 		): LoaderRole | undefined => {
 			const roles = branches.map((branch) =>
 				roleOf(branch, new Set(seen)),
 			);
-			if (roles.includes("process")) return "process";
-			const loader = roles.find(
-				(role) => role !== undefined && typeof role !== "object",
-			);
-			if (loader) return loader;
-			const namespaces = [
-				...new Set(
-					roles.filter(
-						(role): role is EmittedNamespace =>
-							typeof role === "object",
-					),
-				),
-			];
-			if (!namespaces.length) return undefined;
-			// Another value may lack any namespace property; null and undefined throw instead.
+			// Another value may lack any namespace property; null and the builtin undefined throw.
 			const opaque = branches.some(
 				(branch, index) =>
 					roles[index] === undefined &&
@@ -1898,40 +1953,11 @@ function runtimeLoaderBindings(
 						isSyntaxNode(branch) &&
 						((branch.type === "Literal" &&
 							branch.value === null) ||
-							isIdentifier(branch, "undefined"))
+							(isIdentifier(branch, "undefined") &&
+								isUnbound(branch)))
 					),
 			);
-			if (namespaces.length === 1 && !opaque)
-				return namespaces[0];
-			return {
-				exportNames: (names) =>
-					new Set(
-						namespaces.flatMap((namespace) => [
-							...namespace.exportNames(new Set(names)),
-						]),
-					),
-				resolve: (name, path) => {
-					const selected = namespaces.map((namespace) =>
-						namespace.resolve(name, new Set(path)),
-					);
-					if (selected.includes(ambiguousExport))
-						return ambiguousExport;
-					const binding =
-						selected.find((candidate) => candidate?.role) ??
-						selected.find(Boolean);
-					if (!binding) return undefined;
-					// A property is defined only when every possible branch defines it.
-					const everyDefined =
-						!opaque &&
-						selected.every(
-							(candidate) => candidate?.isDefined?.() === true,
-						);
-					return {
-						...binding,
-						isDefined: everyDefined ? () => true : undefined,
-					};
-				},
-			};
+			return mergeRoles(roles, opaque);
 		};
 		if (value.type === "ConditionalExpression")
 			return branchRole([value.consequent, value.alternate]);

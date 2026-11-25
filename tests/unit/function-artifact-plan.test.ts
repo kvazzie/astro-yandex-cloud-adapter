@@ -772,6 +772,14 @@ describe("Function Artifact mutation plans", () => {
 					"export const runtime={};",
 					"import * as ns from './bridge.js';const selected=Math.random()>2?ns:{};const {runtime:proc=process}=selected;",
 				],
+				[
+					"export const runtime={};",
+					"import * as ns from './bridge.js';const undefined={};const selected=Math.random()>2?ns:undefined;const {runtime:proc=process}=selected;",
+				],
+				[
+					"export * as runtime from './other.js';",
+					"import * as a from './bridge.js';import * as b from './process.js';const selected=Math.random()>2?a:b;const {runtime:proc}=selected;",
+				],
 			] as const
 		).flatMap(([bridge, consumer]) =>
 			(["bundle", "install"] as const).map(
@@ -790,6 +798,10 @@ describe("Function Artifact mutation plans", () => {
 			await writeFile(
 				new URL("other.js", f.server),
 				"export const unrelated=1;",
+			);
+			await writeFile(
+				new URL("process.js", f.server),
+				"export const runtime=process;",
 			);
 			await writeFile(
 				new URL("index.js", f.server),
