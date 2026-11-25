@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+# Use the existing tracking ref. CI fetches the actual PR base again.
+base=${CHANGESET_BASE:-$1/main}
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Check branch destinations even when the source is HEAD or an object ID.
+  case "$remote_ref" in
+    refs/heads/*) ;;
+    *) continue ;;
+  esac
+  case "$local_sha" in
+    0000000000000000000000000000000000000000) continue ;;
+  esac
+  pnpm changeset:check --base "$base" --head "$local_sha"
+done
