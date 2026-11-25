@@ -27,7 +27,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as FunctionArtifact from "../../packages/adapter/src/conditional/FunctionArtifact";
 import * as Options from "../../packages/adapter/src/Options";
 import type { RoutePlan } from "../../packages/adapter/src/mandatory/ArtifactGeneration/RouteRequirements";
-import { hasRuntimeImageCalls } from "../../packages/adapter/src/mandatory/ArtifactGeneration/RuntimeImageRoutes";
+import { hasRuntimeImageCalls } from "../../packages/adapter/src/mandatory/ArtifactGeneration/RuntimeImageRoutes.ts";
 import { validateFunctionEntrypoint } from "../../packages/adapter/src/conditional/FunctionArtifact/Prepare.ts";
 import { externalBundledPeers } from "../../packages/adapter/src/conditional/FunctionArtifact/Dependency/Archive.ts";
 

@@ -2,9 +2,17 @@
 import { getImage } from "astro:assets";
 
 const src = Astro.url.searchParams.get("src") ?? "http://127.0.0.1/image.png";
-const image = await getImage({ src, width: 8, height: 8, format: "png" });
+async function renderImage(source: string) {
+  // Reuse each binding so unminified output retains the application-local names.
+  const pageMap = new Map([["image", source]]);
+  pageMap.set("image", pageMap.get("image")!);
+  const serverIslandMap = new Map(pageMap);
+  serverIslandMap.set("image", serverIslandMap.get("image")!);
+  return getImage({ src: serverIslandMap.get("image")!, width: 8, height: 8, format: "png" });
+}
+const image = import.meta.env.PUBLIC_TEST_NO_RUNTIME_IMAGES === "true" || import.meta.env.PUBLIC_TEST_IMAGE_SOURCE === "actions" ? undefined : import.meta.env.PUBLIC_TEST_IMAGE_SOURCE === "middleware" ? Astro.locals.image : await renderImage(src);
 ---
 
 <!doctype html>
 <title>Runtime image fixture</title>
-<img src={image.src} width="8" height="8" alt="Runtime image" />
+{image ? <img src={image.src} width="8" height="8" alt="Runtime image" /> : <p>No runtime image</p>}
