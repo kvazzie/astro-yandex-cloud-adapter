@@ -21,6 +21,7 @@ import {
 	readRootRequirementPrecedence,
 	inspectInstalledSource,
 	readInstalledBindingPath,
+	resolvePnpmCatalogs,
 	stripJsonBom,
 	parseRuntimeRequirement,
 	type InstalledSource,
@@ -70,8 +71,10 @@ export async function resolvePinnedRuntimeDependencies(
 	const appRoot = pathToFileURL(appDirectory + sep);
 	const appManifestPath = join(appDirectory, "package.json");
 	const lock = await readLocalLock(appDirectory);
-	const application =
-		await readJsonFile<PackageJson>(appManifestPath);
+	const application = await resolvePnpmCatalogs(
+		await readJsonFile<PackageJson>(appManifestPath),
+		appManifestPath,
+	);
 	const overrideOwner = await readWorkspaceOverrideManifest(
 		lock,
 		appDirectory,
@@ -1137,10 +1140,13 @@ function localDependencyBase(
 		: source.lockLocation;
 }
 
+/** Non-registry lock origins, including Git locators, need installed local contents. */
 function hasLocalLockOrigin(entry: LockedPackage): boolean {
 	return (
 		entry.link === true ||
-		/^(file|link|workspace):/.test(entry.resolved ?? "")
+		/^(?:file|link|workspace|git(?:\+[a-z]+)?|github|gitlab|bitbucket|gist):/.test(
+			entry.resolved ?? "",
+		)
 	);
 }
 

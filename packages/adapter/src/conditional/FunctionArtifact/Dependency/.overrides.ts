@@ -51,10 +51,13 @@ export class ApplicationOverrides {
 				: key
 			: undefined;
 		this.range = split > 0 ? key.slice(split + 1) : "*";
+		// npm defaults a rule without "." to its key range; "*" keeps the requested spec.
 		this.value =
 			typeof object["."] === "string"
 				? object["."] || "*"
-				: undefined;
+				: parent
+					? this.range
+					: undefined;
 		this.identity = parent ? `${parent.identity}/${key}` : "";
 		this.children = Object.entries(object)
 			.filter(([name]) => name !== ".")
