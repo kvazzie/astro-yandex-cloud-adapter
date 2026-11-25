@@ -71,32 +71,48 @@ export function findRuntimePackageImports(
 		firstEmittedFile(target, ["", ...commonJsExtensions]);
 	const emittedIndex = (target: string) =>
 		firstEmittedFile(join(target, "index"), commonJsExtensions);
-	const emittedDirectory = (target: string) => {
+	const retainedManifest = (directory: string) => {
 		const file = emittedFiles.get(
-			pathToFileURL(join(target, "package.json")).href,
+			pathToFileURL(join(directory, "package.json")).href,
 		);
-		// Preparation replaces the root manifest with one that has no main field.
+		// Preparation replaces the root manifest with an ESM manifest without main.
 		if (
-			file?.contents !== undefined &&
-			file.path !== "package.json"
-		) {
-			const metadata: unknown = JSON.parse(
-				stripJsonBom(file.contents),
-			);
-			if (
-				metadata &&
-				typeof metadata === "object" &&
-				"main" in metadata &&
-				typeof metadata.main === "string" &&
-				metadata.main
-			) {
-				const main = resolve(target, metadata.main);
-				const candidate =
-					emittedFile(main) ?? emittedIndex(main);
-				if (candidate) return candidate;
-			}
+			file?.contents === undefined ||
+			file.path === "package.json"
+		)
+			return undefined;
+		const metadata: unknown = JSON.parse(
+			stripJsonBom(file.contents),
+		);
+		return metadata && typeof metadata === "object"
+			? (metadata as Record<string, unknown>)
+			: {};
+	};
+	const emittedDirectory = (target: string) => {
+		const main = retainedManifest(target)?.main;
+		if (typeof main === "string" && main) {
+			const entry = resolve(target, main);
+			const candidate =
+				emittedFile(entry) ?? emittedIndex(entry);
+			if (candidate) return candidate;
 		}
 		return emittedIndex(target);
+	};
+	const extensionlessPackageType = (path: string) => {
+		let directory = dirname(path);
+		while (directory !== ".") {
+			const metadata = retainedManifest(directory);
+			if (metadata) {
+				const { type } = metadata;
+				return type === "commonjs" || type === "module"
+					? type
+					: undefined;
+			}
+			const parent = dirname(directory);
+			if (parent === directory) break;
+			directory = parent;
+		}
+		return "module";
 	};
 	const isJavaScript = (path: string) => /\.m?js$/.test(path);
 	const programs = new Map<string, SyntaxNode>();
@@ -126,13 +142,31 @@ export function findRuntimePackageImports(
 			);
 		let program = programs.get(sourceURL.href);
 		if (!program) {
+			const extensionless = !isJavaScript(file.path);
+			const packageType = extensionless
+				? extensionlessPackageType(file.path)
+				: "module";
+			const unsupportedCommonJs = () =>
+				new Error(
+					`The function artifact contains an unsupported CommonJS module at ${file.path}. V1 function artifacts must use ESM.`,
+				);
+			// Node runs a typeless file as CommonJS unless it needs ESM syntax.
+			if (packageType !== "module") {
+				const commonJsError = commonJsSyntaxError(file.contents);
+				if (!commonJsError) throw unsupportedCommonJs();
+				if (packageType === "commonjs") {
+					// Node reports this dynamic import's failure to the caller at runtime.
+					if (dynamic) return undefined;
+					throw commonJsError;
+				}
+			}
 			try {
 				program = parseModule(file.contents);
 			} catch (error) {
 				// Node reports this dynamic import's failure to the caller at runtime.
 				if (
 					dynamic &&
-					!isJavaScript(file.path) &&
+					extensionless &&
 					error instanceof SyntaxError
 				)
 					return undefined;
@@ -270,6 +304,74 @@ export function findRuntimePackageImports(
 	// Map iteration also inspects module instances discovered by the visitor.
 	for (const module of modules.values()) module.inspect();
 	return names;
+}
+
+const commonJsWrapperNames = new Set([
+	"exports",
+	"require",
+	"module",
+	"__filename",
+	"__dirname",
+]);
+
+/** Returns the error that makes Node reject the CommonJS wrapper for this source. */
+function commonJsSyntaxError(
+	source: string,
+): SyntaxError | undefined {
+	let program: SyntaxNode;
+	try {
+		program = parseModule(source, "commonjs");
+	} catch (error) {
+		if (error instanceof SyntaxError) return error;
+		throw error;
+	}
+	// Node retries as ESM when a lexical declaration shadows a wrapper parameter.
+	for (const statement of program.body as SyntaxNode[]) {
+		const names =
+			statement.type === "ClassDeclaration"
+				? bindingNames(statement.id)
+				: statement.type === "VariableDeclaration" &&
+					  statement.kind !== "var"
+					? (statement.declarations as SyntaxNode[]).flatMap(
+							(declaration) => bindingNames(declaration.id),
+						)
+					: [];
+		const name = names.find((name) =>
+			commonJsWrapperNames.has(name),
+		);
+		if (name)
+			return new SyntaxError(
+				`Identifier '${name}' has already been declared`,
+			);
+	}
+	return undefined;
+}
+
+function bindingNames(pattern: unknown): string[] {
+	if (!isSyntaxNode(pattern)) return [];
+	switch (pattern.type) {
+		case "Identifier":
+			return [pattern.name as string];
+		case "ObjectPattern":
+			return (pattern.properties as SyntaxNode[]).flatMap(
+				(property) =>
+					bindingNames(
+						property.type === "RestElement"
+							? property.argument
+							: property.value,
+					),
+			);
+		case "ArrayPattern":
+			return (pattern.elements as unknown[]).flatMap(
+				bindingNames,
+			);
+		case "AssignmentPattern":
+			return bindingNames(pattern.left);
+		case "RestElement":
+			return bindingNames(pattern.argument);
+		default:
+			return [];
+	}
 }
 
 declare const directoryPathBrand: unique symbol;

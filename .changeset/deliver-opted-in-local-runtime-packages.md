@@ -29,4 +29,5 @@ modules from their load references. Preserve package-root
 directory errors, accept BOMs in retained manifests, and validate
 bare CommonJS directory requests. Preserve runtime fallbacks for
 invalid extensionless dynamic imports and accept BOMs in
-installed and archived manifests.
+installed and archived manifests. Reject extensionless CommonJS
+modules selected by emitted module loads.

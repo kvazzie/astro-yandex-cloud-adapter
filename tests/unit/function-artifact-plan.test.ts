@@ -1512,16 +1512,42 @@ describe("Function Artifact mutation plans", () => {
 
 	it.each([
 		{ file: "optional", dynamic: true, accepted: true },
+		{
+			file: "nested/esm/optional",
+			dynamic: true,
+			accepted: true,
+		},
+		{
+			file: "nested/optional",
+			dynamic: true,
+			accepted: true,
+			source: "module.exports = ;",
+		},
 		{ file: "optional", dynamic: false, accepted: false },
 		{ file: "optional.mjs", dynamic: true, accepted: false },
 	])(
 		"preserves an optional extensionless import fallback ($file, dynamic: $dynamic)",
-		async ({ file, dynamic, accepted }) => {
+		async ({
+			file,
+			dynamic,
+			accepted,
+			source: contents = "export const broken = ;",
+		}) => {
 			const f = await fixture();
-			await writeFile(
-				new URL(file, f.server),
-				"export const broken = ;",
-			);
+			if (file.startsWith("nested/")) {
+				await mkdir(new URL("nested/esm/", f.server), {
+					recursive: true,
+				});
+				await writeFile(
+					new URL("nested/package.json", f.server),
+					'{"type":"commonjs"}',
+				);
+				await writeFile(
+					new URL("nested/esm/package.json", f.server),
+					'{"type":"module"}',
+				);
+			}
+			await writeFile(new URL(file, f.server), contents);
 			const request = JSON.stringify("./" + file);
 			const source = dynamic
 				? `export async function observe() { try { const loaded = await import(${request}); return loaded.default; } catch (error) { if (!(error instanceof SyntaxError)) throw error; return "fallback"; } }`
@@ -1568,6 +1594,158 @@ describe("Function Artifact mutation plans", () => {
 			directories.push(isolated);
 			await cp(f.server, isolated, { recursive: true });
 			await check(isolated);
+		},
+	);
+
+	it.each([
+		{ metadata: { type: "commonjs" }, syntax: "wrapper return" },
+		{
+			metadata: { type: "commonjs" },
+			syntax: "ordinary require",
+		},
+		{ metadata: {}, syntax: "wrapper return" },
+		{ metadata: {}, syntax: "ordinary require" },
+		{ metadata: {}, syntax: "aliased require" },
+		{ metadata: {}, syntax: "var redeclaration" },
+	])(
+		"rejects a dynamically loaded extensionless CommonJS module ($metadata, $syntax)",
+		async ({ metadata, syntax }) => {
+			const f = await fixture();
+			await mkdir(new URL("nested/", f.server), {
+				recursive: true,
+			});
+			await writeFile(
+				new URL("package.json", f.server),
+				'{"type":"module"}',
+			);
+			await writeFile(
+				new URL("nested/package.json", f.server),
+				JSON.stringify(metadata),
+			);
+			await writeFile(
+				new URL("nested/optional", f.server),
+				{
+					"aliased require":
+						'const load = require; module.exports = load("example");',
+					"var redeclaration":
+						'var require = module.require.bind(module); module.exports = require("example");',
+				}[syntax] ??
+					`module.exports = require("example");${syntax === "wrapper return" ? " return;" : ""}`,
+			);
+			await mkdir(new URL("node_modules/example/", f.root), {
+				recursive: true,
+			});
+			await writeFile(
+				new URL("node_modules/example/package.json", f.root),
+				'{"name":"example","version":"1.2.3"}',
+			);
+			await writeFile(
+				new URL("node_modules/example/index.js", f.root),
+				'module.exports = "loaded";',
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`export async function observe() { return (await import("./nested/optional")).default; }\n${f.index}`,
+			);
+			const { stdout } = await promisify(execFile)(
+				process.execPath,
+				[
+					"--input-type=module",
+					"-e",
+					'import { observe } from "./index.js"; console.log(await observe());',
+				],
+				{ cwd: fileURLToPath(f.server) },
+			);
+			expect(stdout.trim()).toBe("loaded");
+			const before = await snapshot(f.directory);
+			await expect(
+				Effect.runPromise(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						{ ...settings, dependencyStrategy: "install" },
+					),
+				),
+			).rejects.toThrow(
+				/unsupported CommonJS module at nested\/optional/,
+			);
+			expect(await snapshot(f.directory)).toEqual(before);
+		},
+	);
+
+	it.each([
+		'const __filename = "entry";',
+		"let require;",
+		"const { nested: [module] } = { nested: [] };",
+		"class exports {}",
+	])(
+		"loads a typeless extensionless file as ESM when %s shadows a CommonJS wrapper variable",
+		async (declaration) => {
+			const f = await fixture();
+			await mkdir(new URL("nested/", f.server), {
+				recursive: true,
+			});
+			await writeFile(
+				new URL("package.json", f.server),
+				'{"type":"module"}',
+			);
+			await writeFile(
+				new URL("nested/package.json", f.server),
+				"{}",
+			);
+			await writeFile(
+				new URL("nested/shadowing", f.server),
+				`${declaration} globalThis.example = import("example");`,
+			);
+			await mkdir(new URL("node_modules/example/", f.root), {
+				recursive: true,
+			});
+			await writeFile(
+				new URL("node_modules/example/package.json", f.root),
+				'{"name":"example","version":"1.2.3"}',
+			);
+			await writeFile(
+				new URL("node_modules/example/index.js", f.root),
+				'module.exports = "loaded";',
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`export async function observe() { await import("./nested/shadowing"); return (await globalThis.example).default; }\n${f.index}`,
+			);
+			const { stdout } = await promisify(execFile)(
+				process.execPath,
+				[
+					"--input-type=module",
+					"-e",
+					'import { observe } from "./index.js"; console.log(await observe());',
+				],
+				{ cwd: fileURLToPath(f.server) },
+			);
+			expect(stdout.trim()).toBe("loaded");
+			const before = await snapshot(f.directory);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					{ ...settings, dependencyStrategy: "install" },
+					{
+						resolve: () => Promise.resolve({ version: "1.2.3" }),
+					},
+				),
+			);
+			expect(await snapshot(f.directory)).toEqual(before);
+			const lock = plan.mutations.find(
+				(m) =>
+					m.kind === "writeFile" &&
+					m.path.pathname.endsWith("package-lock.json"),
+			);
+			expect(
+				lock?.kind === "writeFile" && JSON.parse(lock.contents),
+			).toMatchObject({
+				packages: {
+					"node_modules/example": { version: "1.2.3" },
+				},
+			});
 		},
 	);
 
