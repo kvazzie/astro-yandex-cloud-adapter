@@ -1692,6 +1692,27 @@ function runtimeLoaderBindings(
 	const namespaceIds = new WeakMap<EmittedNamespace, number>();
 	let namespaceIdCount = 0;
 	const mergedNamespaces = new Map<string, EmittedNamespace>();
+	// A merged namespace is identified by its underlying members, not by nesting.
+	const mergedMembers = new WeakMap<
+		EmittedNamespace,
+		{ members: readonly EmittedNamespace[]; opaque: boolean }
+	>();
+	// Loader probes that are still running; re-entry cannot be resolved.
+	const probing = new Set<EmittedNamespace>();
+	const exposesLoader = (
+		namespace: EmittedNamespace,
+	): boolean => {
+		if (probing.has(namespace))
+			throw new Error(
+				"The Function Artifact contains unresolved dynamic runtime dependency resolution (a runtime loader selected from branches with different loader roles).",
+			);
+		probing.add(namespace);
+		try {
+			return namespaceExposesLoader(namespace);
+		} finally {
+			probing.delete(namespace);
+		}
+	};
 	// A merged property or branch keeps every loader role it can transfer.
 	const mergeRoles = (
 		roles: readonly (LoaderRole | undefined)[],
@@ -1721,9 +1742,7 @@ function runtimeLoaderBindings(
 		// One role cannot represent two loaders, or a loader beside a loader-bearing namespace.
 		if (
 			loaders.length > 1 ||
-			namespaces.some((namespace) =>
-				namespaceExposesLoader(namespace),
-			)
+			namespaces.some((namespace) => exposesLoader(namespace))
 		)
 			throw new Error(
 				"The Function Artifact contains unresolved dynamic runtime dependency resolution (a runtime loader selected from branches with different loader roles).",
@@ -1732,10 +1751,25 @@ function runtimeLoaderBindings(
 	};
 	const mergeNamespaces = (
 		namespaces: readonly EmittedNamespace[],
-		opaque: boolean,
+		mergeOpaque: boolean,
 	): EmittedNamespace => {
-		// The same inputs share one identity, so cycle detection still terminates.
-		const key = `${opaque ? "!" : ""}${namespaces
+		const members = [
+			...new Set(
+				namespaces.flatMap(
+					(namespace) =>
+						mergedMembers.get(namespace)?.members ?? [namespace],
+				),
+			),
+		];
+		const opaque =
+			mergeOpaque ||
+			namespaces.some(
+				(namespace) =>
+					mergedMembers.get(namespace)?.opaque === true,
+			);
+		if (members.length === 1 && !opaque) return members[0]!;
+		// The same members share one identity, so cycle detection still terminates.
+		const key = `${opaque ? "!" : ""}${members
 			.map((namespace) => {
 				let id = namespaceIds.get(namespace);
 				if (id === undefined) {
@@ -1751,12 +1785,12 @@ function runtimeLoaderBindings(
 		const merged: EmittedNamespace = {
 			exportNames: (names) =>
 				new Set(
-					namespaces.flatMap((namespace) => [
+					members.flatMap((namespace) => [
 						...namespace.exportNames(new Set(names)),
 					]),
 				),
 			resolve: (name, path) => {
-				const resolved = namespaces.map((namespace) =>
+				const resolved = members.map((namespace) =>
 					namespace.resolve(name, new Set(path)),
 				);
 				// An ambiguous name is absent from that namespace object.
@@ -1797,6 +1831,7 @@ function runtimeLoaderBindings(
 			},
 		};
 		mergedNamespaces.set(key, merged);
+		mergedMembers.set(merged, { members, opaque });
 		return merged;
 	};
 	const roleOf = (
@@ -1915,11 +1950,15 @@ function runtimeLoaderBindings(
 						)
 							return selected.role;
 						// Either the merged property or its default can be selected.
+						const defaultRole = roleOf(
+							record.fallback,
+							new Set(seen),
+						);
+						// A default that is the same value keeps that value's definedness.
+						if (defaultRole === selected.role)
+							return selected.role;
 						return mergeRoles(
-							[
-								selected.role,
-								roleOf(record.fallback, new Set(seen)),
-							],
+							[selected.role, defaultRole],
 							true,
 						);
 					}

@@ -787,24 +787,32 @@ describe("Function Artifact mutation plans", () => {
 				[
 					"export * from './r1.js';export * from './r2.js';",
 					"import * as a from './bridge.js';import * as b from './namespace.js';const selected=Math.random()>2?b:a;const {runtime:proc=process}=selected;",
+					"tracked",
 				],
 				[
 					"export * from './r1.js';export * from './r2.js';",
 					"import * as a from './bridge.js';import * as b from './inner-namespace.js';const selected=Math.random()<2?b:a;const {runtime:loaders=process}=selected;const proc=loaders.inner;",
+					"rejected",
 				],
 			] as const
-		).flatMap(([bridge, consumer]) =>
+		).flatMap((row) =>
 			(["bundle", "install"] as const).map(
 				(dependencyStrategy) => ({
-					bridge,
-					consumer,
+					bridge: row[0],
+					consumer: row[1],
+					outcome: row.length === 3 ? row[2] : undefined,
 					dependencyStrategy,
 				}),
 			),
 		),
 	)(
 		"never accepts a loader transferred through a namespace without its package: %j",
-		async ({ bridge, consumer, dependencyStrategy }) => {
+		async ({
+			bridge,
+			consumer,
+			outcome,
+			dependencyStrategy,
+		}) => {
 			const f = await fixture();
 			await writeFile(new URL("bridge.js", f.server), bridge);
 			await writeFile(
@@ -874,6 +882,18 @@ describe("Function Artifact mutation plans", () => {
 				),
 			);
 			expect(await snapshot(f.directory)).toEqual(before);
+			if (outcome === "rejected") {
+				expect(result._tag).toBe("Left");
+				if (result._tag === "Left")
+					expect(result.left.message).toMatch(
+						/different loader roles/,
+					);
+			}
+			if (
+				outcome === "tracked" &&
+				dependencyStrategy === "install"
+			)
+				expect(result._tag).toBe("Right");
 			if (result._tag === "Left") {
 				expect(result.left.message).toMatch(
 					/example|unresolved dynamic/,
@@ -11281,6 +11301,98 @@ ${f.index}`,
 			);
 			if (result._tag === "Left")
 				expect(String(result.left)).not.toMatch(/call stack/i);
+		},
+	);
+
+	it.each(
+		[
+			{
+				name: "a self namespace beside process",
+				files: {
+					"index.js":
+						"import * as self from './index.js';export const selected = Math.random() > 2 ? self : process;",
+				},
+			},
+			{
+				name: "a cyclic fallback namespace beside process",
+				files: {
+					"a.mjs":
+						"import * as wrapper from './wrapper.mjs';import * as empty from './empty.mjs';import * as b from './b.mjs';const { runtime: next = b } = Math.random() > 2 ? wrapper : empty;export { next };",
+					"wrapper.mjs": "export * as runtime from './a.mjs';",
+					"empty.mjs": "export const other = 1;",
+					"b.mjs": "export * as next from './b.mjs';",
+					"index.js":
+						"import * as a from './a.mjs';const selected = Math.random() > 2 ? process : a;export const cwd = typeof selected.cwd;",
+				},
+			},
+		].flatMap((row) =>
+			(["bundle", "install"] as const).map(
+				(dependencyStrategy) => ({
+					...row,
+					dependencyStrategy,
+				}),
+			),
+		),
+	)(
+		"terminates loader probes for $name ($dependencyStrategy)",
+		async ({ files, dependencyStrategy }) => {
+			const f = await fixture();
+			for (const [name, source] of Object.entries(
+				files as Record<string, string>,
+			))
+				await writeFile(
+					new URL(name, f.server),
+					name === "index.js" ? `${source}\n${f.index}` : source,
+				);
+			const result = await Effect.runPromise(
+				Effect.either(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						{
+							...settings,
+							dependencyStrategy,
+						},
+					),
+				),
+			);
+			if (result._tag === "Left")
+				expect(String(result.left)).not.toMatch(/call stack/i);
+		},
+	);
+
+	it.each(["bundle", "install"] as const)(
+		"keeps a namespace default that matches the selected namespace (%s)",
+		async (dependencyStrategy) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("c.mjs", f.server),
+				"export const config = {};",
+			);
+			await writeFile(
+				new URL("wrapper.mjs", f.server),
+				"export * as runtime from './c.mjs';",
+			);
+			await writeFile(
+				new URL("empty.mjs", f.server),
+				"export const other = 1;",
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`import * as c from './c.mjs';import * as w from './wrapper.mjs';import * as e from './empty.mjs';const { runtime: ns = c } = Math.random() > 2 ? w : e;const { config: value = process } = ns;const key = "a";export const out = value[key];\n${f.index}`,
+			);
+			await expect(
+				Effect.runPromise(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						{
+							...settings,
+							dependencyStrategy,
+						},
+					),
+				),
+			).resolves.toBeDefined();
 		},
 	);
 
