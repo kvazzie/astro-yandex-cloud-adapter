@@ -1,23 +1,10 @@
 import type { Stats } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { isBuiltin } from "node:module";
-import {
-  dirname,
-  isAbsolute,
-  join,
-  parse,
-  relative,
-  resolve as resolvePath,
-  sep,
-} from "node:path";
+import { isAbsolute, join, parse, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nodeFileTrace, resolve } from "@vercel/nft";
 
-import {
-  parseModule,
-  staticModuleReference,
-  visitSyntax,
-} from "../../../.emittedModules.ts";
 import type { PlannedFile } from "../.types.ts";
 
 /** Runtime files and packages that the emitted server can load. */
@@ -62,41 +49,45 @@ export async function traceRuntimeDependencies(
   // Emitted imports name the packages, as aliases and symlinks hide them in paths.
   // An import nft cannot resolve still names a package the artifact needs.
   const imports: { name: string; parent: string }[] = [];
-  const { fileList, reasons } = await nodeFileTrace(
-    [...planned.keys()].filter((path) => javaScript.test(path)),
-    {
-      base: root,
-      // Node 22 also selects node-addons exports by default.
-      conditions: ["node", "node-addons"],
-      // Planned files may differ from the files on disk or not exist yet.
-      readFile: async (path) => {
-        const file = planned.get(path);
-        if (file?.contents !== undefined) return file.contents;
-        if (file?.binaryContents !== undefined)
-          return Buffer.from(file.binaryContents);
-        try {
-          return await readFile(file?.from ?? path);
-        } catch (cause) {
-          if (missing(cause)) return null;
-          throw cause;
-        }
-      },
-      resolve: async (specifier, parent, job, cjsResolve) => {
-        const name = barePackageName(specifier);
-        if (name && inServer(parent)) imports.push({ name, parent });
-        return resolve(specifier, parent, job, cjsResolve);
-      },
-      stat: async (path) => {
-        const file = planned.get(path);
-        try {
-          return await stat(file?.from ?? path);
-        } catch (cause) {
-          if (!missing(cause)) throw cause;
-          return file ? plannedFileStats : null;
-        }
-      },
+  // Module loads go through resolve; assets read through new URL() do not.
+  const moduleEdges = new Map<string, Set<string>>();
+  const entries = [...planned.keys()].filter((path) => javaScript.test(path));
+  const { fileList, reasons } = await nodeFileTrace(entries, {
+    base: root,
+    // Node 22 also selects node-addons exports by default.
+    conditions: ["node", "node-addons"],
+    // Planned files may differ from the files on disk or not exist yet.
+    readFile: async (path) => {
+      const file = planned.get(path);
+      if (file?.contents !== undefined) return file.contents;
+      if (file?.binaryContents !== undefined)
+        return Buffer.from(file.binaryContents);
+      try {
+        return await readFile(file?.from ?? path);
+      } catch (cause) {
+        if (missing(cause)) return null;
+        throw cause;
+      }
     },
-  );
+    resolve: async (specifier, parent, job, cjsResolve) => {
+      const name = barePackageName(specifier);
+      if (name && inServer(parent)) imports.push({ name, parent });
+      const resolved = await resolve(specifier, parent, job, cjsResolve);
+      const targets = moduleEdges.get(parent) ?? new Set<string>();
+      for (const target of [resolved].flat()) targets.add(target);
+      moduleEdges.set(parent, targets);
+      return resolved;
+    },
+    stat: async (path) => {
+      const file = planned.get(path);
+      try {
+        return await stat(file?.from ?? path);
+      } catch (cause) {
+        if (!missing(cause)) throw cause;
+        return file ? plannedFileStats : null;
+      }
+    },
+  });
   const absolute = (path: string) => join(root, path);
   const traced = new Set<string>();
   const parentsOf = new Map<string, readonly string[]>();
@@ -108,57 +99,18 @@ export async function traceRuntimeDependencies(
     parentsOf.set(file, parents);
   }
   // Imports count only from files loaded as modules, not from assets read as text.
-  const modules = await moduleFiles(planned);
-  const packages = new Set(
-    imports.filter(({ parent }) => modules.has(parent)).map(({ name }) => name),
-  );
-  return { packages, files: traced, parents: parentsOf };
-}
-
-/**
- * Follows fixed relative module edges from the emitted JavaScript files. nft
- * also analyzes files read through new URL(), which Node never runs.
- */
-async function moduleFiles(
-  planned: ReadonlyMap<string, PlannedFile>,
-): Promise<Set<string>> {
-  const pending = [...planned.keys()].filter((path) => javaScript.test(path));
   const modules = new Set<string>();
+  const pending = [...entries];
   while (pending.length) {
     const path = pending.pop()!;
     if (modules.has(path)) continue;
     modules.add(path);
-    const file = planned.get(path);
-    const source =
-      file?.contents ??
-      (file?.binaryContents === undefined
-        ? await readFile(file?.from ?? path, "utf8").catch(() => undefined)
-        : Buffer.from(file.binaryContents).toString("utf8"));
-    if (source === undefined) continue;
-    let syntax;
-    try {
-      syntax = parseModule(source);
-    } catch {
-      continue;
-    }
-    visitSyntax(syntax, (node) => {
-      const reference = staticModuleReference(node);
-      if (!reference?.startsWith(".")) return;
-      let target: string;
-      try {
-        target = resolvePath(
-          dirname(path),
-          decodeURIComponent(reference.split(/[?#]/, 1)[0]!),
-        );
-      } catch (cause) {
-        // Node cannot load an undecodable file URL either.
-        if (cause instanceof URIError) return;
-        throw cause;
-      }
-      if (planned.has(target)) pending.push(target);
-    });
+    pending.push(...(moduleEdges.get(path) ?? []));
   }
-  return modules;
+  const packages = new Set(
+    imports.filter(({ parent }) => modules.has(parent)).map(({ name }) => name),
+  );
+  return { packages, files: traced, parents: parentsOf };
 }
 
 /** Names the package of a bare specifier, excluding builtins, URLs and private imports. */

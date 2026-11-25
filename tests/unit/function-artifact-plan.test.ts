@@ -8083,8 +8083,9 @@ ${f.index}`,
 
 	it("traces imports through a symlinked server directory", async () => {
 		const f = await fixture();
+		// Windows file paths end with a backslash.
 		const configured = fileURLToPath(f.server).replace(
-			/\/$/,
+			/[\\/]+$/,
 			"",
 		);
 		const real = `${configured}-real`;
@@ -8113,6 +8114,47 @@ ${f.index}`,
 					...settings,
 					dependencyStrategy: "install",
 				},
+				{ resolve: () => Promise.resolve({ version: "1.2.3" }) },
+			),
+		);
+		const lock = plan.mutations.find(
+			(m) =>
+				m.kind === "writeFile" &&
+				m.path.pathname.endsWith("package-lock.json"),
+		);
+		expect(
+			lock?.kind === "writeFile" && JSON.parse(lock.contents),
+		).toMatchObject({
+			packages: { "node_modules/example": { version: "1.2.3" } },
+		});
+	});
+
+	it("keeps a package import from a module nft resolves through concatenation", async () => {
+		const f = await fixture();
+		await writeFile(
+			new URL("runtime-helper", f.server),
+			'import "example";',
+		);
+		await writeFile(
+			new URL("index.js", f.server),
+			`export const load = () => import("./" + "runtime-helper");\n${f.index}`,
+		);
+		await mkdir(new URL("node_modules/example/", f.root), {
+			recursive: true,
+		});
+		await writeFile(
+			new URL("node_modules/example/package.json", f.root),
+			'{"name":"example","version":"1.2.3"}',
+		);
+		await writeFile(
+			new URL("node_modules/example/index.js", f.root),
+			'module.exports = "loaded";',
+		);
+		const plan = await Effect.runPromise(
+			FunctionArtifact.planPreparation(
+				f.build,
+				f.routePlan,
+				{ ...settings, dependencyStrategy: "install" },
 				{ resolve: () => Promise.resolve({ version: "1.2.3" }) },
 			),
 		);
