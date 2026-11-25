@@ -1,5 +1,11 @@
 import { readFile } from "node:fs/promises";
-import { extname, join, relative, sep } from "node:path";
+import {
+	basename,
+	extname,
+	join,
+	relative,
+	sep,
+} from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { glob } from "tinyglobby";
 import type { RoutePlan } from "../../mandatory/ArtifactGeneration/RouteRequirements";
@@ -41,7 +47,9 @@ export async function readFunctionOutput(
 			join(fileURLToPath(directory), path),
 		);
 		files.push(
-			/\.m?js$/.test(path) || extname(path) === ""
+			/\.m?js$/.test(path) ||
+				extname(path) === "" ||
+				basename(path) === "package.json"
 				? { path, from, contents: await readFile(from, "utf8") }
 				: { path, from },
 		);

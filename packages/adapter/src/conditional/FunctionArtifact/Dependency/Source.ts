@@ -1,4 +1,4 @@
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import {
 	basename,
@@ -11,7 +11,10 @@ import { fileURLToPath } from "node:url";
 
 import type { PackageJson } from "pkg-types";
 import semver from "semver";
-import { ApplicationOverrides } from "./.overrides.ts";
+import {
+	type ApplicationOverrides,
+	applicationDependencyRequirement,
+} from "./.overrides.ts";
 import {
 	normalizeBundleDependencies,
 	parseRegistryRequirement,
@@ -21,8 +24,13 @@ export interface InstalledSource {
 	version: string;
 	registryName?: string;
 	directory: string;
+	location: string;
 	local: boolean;
 	manifest: PackageJson;
+}
+
+export function stripJsonBom(source: string): string {
+	return source.replace(/^\uFEFF/, "");
 }
 
 async function readManifest(
@@ -30,7 +38,7 @@ async function readManifest(
 ): Promise<PackageJson | undefined> {
 	try {
 		return JSON.parse(
-			await readFile(path, "utf8"),
+			stripJsonBom(await readFile(path, "utf8")),
 		) as PackageJson;
 	} catch (cause) {
 		if (
@@ -55,7 +63,9 @@ export async function readInstalledBindingPath(
 		`${name}/package.json`,
 	) ?? []) {
 		try {
-			return await realpath(join(modules, name));
+			const candidate = await realpath(join(modules, name));
+			if ((await stat(candidate)).isDirectory())
+				return candidate;
 		} catch (cause) {
 			if (
 				!["ENOENT", "ENOTDIR"].includes(
@@ -68,6 +78,70 @@ export async function readInstalledBindingPath(
 	return undefined;
 }
 
+/** Prefer the nearest installation's metadata over the manifest's package manager hint. */
+export async function readRootRequirementPrecedence(
+	appManifestPath: string,
+): Promise<(installedLocation: string) => boolean> {
+	const inherited = new Map<string, boolean>();
+	for (const modules of createRequire(
+		appManifestPath,
+	).resolve.paths("package.json") ?? []) {
+		for (const [marker, developmentFirst] of [
+			[".modules.yaml", false],
+			[".package-lock.json", true],
+		] as const) {
+			try {
+				if (!(await stat(join(modules, marker))).isFile())
+					continue;
+				inherited.set(modules, developmentFirst);
+				break;
+			} catch (cause) {
+				if (
+					!["ENOENT", "ENOTDIR"].includes(
+						(cause as NodeJS.ErrnoException).code ?? "",
+					)
+				)
+					throw cause;
+			}
+		}
+	}
+	return (installedLocation) => {
+		for (const [modules, developmentFirst] of inherited) {
+			const path = relative(modules, installedLocation);
+			if (
+				path &&
+				path !== ".." &&
+				!path.startsWith("../") &&
+				!path.startsWith("..\\") &&
+				!isAbsolute(path)
+			)
+				return developmentFirst;
+		}
+		return true;
+	};
+}
+
+async function findInstalledManifest(
+	base: URL | string,
+	name: string,
+) {
+	for (const modules of createRequire(base).resolve.paths(
+		`${name}/package.json`,
+	) ?? []) {
+		const location = join(modules, name);
+		const manifest = await readManifest(
+			join(location, "package.json"),
+		);
+		if (manifest)
+			return {
+				location,
+				manifest,
+				directory: await realpath(location),
+			};
+	}
+	return undefined;
+}
+
 interface BindingProvenance {
 	local: boolean;
 	rootRequirements: Record<string, string>;
@@ -76,12 +150,10 @@ interface BindingProvenance {
 /** Reads installed ownership evidence only; version selection and placement stay in the resolver. */
 export async function readInstalledProvenance(
 	applicationRoot: URL,
+	developmentFirst: (installedLocation: string) => boolean,
+	overrides: ApplicationOverrides,
 ): Promise<ReadonlyMap<string, BindingProvenance>> {
 	const applicationDirectory = fileURLToPath(applicationRoot);
-	const application =
-		(await readManifest(
-			join(applicationDirectory, "package.json"),
-		)) ?? {};
 	const bindings = new Map<string, BindingProvenance>();
 	const visited = new Set<string>();
 	const manifests = new Map<
@@ -138,13 +210,23 @@ export async function readInstalledProvenance(
 			manifest.dependencies,
 			manifest.optionalDependencies,
 		);
-		for (const [name, { requested, peer }] of ranges) {
-			if (typeof requested !== "string") continue;
-			const selected = await readInstalledBindingPath(
+		for (const [name, edge] of ranges) {
+			if (typeof edge.requested !== "string") continue;
+			const installed = await findInstalledManifest(
 				join(directory, "package.json"),
 				name,
 			);
-			if (!selected) continue;
+			if (!installed) continue;
+			const selected = installed.directory;
+			const requested = root
+				? applicationDependencyRequirement(
+						manifest,
+						name,
+						developmentFirst(installed.location),
+					)
+				: edge.requested;
+			if (typeof requested !== "string") continue;
+			const { peer } = edge;
 			const selectedRelative = bundleRoot
 				? relative(bundleRoot, selected)
 				: undefined;
@@ -189,7 +271,7 @@ export async function readInstalledProvenance(
 	};
 	await visit(
 		applicationDirectory,
-		new ApplicationOverrides(application),
+		overrides,
 		false,
 		undefined,
 		true,
@@ -208,61 +290,54 @@ export async function inspectInstalledSource(
 	| (Omit<InstalledSource, "version"> & { version?: string })
 	| undefined
 > {
-	const owner = await readManifest(
-		base instanceof URL ? fileURLToPath(base) : base,
-	);
+	const ownerPath =
+		base instanceof URL ? fileURLToPath(base) : base;
+	const owner = await readManifest(ownerPath);
+	const isApplication =
+		applicationRoot !== undefined &&
+		ownerPath ===
+			fileURLToPath(new URL("package.json", applicationRoot));
 	const requirement =
-		runtimeRequirement ??
 		owner?.optionalDependencies?.[name] ??
 		owner?.dependencies?.[name] ??
 		owner?.devDependencies?.[name] ??
 		owner?.peerDependencies?.[name];
-	for (const modules of createRequire(base).resolve.paths(
-		`${name}/package.json`,
-	) ?? []) {
-		const manifest = await readManifest(
-			join(modules, name, "package.json"),
-		);
-		if (!manifest) continue;
-		const directory = await realpath(join(modules, name));
+	const installed = await findInstalledManifest(base, name);
+	if (!installed) return undefined;
+	const { location, manifest, directory } = installed;
 
-		const binding = provenance?.get(directory);
-		const bindingRequirement = binding?.rootRequirements[name];
-
-		const effectiveRequirement =
-			runtimeRequirement ??
-			(applicationRoot &&
-			(base instanceof URL ? fileURLToPath(base) : base) ===
-				fileURLToPath(new URL("package.json", applicationRoot))
-				? bindingRequirement
-				: undefined) ??
-			requirement;
-		const parent = dirname(directory);
-		const container = basename(parent).startsWith("@")
-			? dirname(parent)
-			: parent;
-		// Registry-managed virtual stores still end in node_modules/name (or @scope/name).
-		const local =
-			basename(container) !== "node_modules" ||
-			(typeof effectiveRequirement === "string" &&
-				parseRuntimeRequirement(name, effectiveRequirement)
-					.local) ||
-			binding?.local === true;
-		return {
-			version:
-				typeof manifest.version === "string" &&
-				semver.valid(manifest.version)
-					? manifest.version
-					: undefined,
-			...(manifest.name && manifest.name !== name
-				? { registryName: manifest.name }
-				: {}),
-			directory,
-			local,
-			manifest,
-		};
-	}
-	return undefined;
+	const binding = provenance?.get(directory);
+	const effectiveRequirement =
+		runtimeRequirement ??
+		(isApplication
+			? binding?.rootRequirements[name]
+			: undefined) ??
+		requirement;
+	const parent = dirname(directory);
+	const container = basename(parent).startsWith("@")
+		? dirname(parent)
+		: parent;
+	// Registry-managed virtual stores still end in node_modules/name (or @scope/name).
+	const local =
+		basename(container) !== "node_modules" ||
+		(typeof effectiveRequirement === "string" &&
+			parseRuntimeRequirement(name, effectiveRequirement)
+				.local) ||
+		binding?.local === true;
+	return {
+		version:
+			typeof manifest.version === "string" &&
+			semver.valid(manifest.version)
+				? manifest.version
+				: undefined,
+		...(manifest.name && manifest.name !== name
+			? { registryName: manifest.name }
+			: {}),
+		directory,
+		location,
+		local,
+		manifest,
+	};
 }
 
 /** Selects runtime contents only after enforcing exact versions and the local-source boundary. */
@@ -297,17 +372,18 @@ export async function readInstalledSource(
 export function parseRuntimeRequirement(
 	name: string,
 	value: string,
-): { name: string; requirement: string; local: boolean } {
-	if (/^(file|link):/.test(value))
-		return { name, requirement: "*", local: true };
+): { name: string } & (
+	| { requirement?: string; local: true }
+	| { requirement: string; local: false }
+) {
+	if (/^(file|link):/.test(value)) return { name, local: true };
 	if (value.startsWith("workspace:")) {
 		const reference = value.slice("workspace:".length);
 		if (["*", "^", "~"].includes(reference))
-			return { name, requirement: "*", local: true };
+			return { name, local: true };
 		if (semver.validRange(reference))
 			return { name, requirement: reference, local: true };
-		if (reference.startsWith("."))
-			return { name, requirement: "*", local: true };
+		if (reference.startsWith(".")) return { name, local: true };
 		const separator = reference.lastIndexOf("@");
 		if (
 			separator > 0 &&
@@ -326,7 +402,7 @@ export function parseRuntimeRequirement(
 		!value.startsWith("npm:") &&
 		(/[\\/:]/.test(value) || /\.(?:tgz|tar\.gz)$/i.test(value))
 	)
-		return { name, requirement: "*", local: true };
+		return { name, local: true };
 	return {
 		...parseRegistryRequirement(name, value),
 		local: false,
