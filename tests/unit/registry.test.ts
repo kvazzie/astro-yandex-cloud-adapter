@@ -26,6 +26,23 @@ function metadata(value: unknown) {
 	});
 }
 
+/** Runs npm command expectations under a fixed host platform. */
+async function onPlatform<T>(
+	value: NodeJS.Platform,
+	run: () => Promise<T>,
+): Promise<T> {
+	const platform = Object.getOwnPropertyDescriptor(
+		process,
+		"platform",
+	)!;
+	Object.defineProperty(process, "platform", { value });
+	try {
+		return await run();
+	} finally {
+		Object.defineProperty(process, "platform", platform);
+	}
+}
+
 describe("install registry metadata", () => {
 	it.each([
 		{
@@ -120,7 +137,9 @@ describe("install registry metadata", () => {
 		});
 		const root = new URL("file:///application/");
 		expect(
-			await npmRegistry.resolve("@scope/pkg", "1.0.0", root),
+			await onPlatform("linux", () =>
+				npmRegistry.resolve("@scope/pkg", "1.0.0", root),
+			),
 		).toMatchObject({
 			peerDependencies: { peer: "^1.0.0" },
 			peerDependenciesMeta: { peer: { optional: true } },
@@ -190,7 +209,9 @@ describe("install registry metadata", () => {
 			new Error("npm private fixture-token diagnostics"),
 		);
 		await expect(
-			npmRegistry.resolve("stalled-package", "1.0.0"),
+			onPlatform("linux", () =>
+				npmRegistry.resolve("stalled-package", "1.0.0"),
+			),
 		).rejects.toMatchObject({
 			message:
 				'The "install" dependency strategy cannot resolve the runtime package "stalled-package@1.0.0" from the configured npm registry. Check npm configuration and network access and try again.',

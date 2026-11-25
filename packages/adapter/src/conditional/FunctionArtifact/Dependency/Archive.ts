@@ -24,6 +24,7 @@ import {
 	isSyntaxNode,
 	parseModule,
 	staticLocalAssetReference,
+	readIdentifierBindings,
 	staticModuleReference,
 	visitSyntax,
 	type SyntaxNode,
@@ -49,15 +50,20 @@ function packedFiles(bytes: Buffer): Map<string, Buffer> {
 	const readString = (field: Buffer) =>
 		field.toString("utf8").replace(/\0.*$/s, "");
 	let nextPath: string | undefined;
+	// npm applies a PAX size record to the following entry, as it does a path.
+	let nextSize: number | undefined;
 	for (let offset = 0; offset + 512 <= tar.length;) {
 		const header = tar.subarray(offset, offset + 512);
 		if (header.every((byte) => byte === 0)) return files;
 		const sizeField = readString(
 			header.subarray(124, 136),
 		).trim();
-		const size = /^[0-7]+$/.test(sizeField)
-			? Number.parseInt(sizeField, 8)
-			: NaN;
+		const size =
+			nextSize ??
+			(/^[0-7]+$/.test(sizeField)
+				? Number.parseInt(sizeField, 8)
+				: NaN);
+		nextSize = undefined;
 		const start = offset + 512;
 		if (!Number.isSafeInteger(size) || start + size > tar.length)
 			throw new Error("Invalid npm tarball entry size.");
@@ -84,6 +90,10 @@ function packedFiles(bytes: Buffer): Map<string, Buffer> {
 					i + length - 1,
 				);
 				if (field.startsWith("path=")) nextPath = field.slice(5);
+				if (field.startsWith("size=")) {
+					const value = field.slice(5);
+					nextSize = /^\d+$/.test(value) ? Number(value) : NaN;
+				}
 				i += length;
 			}
 			continue;
@@ -459,7 +469,8 @@ async function manifestEntrypoints(
 						);
 			const path =
 				target instanceof URL && packageFilePath(target);
-			if (path)
+			// import.meta.resolve returns a URL without loading or reading the file.
+			if (path && requestMode !== "resolveImport")
 				retained.push({
 					target: path,
 					lookup: requestMode === "import" ? "import" : "exact",
@@ -807,6 +818,23 @@ async function verifyLocalRuntimeFiles(
 		const key = JSON.stringify([target, lookup]);
 		if (visited.has(key)) continue;
 		visited.add(key);
+		if (
+			(lookup === "import" ||
+				lookup === "exact" ||
+				lookup === "commonjs") &&
+			target !== directory &&
+			!archivePath(target) &&
+			!target.split(sep).includes("node_modules")
+		) {
+			for (const outside of lookup === "commonjs"
+				? fileCandidates(target)
+				: [target])
+				if ((await statInstalledPath(outside))?.isFile())
+					throw new Error(
+						`The local runtime package at ${directory} loads ${outside}, which is outside the package and absent from its npm archive. Move the file into the package or depend on its own package.`,
+					);
+			continue;
+		}
 		let candidate =
 			lookup === "directory"
 				? undefined
@@ -848,14 +876,25 @@ async function verifyLocalRuntimeFiles(
 		if (lookup === "asset") continue;
 		if (directoryManifest) requirePacked(directoryManifest);
 		const extension = extname(candidate);
-		if (!["", ".js", ".mjs", ".cjs"].includes(extension))
+		// The CommonJS loader runs a file with an unregistered extension as JavaScript.
+		const unregistered =
+			lookup === "commonjs" &&
+			![".js", ".mjs", ".cjs", ".json", ".node", ""].includes(
+				extension,
+			);
+		if (
+			!unregistered &&
+			!["", ".js", ".mjs", ".cjs"].includes(extension)
+		)
 			continue;
 		const format =
 			extension === ".mjs"
 				? "module"
 				: extension === ".cjs"
 					? "commonjs"
-					: await selectedModuleType(candidate);
+					: unregistered
+						? undefined
+						: await selectedModuleType(candidate);
 		const source = contents.toString("utf8");
 		let syntax: SyntaxNode;
 		try {
@@ -891,6 +930,8 @@ async function verifyLocalRuntimeFiles(
 		}[] = [];
 		let isRuntimeRequire:
 			ReturnType<typeof readRuntimeRequireBindings> | undefined;
+		let bindingOf:
+			ReturnType<typeof readIdentifierBindings> | undefined;
 		visitSyntax(syntax, (node) => {
 			const module = staticModuleReference(node);
 			if (module?.startsWith("."))
@@ -900,7 +941,8 @@ async function verifyLocalRuntimeFiles(
 					specifier: module,
 					mode: "import",
 				});
-			const asset = staticLocalAssetReference(node);
+			bindingOf ??= readIdentifierBindings(syntax);
+			const asset = staticLocalAssetReference(node, bindingOf);
 			if (asset !== undefined) addLocalReference(asset, "asset");
 			if (
 				node.type !== "CallExpression" ||

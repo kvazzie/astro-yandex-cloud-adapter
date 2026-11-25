@@ -85,6 +85,9 @@ export function wrapFunctionPolicy(
 	while (source.includes(wrapperName)) wrapperName += "_";
 	let urlName = "__yandexArtifactURL";
 	while (source.includes(urlName)) urlName += "_";
+	// One generated rest parameter cannot shadow the original handler binding.
+	let argumentsName = "__yandexArtifactArguments";
+	while (source.includes(argumentsName)) argumentsName += "_";
 	const edits: Array<{
 		start: number;
 		end: number;
@@ -152,8 +155,8 @@ export function wrapFunctionPolicy(
 		);
 	const serialized = JSON.stringify(policy);
 	const wrapper =
-		`\nimport { URL as ${urlName} } from "node:url";\nconst ${wrapperName} = (event, context, previewUrl) => ` +
-		`${handlerName}(event, context, previewUrl, {...${serialized}, artifactDirectory: new ${urlName}('./', import.meta.url)});\n`;
+		`\nimport { URL as ${urlName} } from "node:url";\nconst ${wrapperName} = (...${argumentsName}) => ` +
+		`${handlerName}(${argumentsName}[0], ${argumentsName}[1], ${argumentsName}[2], {...${serialized}, artifactDirectory: new ${urlName}('./', import.meta.url)});\n`;
 	return applyEdits(source, edits) + wrapper;
 }
 
