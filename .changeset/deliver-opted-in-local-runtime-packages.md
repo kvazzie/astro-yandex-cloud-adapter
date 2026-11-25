@@ -31,4 +31,17 @@ bare CommonJS directory requests. Preserve runtime fallbacks for
 invalid extensionless dynamic imports and accept BOMs in
 installed and archived manifests. Reject extensionless CommonJS
 modules selected by emitted module loads, classifying each import
-or require by Node's loader rules.
+or require by Node's loader rules, and apply package scopes to
+retained .js files. Reject registerHooks, escaping archive
+imports and unregistered CommonJS extensions that hide runtime
+packages; track loader namespaces through conditionals and rest
+copies with unresolved keys. Classify Git lock origins and pnpm
+catalog entries by their actual source, apply npm's matched
+override range, read PAX entry sizes, and require resolve-only
+requests to resolve rather than pack their files. Encode literal
+braces in Gateway paths, keep padded greedy parameters unique,
+slash extensionless prerendered endpoints under trailingSlash
+always, follow image wrappers through re-exports, require the
+image endpoint only for real image requests, guard server output
+removal against the client output, require a regular entrypoint
+file, and keep handler wrappers from shadowing the handler.

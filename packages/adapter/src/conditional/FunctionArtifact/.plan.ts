@@ -1,4 +1,10 @@
-import { dirname, join } from "node:path";
+import {
+	dirname,
+	isAbsolute,
+	join,
+	relative,
+	sep,
+} from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as Effect from "effect/Effect";
 import type { RoutePlan } from "../../mandatory/ArtifactGeneration/RouteRequirements";
@@ -41,7 +47,21 @@ export function planPreparation(
 			const output = await readFunctionOutput(build, routePlan);
 			const functions = output ? [output.artifact] : [];
 			const mutations: Mutation[] = [];
-			if (!functions.length)
+			if (!functions.length) {
+				const server = fileURLToPath(build.config.build.server);
+				const client = fileURLToPath(build.config.build.client);
+				const within = (child: string, parent: string) => {
+					const path = relative(parent, child);
+					return (
+						path !== ".." &&
+						!path.startsWith(`..${sep}`) &&
+						!isAbsolute(path)
+					);
+				};
+				if (within(server, client) || within(client, server))
+					throw new Errors.InvalidArtifact({
+						message: `The server output ${server} overlaps the client output ${client}, so it cannot be removed when the build has no Function Artifact. Use separate build.server and build.client directories.`,
+					});
 				return {
 					mutations: [
 						{
@@ -54,6 +74,7 @@ export function planPreparation(
 						functions,
 					},
 				};
+			}
 			const notFound = planNotFoundArtifacts(
 				build,
 				routePlan,

@@ -3,19 +3,28 @@ import { Targets } from "@astro-yandex-cloud/targets";
 
 import { generateApiGatewaySpecificationTemplate } from "../../packages/adapter/src/conditional/ApiGatewaySpecificationTemplate";
 import { defineDeploymentManifest } from "../../packages/adapter/src/mandatory/DeploymentManifest";
-import type { RoutePlan } from "../../packages/adapter/src/mandatory/ArtifactGeneration/RouteRequirements";
+import {
+	reconcileRoutes,
+	requiredOnDemandRoutes,
+	type RoutePlan,
+} from "../../packages/adapter/src/mandatory/ArtifactGeneration/RouteRequirements";
+import type { IntegrationResolvedRoute } from "astro";
 
 function templateFor(
 	staticUrl: string,
 	runtimePattern: string,
 	staticPriority: number,
 	runtimePriority: number,
+	{ recursive404 = false }: { recursive404?: boolean } = {},
 ) {
 	const manifest = defineDeploymentManifest({
 		schemaVersion: 1,
 		adapter: { version: "0.1.0-beta.0" },
 		target: Targets.ObjectStorageCloudFunctionsTarget,
-		modifiers: { apiGateway: true },
+		modifiers: {
+			apiGateway: true,
+			...(recursive404 ? { recursive404 } : {}),
+		},
 		base: "/",
 		artifacts: {
 			client: { id: "client:primary", path: "client" },
@@ -46,7 +55,16 @@ function templateFor(
 					patternRegex: "^.*$",
 				},
 			],
-			notFound: [],
+			notFound: recursive404
+				? [
+						{
+							scope: "/",
+							url: "/404.html",
+							objectKey: "404.html",
+							artifactId: "client:primary",
+						},
+					]
+				: [],
 		},
 	});
 	const routePlan: RoutePlan = {
@@ -120,4 +138,146 @@ describe("API Gateway template route precedence", () => {
 			]?.["x-yc-apigateway-integration"],
 		).toMatchObject({ type: "cloud_functions" });
 	});
+
+	it("encodes literal braces in a prerendered Gateway path", () => {
+		const template = templateFor(
+			"/docs/{example}",
+			"/api/[id]",
+			1,
+			0,
+		);
+		for (const path of [
+			"/docs/%7Bexample%7D",
+			"/docs/%7Bexample%7D/",
+		])
+			expect(
+				template.paths[path]?.get?.[
+					"x-yc-apigateway-integration"
+				],
+			).toMatchObject({
+				type: "object_storage",
+				object: "page.html",
+			});
+		expect(Object.keys(template.paths)).not.toContain(
+			"/docs/{example}",
+		);
+	});
+
+	it("keeps a padded greedy parameter distinct from a fixed capture", () => {
+		const template = templateFor(
+			"/",
+			"/[id______]/[...id]",
+			1,
+			0,
+			{
+				recursive404: true,
+			},
+		);
+		for (const [path, item] of Object.entries(template.paths)) {
+			const names = Object.values(item).flatMap(
+				(operation) =>
+					operation.parameters?.map(({ name }) => name) ?? [],
+			);
+			expect(new Set(names).size, path).toBe(names.length);
+			for (const name of names)
+				expect(path, name).toContain(`{${name}`);
+		}
+		expect(Object.keys(template.paths)).toContain(
+			"/{id______}/{id_______+}",
+		);
+	});
+});
+
+describe("completed-build route requirements", () => {
+	const imageRoute = {
+		type: "endpoint",
+		origin: "internal",
+		pattern: "/_image",
+		isPrerendered: false,
+	} as IntegrationResolvedRoute;
+	it.each([
+		{
+			html: '<img src="/_image?href=%2Fa.png&w=1">',
+			required: true,
+		},
+		{
+			html: "<img srcset='/a.png 1x, /_image?href=b 2x'>",
+			required: true,
+		},
+		{
+			html: '<div style="background:url(/_image?href=c)"></div>',
+			required: true,
+		},
+		{
+			html: "<p>Request /_image?href=x to resize.</p>",
+			required: false,
+		},
+		{
+			html: "<pre><code>&lt;img src=&quot;/_image?href=x&quot;&gt;</code></pre>",
+			required: false,
+		},
+	])(
+		"requires the image endpoint only for an actual image request: $html",
+		({ html, required }) => {
+			expect(
+				requiredOnDemandRoutes({
+					resolvedRoutes: [imageRoute],
+					clientHtml: html,
+					hasServerIslands: false,
+					hasRuntimeImages: false,
+					imageEndpoint: "/_image",
+				}),
+			).toEqual(required ? [imageRoute] : []);
+		},
+	);
+
+	it.each([
+		{
+			file: "api/status",
+			trailingSlash: "always",
+			url: "/api/status/",
+		},
+		{
+			file: "api/status",
+			trailingSlash: "never",
+			url: "/api/status",
+		},
+		{
+			file: "feed.xml",
+			trailingSlash: "always",
+			url: "/feed.xml",
+		},
+	] as const)(
+		"projects a prerendered endpoint $file under trailingSlash $trailingSlash",
+		({ file, trailingSlash, url }) => {
+			const clientDirectory = new URL("file:///build/client/");
+			const route = {
+				type: "endpoint",
+				origin: "project",
+				pattern: `/${file}`,
+				isPrerendered: true,
+				patternRegex: /^.*$/,
+			} as unknown as IntegrationResolvedRoute;
+			const plan = reconcileRoutes({
+				base: "/",
+				clientDirectory,
+				clientFiles: [file],
+				clientHtml: "",
+				pages: [],
+				resolvedRoutes: [route],
+				emittedAssets: new Map([
+					[route.pattern, [new URL(file, clientDirectory)]],
+				]),
+				hasFunction: false,
+				trailingSlash,
+				hasServerIslands: false,
+				hasRuntimeImages: false,
+				imageEndpoint: "/_image",
+			});
+			expect(plan.routes[0]).toMatchObject({
+				kind: "prerendered",
+				paths: [{ url, objectKey: file }],
+			});
+		},
+	);
 });

@@ -4,6 +4,7 @@ import {
 	rm,
 	symlink,
 	writeFile,
+	realpath,
 } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -356,6 +357,35 @@ describe("runtime dependency regressions", () => {
 									"node_modules/alpha/node_modules/a-shared",
 							),
 						).toBeDefined();
+					// Node resolves each consumer's peer from its own location upward.
+					const effectivePeer = (consumer: string) => {
+						for (let scope = consumer; ;) {
+							const found = graph.find(
+								({ location }) =>
+									location ===
+									`${scope ? `${scope}/` : ""}node_modules/${peerName}`,
+							);
+							if (found || !scope) return found;
+							scope = scope.replace(
+								/\/?node_modules\/[^/]+$/,
+								"",
+							);
+						}
+					};
+					for (const parent of ["alpha", "beta"]) {
+						const context =
+							parent === "alpha" && !matching ? "b" : "a";
+						expect(
+							effectivePeer(
+								`${nested ? "node_modules/container/" : ""}node_modules/${parent}`,
+							)?.installedDirectory,
+							parent,
+						).toBe(
+							await realpath(
+								join(root, "installed", `peer-${context}`),
+							),
+						);
+					}
 					const lock = formatNpmLockfile(graph);
 					if (previous) expect(lock).toBe(previous);
 					previous = lock;
@@ -530,6 +560,24 @@ describe("runtime dependency regressions", () => {
 					barrier
 						? `${first}/node_modules/shared`
 						: "node_modules/shared",
+				);
+				// p2 resolves its own shared@2.0.0 from its location upward, as Node does.
+				const resolvedFrom = (
+					consumer: string,
+					name: string,
+				) => {
+					for (let scope = consumer; ;) {
+						const found = graph.find(
+							({ location }) =>
+								location ===
+								`${scope ? `${scope}/` : ""}node_modules/${name}`,
+						);
+						if (found || !scope) return found;
+						scope = scope.replace(/\/?node_modules\/[^/]+$/, "");
+					}
+				};
+				expect(resolvedFrom(second, "shared")?.version).toBe(
+					"2.0.0",
 				);
 				if (!barrier)
 					expect(

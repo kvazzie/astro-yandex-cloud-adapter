@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -91,8 +91,13 @@ export async function validateFunctionEntrypoint(
 ): Promise<FunctionEntrypointValidation> {
 	const entrypoint = new URL("index.js", functionDirectory);
 	try {
-		await access(entrypoint);
-		return { ok: true };
+		if ((await stat(entrypoint)).isFile()) return { ok: true };
+		return {
+			ok: false,
+			reason:
+				"The Function Artifact entrypoint index.js is not a regular file.",
+			cause: undefined,
+		};
 	} catch (error) {
 		return {
 			ok: false,
