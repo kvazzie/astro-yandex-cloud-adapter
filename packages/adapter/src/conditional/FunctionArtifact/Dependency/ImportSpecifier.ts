@@ -415,16 +415,6 @@ function bindingNames(pattern: unknown): string[] {
 	}
 }
 
-declare const directoryPathBrand: unique symbol;
-
-export type DirectoryPath = string & {
-	readonly [directoryPathBrand]: "DirectoryPath";
-};
-
-export function asDirectoryPath(path: string): DirectoryPath {
-	return path as DirectoryPath;
-}
-
 function findImportedPackageSpecifiers(
 	program: SyntaxNode,
 	relativePath: string,
