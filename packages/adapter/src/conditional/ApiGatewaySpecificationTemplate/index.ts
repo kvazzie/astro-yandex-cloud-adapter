@@ -195,6 +195,11 @@ function emptyRestPattern(path: string): string | undefined {
 	);
 }
 
+/** Keeps literal braces in a concrete URL from reading as Gateway path parameters. */
+function literalGatewayPath(url: string): string {
+	return url.replaceAll("{", "%7B").replaceAll("}", "%7D");
+}
+
 /** Declares one stable pair of resource variables for each actual Function Artifact. */
 function functionVariables(
 	template: ApiGatewaySpecificationTemplate,
@@ -304,8 +309,9 @@ export function generateApiGatewaySpecificationTemplate(
 				service_account_id: "${var.storage_service_account_id}",
 			},
 		};
+		const path = literalGatewayPath(route.url);
 		routes.push({
-			path: route.url,
+			path,
 			source: route.url,
 			artifactId: `${route.artifactId}:${route.objectKey}`,
 			priority: plannedPriority("", route.url),
@@ -319,9 +325,9 @@ export function generateApiGatewaySpecificationTemplate(
 				operation.responses["200"]?.["x-yc-status-mapping"] ===
 					404)
 		) {
-			const alias = route.url.endsWith("/")
-				? route.url.slice(0, -1)
-				: `${route.url}/`;
+			const alias = path.endsWith("/")
+				? path.slice(0, -1)
+				: `${path}/`;
 			routes.push({
 				path: alias,
 				source: route.url,
@@ -337,10 +343,18 @@ export function generateApiGatewaySpecificationTemplate(
 		if (recursive404) {
 			// Yandex compares greedy routes by textual length. Keep real endpoint/page
 			// routes above every 404 fallback; the bridge dispatches by the original URL.
+			const captures = new Set(
+				segments(pattern)
+					.filter(({ kind }) => kind === "parameter")
+					.map(({ value }) => value),
+			);
 			pattern = pattern.replace(
 				/\{([^{}]+)\+\}/g,
-				(_match, name: string) =>
-					`{${name}${"_".repeat(fallbackLength + 1)}+}`,
+				(_match, name: string) => {
+					let padded = `${name}${"_".repeat(fallbackLength + 1)}`;
+					while (captures.has(padded)) padded += "_";
+					return `{${padded}+}`;
+				},
 			);
 		}
 		const empty = emptyRestPattern(pattern);
