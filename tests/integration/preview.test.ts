@@ -287,7 +287,7 @@ export const GET = () => new Response(JSON.stringify({
 				`
 import yandexCloud from '@astro-yandex-cloud/adapter';
 import {passthroughImageService} from 'astro/config';
-export default {output:'server', adapter:yandexCloud({target:'object-storage-functions', apiGateway:true, dependencyStrategy:'install'}), image:{service:passthroughImageService()}};
+export default {output:'server', adapter:yandexCloud({target:'object-storage-functions', apiGateway:true, dependencyStrategy:'install', includeLocal:true}), image:{service:passthroughImageService()}};
 `,
 			);
 			await astro.build({
