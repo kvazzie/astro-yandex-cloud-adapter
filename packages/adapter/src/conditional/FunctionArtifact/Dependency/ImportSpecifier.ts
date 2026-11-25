@@ -1704,7 +1704,6 @@ function runtimeLoaderBindings(
 				),
 			),
 		];
-		if (defined.includes("process")) return "process";
 		if (
 			defined.length === 1 &&
 			(typeof defined[0] !== "object" || !opaque)
@@ -1714,12 +1713,22 @@ function runtimeLoaderBindings(
 			(role): role is EmittedNamespace =>
 				typeof role === "object",
 		);
-		if (
-			namespaces.length &&
-			namespaces.length === defined.length
-		)
+		const loaders = defined.filter(
+			(role) => typeof role !== "object",
+		);
+		if (!loaders.length)
 			return mergeNamespaces(namespaces, opaque);
-		return defined.find((role) => typeof role !== "object");
+		// One role cannot represent two loaders, or a loader beside a loader-bearing namespace.
+		if (
+			loaders.length > 1 ||
+			namespaces.some((namespace) =>
+				namespaceExposesLoader(namespace),
+			)
+		)
+			throw new Error(
+				"The Function Artifact contains unresolved dynamic runtime dependency resolution (a runtime loader selected from branches with different loader roles).",
+			);
+		return loaders[0];
 	};
 	const mergeNamespaces = (
 		namespaces: readonly EmittedNamespace[],
