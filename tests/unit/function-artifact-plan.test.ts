@@ -11,6 +11,7 @@ import {
 	readFile,
 	readlink,
 	readdir,
+	rename,
 	rm,
 	symlink,
 	writeFile,
@@ -6858,6 +6859,38 @@ ${f.index}`,
 			files: { "index.cjs": 'module.exports = "bom";' },
 			required: "bom",
 		},
+		{
+			name: "checks the node-addons export Node selects by default",
+			manifest: {
+				exports: {
+					"node-addons": "./native.cjs",
+					default: "./fallback.cjs",
+				},
+			},
+			files: {
+				"native.cjs": 'module.exports = "native";',
+				"fallback.cjs": 'module.exports = "fallback";',
+			},
+			omitted: "native.cjs",
+			required: "native",
+		},
+		{
+			name: "verifies a nested child package against its own archive",
+			manifest: {
+				dependencies: { child: "file:./packages/child" },
+			},
+			files: {
+				"index.cjs": 'module.exports = require("child");',
+			},
+			installedFiles: {
+				"packages/linked/packages/child/package.json":
+					'{"name":"child","version":"1.0.0"}',
+				"packages/linked/packages/child/index.js":
+					'module.exports = "child";',
+			},
+			links: { child: "packages/linked/packages/child/" },
+			required: "child",
+		},
 	])(
 		"validates Node archive resolution ($name)",
 		async ({
@@ -6870,6 +6903,7 @@ ${f.index}`,
 			installedFiles,
 			rejection,
 			manifestBom,
+			links,
 		}) => {
 			const f = await fixture();
 			const linked = new URL("packages/linked/", f.root);
@@ -6908,6 +6942,14 @@ ${f.index}`,
 				new URL("node_modules/linked", f.root),
 				"dir",
 			);
+			for (const [name, target] of Object.entries(
+				(links ?? {}) as Record<string, string>,
+			))
+				await symlink(
+					new URL(target, f.root),
+					new URL(`node_modules/${name}`, f.root),
+					"dir",
+				);
 			const specifier = explicitSpecifier ?? "linked";
 			const assertNodeLoads = async (directory: string) => {
 				const loaded: unknown = await createRequire(
@@ -8038,6 +8080,82 @@ ${f.index}`,
 			code: "ENOENT",
 		});
 	});
+
+	it("traces imports through a symlinked server directory", async () => {
+		const f = await fixture();
+		const configured = fileURLToPath(f.server).replace(
+			/\/$/,
+			"",
+		);
+		const real = `${configured}-real`;
+		await rename(configured, real);
+		await symlink(real, configured, "dir");
+		await mkdir(new URL("node_modules/example/", f.root), {
+			recursive: true,
+		});
+		await writeFile(
+			new URL("node_modules/example/package.json", f.root),
+			'{"name":"example","version":"1.2.3"}',
+		);
+		await writeFile(
+			new URL("node_modules/example/index.js", f.root),
+			'module.exports = "loaded";',
+		);
+		await writeFile(
+			new URL("index.js", f.server),
+			`import "example";\n${f.index}`,
+		);
+		const plan = await Effect.runPromise(
+			FunctionArtifact.planPreparation(
+				f.build,
+				f.routePlan,
+				{
+					...settings,
+					dependencyStrategy: "install",
+				},
+				{ resolve: () => Promise.resolve({ version: "1.2.3" }) },
+			),
+		);
+		const lock = plan.mutations.find(
+			(m) =>
+				m.kind === "writeFile" &&
+				m.path.pathname.endsWith("package-lock.json"),
+		);
+		expect(
+			lock?.kind === "writeFile" && JSON.parse(lock.contents),
+		).toMatchObject({
+			packages: { "node_modules/example": { version: "1.2.3" } },
+		});
+	});
+
+	it.each(["bundle", "install"] as const)(
+		"ignores imports inside a template that is only read as text (%s)",
+		async (dependencyStrategy) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("template", f.server),
+				'import "example";',
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`import { readFileSync } from "node:fs";export const template = readFileSync(new URL("./template", import.meta.url), "utf8");\n${f.index}`,
+			);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(f.build, f.routePlan, {
+					...settings,
+					dependencyStrategy,
+				}),
+			);
+			const lock = plan.mutations.find(
+				(m) =>
+					m.kind === "writeFile" &&
+					m.path.pathname.endsWith("package-lock.json"),
+			);
+			expect(
+				lock?.kind === "writeFile" ? lock.contents : "",
+			).not.toContain("node_modules/example");
+		},
+	);
 
 	it.each([
 		{

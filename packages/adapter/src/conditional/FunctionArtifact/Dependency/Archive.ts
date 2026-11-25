@@ -242,6 +242,11 @@ function verifyTracedFilesArePacked(
 			continue;
 		}
 		if (path.split(sep).includes("node_modules")) continue;
+		// A nested graph package is packed and verified with its own archive.
+		const owner = [directory, ...packageDirectories]
+			.filter((root) => root === directory || within(root, file))
+			.sort((a, b) => b.length - a.length)[0];
+		if (owner !== directory) continue;
 		const archivedPath = path.split(sep).join("/");
 		if (!archived.has(archivedPath))
 			throw new Error(

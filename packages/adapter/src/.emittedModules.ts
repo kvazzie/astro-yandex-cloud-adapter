@@ -262,7 +262,7 @@ export function getStaticString(
 }
 
 /** Reads the fixed specifier of a syntax-level module edge. */
-function staticModuleReference(
+export function staticModuleReference(
 	node: SyntaxNode,
 ): string | undefined {
 	if (

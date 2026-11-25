@@ -163,12 +163,17 @@ Static image processing happens during the build. Dependency installation follow
 
 #### How runtime dependencies are discovered
 
+> [!NOTE]
+> This describes the native Function Artifact preparation, which the adapter
+> entry activates in [#113](https://github.com/kvazzie/astro-yandex-cloud-adapter/pull/113).
+> Until then, `includeDependencies` is not applied.
+
 The adapter traces the emitted server with
 [`@vercel/nft`](https://github.com/vercel/nft), the file tracer used by Astro's
 Vercel and Netlify adapters. It finds fixed `import`, `import()`, `require()`,
 `createRequire(import.meta.url)` loaders, and files read through
 `new URL(…, import.meta.url)`. This is a deliberate trade-off, recorded in
-[ADR 0011](../../docs/adr/0011-discover-runtime-dependencies-with-vercel-nft.md):
+[ADR 0011](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/docs/adr/0011-discover-runtime-dependencies-with-vercel-nft.md):
 loads that static tracing cannot follow are not discovered and are not rejected at
 build time. The deployed function then fails with `Cannot find module`. Known
 cases:
@@ -179,6 +184,8 @@ cases:
   `import(process.env.PLUGIN)`;
 - files reached only through `require.resolve` or `import.meta.resolve`;
 - a loader chosen at runtime, such as `flag ? moduleA : moduleB`.
+- a local package export target with percent-encoded characters, such as
+  `./my%20entry.mjs`, whose actual file tracing does not check.
 
 With `dependencyStrategy: "install"`, list such packages in
 `includeDependencies` so they are pinned in the lockfile:
@@ -192,6 +199,10 @@ adapter: yandexCloud({
 ```
 
 With `bundle`, import the package with a fixed specifier so Vite bundles it.
+
+`includeDependencies` pins packages, not files. When a read fails with `ENOENT`
+because tracing missed a file, include that file in the deployed output (or in a
+local package's npm `files`) and verify the read from a clean artifact.
 
 ## Build, inspect, and preview
 

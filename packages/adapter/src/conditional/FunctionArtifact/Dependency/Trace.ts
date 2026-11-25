@@ -1,10 +1,23 @@
 import type { Stats } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { isBuiltin } from "node:module";
-import { isAbsolute, join, parse, relative, sep } from "node:path";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  parse,
+  relative,
+  resolve as resolvePath,
+  sep,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import { nodeFileTrace, resolve } from "@vercel/nft";
 
+import {
+  parseModule,
+  staticModuleReference,
+  visitSyntax,
+} from "../../../.emittedModules.ts";
 import type { PlannedFile } from "../.types.ts";
 
 /** Runtime files and packages that the emitted server can load. */
@@ -28,7 +41,13 @@ export async function traceRuntimeDependencies(
   files: readonly PlannedFile[],
   serverDirectory: URL,
 ): Promise<RuntimeTrace> {
-  const server = fileURLToPath(serverDirectory);
+  // nft reports canonical paths, so compare against the canonical server directory.
+  const server = await realpath(fileURLToPath(serverDirectory)).catch(
+    (cause: unknown) => {
+      if (missing(cause)) return fileURLToPath(serverDirectory);
+      throw cause;
+    },
+  );
   const root = parse(server).root;
   const planned = new Map(files.map((file) => [join(server, file.path), file]));
   const inServer = (path: string) => {
@@ -42,11 +61,13 @@ export async function traceRuntimeDependencies(
   };
   // Emitted imports name the packages, as aliases and symlinks hide them in paths.
   // An import nft cannot resolve still names a package the artifact needs.
-  const packages = new Set<string>();
+  const imports: { name: string; parent: string }[] = [];
   const { fileList, reasons } = await nodeFileTrace(
     [...planned.keys()].filter((path) => javaScript.test(path)),
     {
       base: root,
+      // Node 22 also selects node-addons exports by default.
+      conditions: ["node", "node-addons"],
       // Planned files may differ from the files on disk or not exist yet.
       readFile: async (path) => {
         const file = planned.get(path);
@@ -62,7 +83,7 @@ export async function traceRuntimeDependencies(
       },
       resolve: async (specifier, parent, job, cjsResolve) => {
         const name = barePackageName(specifier);
-        if (name && inServer(parent)) packages.add(name);
+        if (name && inServer(parent)) imports.push({ name, parent });
         return resolve(specifier, parent, job, cjsResolve);
       },
       stat: async (path) => {
@@ -86,7 +107,58 @@ export async function traceRuntimeDependencies(
     const parents = [...(reasons.get(path)?.parents ?? [])].map(absolute);
     parentsOf.set(file, parents);
   }
+  // Imports count only from files loaded as modules, not from assets read as text.
+  const modules = await moduleFiles(planned);
+  const packages = new Set(
+    imports.filter(({ parent }) => modules.has(parent)).map(({ name }) => name),
+  );
   return { packages, files: traced, parents: parentsOf };
+}
+
+/**
+ * Follows fixed relative module edges from the emitted JavaScript files. nft
+ * also analyzes files read through new URL(), which Node never runs.
+ */
+async function moduleFiles(
+  planned: ReadonlyMap<string, PlannedFile>,
+): Promise<Set<string>> {
+  const pending = [...planned.keys()].filter((path) => javaScript.test(path));
+  const modules = new Set<string>();
+  while (pending.length) {
+    const path = pending.pop()!;
+    if (modules.has(path)) continue;
+    modules.add(path);
+    const file = planned.get(path);
+    const source =
+      file?.contents ??
+      (file?.binaryContents === undefined
+        ? await readFile(file?.from ?? path, "utf8").catch(() => undefined)
+        : Buffer.from(file.binaryContents).toString("utf8"));
+    if (source === undefined) continue;
+    let syntax;
+    try {
+      syntax = parseModule(source);
+    } catch {
+      continue;
+    }
+    visitSyntax(syntax, (node) => {
+      const reference = staticModuleReference(node);
+      if (!reference?.startsWith(".")) return;
+      let target: string;
+      try {
+        target = resolvePath(
+          dirname(path),
+          decodeURIComponent(reference.split(/[?#]/, 1)[0]!),
+        );
+      } catch (cause) {
+        // Node cannot load an undecodable file URL either.
+        if (cause instanceof URIError) return;
+        throw cause;
+      }
+      if (planned.has(target)) pending.push(target);
+    });
+  }
+  return modules;
 }
 
 /** Names the package of a bare specifier, excluding builtins, URLs and private imports. */
