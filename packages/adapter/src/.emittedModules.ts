@@ -276,13 +276,16 @@ export function staticModuleReference(
 
 export function staticLocalAssetReference(
 	node: SyntaxNode,
+	bindingOf?: (identifier: SyntaxNode) => unknown,
 ): string | undefined {
 	if (
 		node.type !== "NewExpression" ||
 		!isSyntaxNode(node.callee) ||
 		node.callee.type !== "Identifier" ||
 		node.callee.name !== "URL" ||
-		!Array.isArray(node.arguments)
+		!Array.isArray(node.arguments) ||
+		// A lexical URL binding is not the global constructor.
+		bindingOf?.(node.callee) !== undefined
 	)
 		return;
 	const [source, base] = node.arguments as unknown[];

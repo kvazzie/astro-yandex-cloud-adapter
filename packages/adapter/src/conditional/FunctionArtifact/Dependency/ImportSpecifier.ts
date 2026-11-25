@@ -104,7 +104,7 @@ export function findRuntimePackageImports(
 		}
 		return emittedIndex(target);
 	};
-	const extensionlessPackageType = (path: string) => {
+	const packageScopeType = (path: string) => {
 		let directory = dirname(path);
 		while (directory !== ".") {
 			// Node's package scope lookup stops at a node_modules directory.
@@ -150,14 +150,18 @@ export function findRuntimePackageImports(
 				`Missing computed module contents for ${file.path}.`,
 			);
 		const extensionless = !isJavaScript(file.path);
-		// Each loader classifies an extensionless file by its own rules.
+		const scoped = file.path.endsWith(".js");
+		// Each loader classifies .js and extensionless files by its own rules.
 		const load = `${loader} ${sourceURL.href}`;
-		if (extensionless && !classifiedLoads.has(load)) {
+		if (
+			(extensionless || scoped) &&
+			!classifiedLoads.has(load)
+		) {
 			let packageType: "commonjs" | "module" | undefined;
 			// The CommonJS loader applies a package type only to .js files.
-			if (loader === "import")
+			if (scoped || loader === "import")
 				try {
-					packageType = extensionlessPackageType(file.path);
+					packageType = packageScopeType(file.path);
 				} catch (error) {
 					// Node reports an invalid package scope to this dynamic import's caller.
 					if (dynamic && error instanceof SyntaxError)
@@ -215,12 +219,22 @@ export function findRuntimePackageImports(
 			if (target?.protocol === "data:") {
 				if (!modules.has(target.href)) {
 					const inline = inlineJavaScript(new URL(target));
-					if (inline !== undefined)
+					if (inline !== undefined) {
+						let program: SyntaxNode;
+						try {
+							program = parseModule(inline);
+						} catch (error) {
+							// Node reports this dynamic import's failure to the caller at runtime.
+							if (dynamic && error instanceof SyntaxError)
+								return undefined;
+							throw error;
+						}
 						addModule(
 							target,
-							parseModule(inline),
+							program,
 							`inline module in ${path}`,
 						);
+					}
 				}
 				return modules.get(target.href)?.namespace;
 			}
@@ -751,7 +765,7 @@ function findImportedPackageSpecifiers(
 									? name === "getBuiltinModule" ||
 											name === "default"
 									: loaderPropertyRole("module", name) !==
-											undefined || name === "register";
+											undefined;
 							})))
 				)
 					rejectDynamicImport(
@@ -1235,7 +1249,9 @@ function loaderPropertyRole(
 	if (typeof role === "object" && typeof property === "string")
 		return role.resolve(property, seen)?.role;
 	if (role === "module") {
-		if (property === "register") return "register";
+		// registerHooks (Node 22.15+) can redirect any later fixed import.
+		if (property === "register" || property === "registerHooks")
+			return "register";
 		if (property === "createRequire") return "factory";
 		if (property === "default" || property === "Module")
 			return "module";
@@ -1281,8 +1297,11 @@ function isLoaderPattern(
 				(property.key.type === "Identifier" ||
 					getStaticString(property.key) !== undefined) &&
 				(role !== "module" ||
-					(!isIdentifier(property.key, "register") &&
-						getStaticString(property.key) !== "register")) &&
+					!["register", "registerHooks"].includes(
+						(property.key.type === "Identifier"
+							? property.key.name
+							: getStaticString(property.key)) as string,
+					)) &&
 				isSyntaxNode(property.value) &&
 				property.value.type === "Identifier" &&
 				(!bindingRole ||
@@ -1344,6 +1363,8 @@ function runtimeLoaderBindings(
 		property?: string;
 		fallback?: unknown;
 		restExcludes?: ReadonlySet<string>;
+		// A computed key that cannot be resolved may exclude any property.
+		restUnknownExclusion?: boolean;
 		restNamespaces?: WeakMap<EmittedNamespace, EmittedNamespace>;
 		previous?: Binding;
 		declaration?: SyntaxNode;
@@ -1383,12 +1404,16 @@ function runtimeLoaderBindings(
 			Array.isArray(value.properties)
 		) {
 			const keys = new Set<string>();
+			let unknownExclusion = false;
 			for (const property of value.properties as unknown[]) {
 				if (!isSyntaxNode(property)) continue;
 				if (property.type === "RestElement") {
 					declarePattern(property.argument, scope, {
 						value: binding.value,
 						restExcludes: keys,
+						...(unknownExclusion
+							? { restUnknownExclusion: true }
+							: {}),
 					});
 					continue;
 				}
@@ -1396,6 +1421,7 @@ function runtimeLoaderBindings(
 					? getStaticString(property.key)
 					: exportName(property.key);
 				if (key !== undefined) keys.add(key);
+				else if (property.computed) unknownExclusion = true;
 				declarePattern(
 					property.value,
 					scope,
@@ -1747,7 +1773,11 @@ function runtimeLoaderBindings(
 								resolve: (name, path) => {
 									if (excluded.has(name)) return undefined;
 									const selected = role.resolve(name, path);
-									if (selected && restMayChange(record))
+									if (
+										selected &&
+										(record.restUnknownExclusion ||
+											restMayChange(record))
+									)
 										return {
 											...selected,
 											isDefined: undefined,
@@ -1839,21 +1869,49 @@ function runtimeLoaderBindings(
 			}
 		}
 
-		if (
-			value.type === "ConditionalExpression" &&
-			[value.consequent, value.alternate].some(
-				(branch) => roleOf(branch, new Set(seen)) === "process",
-			)
-		)
-			return "process";
-
-		if (
-			value.type === "LogicalExpression" &&
-			(roleOf(value.right, new Set(seen)) === "process" ||
-				(value.operator !== "&&" &&
-					roleOf(value.left, seen) === "process"))
-		)
-			return "process";
+		// A selected branch keeps a process or namespace role it can transfer.
+		const branchRole = (
+			branches: unknown[],
+		): LoaderRole | undefined => {
+			const roles = branches.map((branch) =>
+				roleOf(branch, new Set(seen)),
+			);
+			if (roles.includes("process")) return "process";
+			const namespaces = [
+				...new Set(
+					roles.filter(
+						(role): role is EmittedNamespace =>
+							typeof role === "object",
+					),
+				),
+			];
+			if (namespaces.length <= 1) return namespaces[0];
+			return {
+				exportNames: (names) =>
+					new Set(
+						namespaces.flatMap((namespace) => [
+							...namespace.exportNames(new Set(names)),
+						]),
+					),
+				resolve: (name, path) => {
+					const selected = namespaces.map((namespace) =>
+						namespace.resolve(name, new Set(path)),
+					);
+					return (
+						selected.find((binding) => binding?.role) ??
+						selected.find(Boolean)
+					);
+				},
+			};
+		};
+		if (value.type === "ConditionalExpression")
+			return branchRole([value.consequent, value.alternate]);
+		if (value.type === "LogicalExpression")
+			return branchRole(
+				value.operator === "&&"
+					? [value.right]
+					: [value.left, value.right],
+			);
 		return undefined;
 	};
 	const isDefinitelyDefined = (

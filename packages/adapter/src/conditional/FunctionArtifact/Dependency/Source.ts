@@ -33,13 +33,125 @@ export function stripJsonBom(source: string): string {
 	return source.replace(/^\uFEFF/, "");
 }
 
+const catalogFields = [
+	"dependencies",
+	"devDependencies",
+	"optionalDependencies",
+	"peerDependencies",
+] as const;
+
+/** Reads the catalog maps of the nearest pnpm-workspace.yaml above a directory. */
+async function readPnpmCatalogs(
+	start: string,
+): Promise<Map<string, Map<string, string>> | undefined> {
+	for (let directory = start; ; directory = dirname(directory)) {
+		let source: string | undefined;
+		try {
+			source = await readFile(
+				join(directory, "pnpm-workspace.yaml"),
+				"utf8",
+			);
+		} catch (cause) {
+			if (
+				!["ENOENT", "ENOTDIR"].includes(
+					(cause as NodeJS.ErrnoException).code ?? "",
+				)
+			)
+				throw cause;
+		}
+		if (source !== undefined) {
+			const catalogs = new Map<string, Map<string, string>>();
+			const unquote = (value: string) =>
+				value.replace(/^(['"])(.*)\1$/, "$2");
+			let section: "catalog" | "catalogs" | undefined;
+			let current: string | undefined;
+			for (const raw of source.split(/\r?\n/)) {
+				const line = raw.replace(/\s+#.*$/, "");
+				const text = line.trim();
+				if (!text || text.startsWith("#")) continue;
+				if (!/^\s/.test(line)) {
+					section =
+						text === "catalog:"
+							? "catalog"
+							: text === "catalogs:"
+								? "catalogs"
+								: undefined;
+					current =
+						section === "catalog" ? "default" : undefined;
+					continue;
+				}
+				const entry = /^(['"]?)([^'"]+?)\1\s*:\s*(.*)$/.exec(
+					text,
+				);
+				if (!section || !entry) continue;
+				const [, , key, value] = entry as unknown as [
+					string,
+					string,
+					string,
+					string,
+				];
+				if (section === "catalogs" && value === "") {
+					current = key;
+					continue;
+				}
+				if (!current || value === "") continue;
+				const catalog =
+					catalogs.get(current) ?? new Map<string, string>();
+				catalog.set(key, unquote(value));
+				catalogs.set(current, catalog);
+			}
+			return catalogs;
+		}
+		if (dirname(directory) === directory) return undefined;
+	}
+}
+
+/** pnpm replaces catalog: requirements with their workspace catalog entry. */
+export async function resolvePnpmCatalogs(
+	manifest: PackageJson | undefined,
+	path: string,
+): Promise<PackageJson | undefined> {
+	if (
+		!manifest ||
+		!catalogFields.some((field) =>
+			Object.values(manifest[field] ?? {}).some(
+				(value) =>
+					typeof value === "string" &&
+					value.startsWith("catalog:"),
+			),
+		)
+	)
+		return manifest;
+	const catalogs = await readPnpmCatalogs(dirname(path));
+	if (!catalogs) return manifest;
+	const resolved: PackageJson = { ...manifest };
+	for (const field of catalogFields) {
+		const requirements = manifest[field];
+		if (!requirements) continue;
+		resolved[field] = Object.fromEntries(
+			Object.entries(requirements).map(([name, value]) => [
+				name,
+				typeof value === "string" && value.startsWith("catalog:")
+					? (catalogs
+							.get(value.slice("catalog:".length) || "default")
+							?.get(name) ?? value)
+					: value,
+			]),
+		);
+	}
+	return resolved;
+}
+
 async function readManifest(
 	path: string,
 ): Promise<PackageJson | undefined> {
 	try {
-		return JSON.parse(
-			stripJsonBom(await readFile(path, "utf8")),
-		) as PackageJson;
+		return await resolvePnpmCatalogs(
+			JSON.parse(
+				stripJsonBom(await readFile(path, "utf8")),
+			) as PackageJson,
+			path,
+		);
 	} catch (cause) {
 		if (
 			["ENOENT", "ENOTDIR"].includes(

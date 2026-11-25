@@ -112,6 +112,18 @@ function pageFile(
 	return file;
 }
 
+/** Matches the endpoint in a URL attribute or CSS url(), not in escaped text. */
+function requestsEndpoint(
+	html: string,
+	endpoint: string,
+): boolean {
+	const path = endpoint.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return new RegExp(
+		String.raw`(?:\b(?:src|srcset|href|poster|content|data-[\w-]+)\s*=\s*(?:"[^"]*?|'[^']*?|)|url\(\s*["']?)${path}\?`,
+		"i",
+	).test(html);
+}
+
 function isActiveInternalRoute(
 	route: IntegrationResolvedRoute,
 	clientHtml: string,
@@ -129,7 +141,7 @@ function isActiveInternalRoute(
 	if (route.pattern === imageEndpoint)
 		return (
 			hasRuntimeImages ||
-			clientHtml.includes(`${imageEndpoint}?`)
+			requestsEndpoint(clientHtml, imageEndpoint)
 		);
 	return false;
 }
@@ -258,9 +270,14 @@ export function reconcileRoutes(
 		for (const asset of emittedAssets.get(route.pattern) ?? []) {
 			const file = assetFile(asset);
 			if (!files.has(file)) continue;
+			const url = `/${file.split("/").map(encodeURIComponent).join("/")}`;
+			// Astro applies trailingSlash only to endpoints without a file extension.
 			addPrerendered(
 				route,
-				`/${file.split("/").map(encodeURIComponent).join("/")}`,
+				evidence.trailingSlash === "always" &&
+					!/\.[^./]+$/.test(file)
+					? `${url}/`
+					: url,
 				file,
 			);
 		}

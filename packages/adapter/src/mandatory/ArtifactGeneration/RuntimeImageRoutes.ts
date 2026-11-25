@@ -301,6 +301,76 @@ export async function hasRuntimeImageCalls(
 			localImageExports.set(url, local);
 		}
 	}
+	// Forwarding modules keep the wrapper's identity under their own export names.
+	const nameOf = (node: unknown): string | undefined =>
+		isSyntaxNode(node)
+			? typeof node.name === "string"
+				? node.name
+				: getStaticString(node)
+			: undefined;
+	for (let changed = true; changed;) {
+		changed = false;
+		for (const [url, { syntax }] of modules) {
+			if (!Array.isArray(syntax.body)) continue;
+			const sourceExports = (node: SyntaxNode) => {
+				const reference = getStaticString(node.source);
+				return reference === "astro:assets"
+					? new Set(["getImage"])
+					: reference?.startsWith(".")
+						? imageExports.get(new URL(reference, url).href)
+						: undefined;
+			};
+			const imported = new Set<string>();
+			for (const node of syntax.body as unknown[]) {
+				if (
+					!isSyntaxNode(node) ||
+					node.type !== "ImportDeclaration" ||
+					!Array.isArray(node.specifiers)
+				)
+					continue;
+				const source = sourceExports(node);
+				for (const specifier of node.specifiers as unknown[])
+					if (
+						isSyntaxNode(specifier) &&
+						specifier.type === "ImportSpecifier" &&
+						source?.has(nameOf(specifier.imported) ?? "")
+					)
+						imported.add(nameOf(specifier.local) ?? "");
+			}
+			const forwarded = new Set(imageExports.get(url));
+			const size = forwarded.size;
+			for (const node of syntax.body as unknown[]) {
+				if (!isSyntaxNode(node)) continue;
+				if (
+					node.type === "ExportAllDeclaration" &&
+					!node.exported
+				)
+					for (const name of sourceExports(node) ?? [])
+						if (name !== "default") forwarded.add(name);
+				if (
+					node.type !== "ExportNamedDeclaration" ||
+					!Array.isArray(node.specifiers)
+				)
+					continue;
+				const source = node.source
+					? sourceExports(node)
+					: imported;
+				for (const specifier of node.specifiers as unknown[]) {
+					if (!isSyntaxNode(specifier)) continue;
+					const exported = nameOf(specifier.exported);
+					if (
+						exported &&
+						source?.has(nameOf(specifier.local) ?? "")
+					)
+						forwarded.add(exported);
+				}
+			}
+			if (forwarded.size !== size) {
+				imageExports.set(url, forwarded);
+				changed = true;
+			}
+		}
+	}
 
 	const visited = new Set<string>();
 	while (pending.length) {
