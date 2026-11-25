@@ -20,7 +20,10 @@ import {
 	formatNpmLockfile,
 } from "./Dependency/Metadata.ts";
 import { type Registry } from "./Dependency/Registry.ts";
-import { findRuntimePackageImports } from "./Dependency/ImportSpecifier.ts";
+import {
+	findRuntimePackageImports,
+	type PackageSubpathRequests,
+} from "./Dependency/ImportSpecifier.ts";
 import { planLocalArchives } from "./Dependency/Archive.ts";
 import { resolvePinnedRuntimeDependencies } from "./Dependency";
 
@@ -31,9 +34,11 @@ export async function planPackageFiles(
 	registry: Registry,
 	includeLocal = false,
 ): Promise<PlannedFile[]> {
+	const requests: PackageSubpathRequests = new Map();
 	const dependencyNames = findRuntimePackageImports(
 		files,
 		strategy,
+		includeLocal ? requests : undefined,
 	);
 	if (strategy === "install") {
 		const graph = await resolvePinnedRuntimeDependencies(
@@ -43,7 +48,7 @@ export async function planPackageFiles(
 			includeLocal,
 		);
 		const { dependencies: pinned, files: archives } =
-			await planLocalArchives(graph);
+			await planLocalArchives(graph, requests);
 		return [
 			...archives,
 			{
