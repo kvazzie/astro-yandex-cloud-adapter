@@ -1,0 +1,4 @@
+# Let Pi discover installed skills without tracking them in Git.
+# Keep supporting files ignored; discovery stops at each SKILL.md.
+!*/
+!*/SKILL.md
