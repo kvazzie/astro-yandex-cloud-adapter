@@ -784,6 +784,10 @@ describe("Function Artifact mutation plans", () => {
 					"export * from './r1.js';export * from './r2.js';",
 					"import * as a from './bridge.js';import * as b from './process.js';const selected=Math.random()>2?a:b;const proc=selected.runtime;",
 				],
+				[
+					"export * from './r1.js';export * from './r2.js';",
+					"import * as a from './bridge.js';import * as b from './namespace.js';const selected=Math.random()>2?b:a;const {runtime:proc=process}=selected;",
+				],
 			] as const
 		).flatMap(([bridge, consumer]) =>
 			(["bundle", "install"] as const).map(
@@ -806,6 +810,10 @@ describe("Function Artifact mutation plans", () => {
 			await writeFile(
 				new URL("process.js", f.server),
 				"export const runtime=process;",
+			);
+			await writeFile(
+				new URL("namespace.js", f.server),
+				"export * as runtime from './other.js';",
 			);
 			for (const ambiguous of ["r1.js", "r2.js"])
 				await writeFile(

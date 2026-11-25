@@ -1044,6 +1044,8 @@ interface ExportBinding {
 	origin?: object;
 	role?: LoaderRole;
 	isDefined?: () => boolean;
+	// A merged branch property can be absent, so a destructuring default may apply.
+	mayBeAbsent?: boolean;
 	mutableCopy?: true;
 }
 
@@ -1690,6 +1692,104 @@ function runtimeLoaderBindings(
 	const namespaceIds = new WeakMap<EmittedNamespace, number>();
 	let namespaceIdCount = 0;
 	const mergedNamespaces = new Map<string, EmittedNamespace>();
+	// A merged property or branch keeps every loader role it can transfer.
+	const mergeRoles = (
+		roles: readonly (LoaderRole | undefined)[],
+		opaque: boolean,
+	): LoaderRole | undefined => {
+		const defined = [
+			...new Set(
+				roles.filter(
+					(role): role is LoaderRole => role !== undefined,
+				),
+			),
+		];
+		if (defined.includes("process")) return "process";
+		if (
+			defined.length === 1 &&
+			(typeof defined[0] !== "object" || !opaque)
+		)
+			return defined[0];
+		const namespaces = defined.filter(
+			(role): role is EmittedNamespace =>
+				typeof role === "object",
+		);
+		if (
+			namespaces.length &&
+			namespaces.length === defined.length
+		)
+			return mergeNamespaces(namespaces, opaque);
+		return defined.find((role) => typeof role !== "object");
+	};
+	const mergeNamespaces = (
+		namespaces: readonly EmittedNamespace[],
+		opaque: boolean,
+	): EmittedNamespace => {
+		// The same inputs share one identity, so cycle detection still terminates.
+		const key = `${opaque ? "!" : ""}${namespaces
+			.map((namespace) => {
+				let id = namespaceIds.get(namespace);
+				if (id === undefined) {
+					id = ++namespaceIdCount;
+					namespaceIds.set(namespace, id);
+				}
+				return id;
+			})
+			.sort((first, second) => first - second)
+			.join(",")}`;
+		const cached = mergedNamespaces.get(key);
+		if (cached) return cached;
+		const merged: EmittedNamespace = {
+			exportNames: (names) =>
+				new Set(
+					namespaces.flatMap((namespace) => [
+						...namespace.exportNames(new Set(names)),
+					]),
+				),
+			resolve: (name, path) => {
+				const resolved = namespaces.map((namespace) =>
+					namespace.resolve(name, new Set(path)),
+				);
+				// An ambiguous name is absent from that namespace object.
+				if (
+					resolved.length &&
+					resolved.every(
+						(binding) => binding === ambiguousExport,
+					)
+				)
+					return ambiguousExport;
+				const selected = resolved.map((binding) =>
+					binding === ambiguousExport ? undefined : binding,
+				);
+				const present = selected.filter(
+					(binding): binding is ExportBinding =>
+						binding !== undefined,
+				);
+				if (!present.length) return undefined;
+				// An ordinary value can lack any nested property the other branches define.
+				const role = mergeRoles(
+					present.map(({ role }) => role),
+					opaque ||
+						present.some(({ role }) => role === undefined),
+				);
+				// A property is defined only when every possible branch defines it.
+				const everyDefined =
+					!opaque &&
+					selected.every(
+						(binding) => binding?.isDefined?.() === true,
+					);
+				return {
+					...(present.find((binding) => binding.role === role) ??
+						present[0]),
+					role,
+					isDefined: everyDefined ? () => true : undefined,
+					...(everyDefined ? {} : { mayBeAbsent: true }),
+				};
+			},
+		};
+		mergedNamespaces.set(key, merged);
+		return merged;
+	};
 	const roleOf = (
 		value: unknown,
 		seen = new Set<unknown>(),
@@ -1799,8 +1899,21 @@ function runtimeLoaderBindings(
 						record.property,
 						seen,
 					);
-					if (selected?.role && !selected.mutableCopy)
-						return selected.role;
+					if (selected?.role && !selected.mutableCopy) {
+						if (
+							!selected.mayBeAbsent ||
+							record.fallback === undefined
+						)
+							return selected.role;
+						// Either the merged property or its default can be selected.
+						return mergeRoles(
+							[
+								selected.role,
+								roleOf(record.fallback, new Set(seen)),
+							],
+							true,
+						);
+					}
 					// An ordinary defined value does not take the initializer.
 					const fallback = roleOf(
 						record.fallback,
@@ -1872,104 +1985,6 @@ function runtimeLoaderBindings(
 			}
 		}
 
-		// A merged property or branch keeps every loader role it can transfer.
-		const mergeRoles = (
-			roles: readonly (LoaderRole | undefined)[],
-			opaque: boolean,
-		): LoaderRole | undefined => {
-			const defined = [
-				...new Set(
-					roles.filter(
-						(role): role is LoaderRole => role !== undefined,
-					),
-				),
-			];
-			if (defined.includes("process")) return "process";
-			if (
-				defined.length === 1 &&
-				(typeof defined[0] !== "object" || !opaque)
-			)
-				return defined[0];
-			const namespaces = defined.filter(
-				(role): role is EmittedNamespace =>
-					typeof role === "object",
-			);
-			if (
-				namespaces.length &&
-				namespaces.length === defined.length
-			)
-				return mergeNamespaces(namespaces, opaque);
-			return defined.find((role) => typeof role !== "object");
-		};
-		const mergeNamespaces = (
-			namespaces: readonly EmittedNamespace[],
-			opaque: boolean,
-		): EmittedNamespace => {
-			// The same inputs share one identity, so cycle detection still terminates.
-			const key = `${opaque ? "!" : ""}${namespaces
-				.map((namespace) => {
-					let id = namespaceIds.get(namespace);
-					if (id === undefined) {
-						id = ++namespaceIdCount;
-						namespaceIds.set(namespace, id);
-					}
-					return id;
-				})
-				.sort((first, second) => first - second)
-				.join(",")}`;
-			const cached = mergedNamespaces.get(key);
-			if (cached) return cached;
-			const merged: EmittedNamespace = {
-				exportNames: (names) =>
-					new Set(
-						namespaces.flatMap((namespace) => [
-							...namespace.exportNames(new Set(names)),
-						]),
-					),
-				resolve: (name, path) => {
-					const resolved = namespaces.map((namespace) =>
-						namespace.resolve(name, new Set(path)),
-					);
-					// An ambiguous name is absent from that namespace object.
-					if (
-						resolved.length &&
-						resolved.every(
-							(binding) => binding === ambiguousExport,
-						)
-					)
-						return ambiguousExport;
-					const selected = resolved.map((binding) =>
-						binding === ambiguousExport ? undefined : binding,
-					);
-					const present = selected.filter(
-						(binding): binding is ExportBinding =>
-							binding !== undefined,
-					);
-					if (!present.length) return undefined;
-					// An ordinary value can lack any nested property the other branches define.
-					const role = mergeRoles(
-						present.map(({ role }) => role),
-						opaque ||
-							present.some(({ role }) => role === undefined),
-					);
-					// A property is defined only when every possible branch defines it.
-					const everyDefined =
-						!opaque &&
-						selected.every(
-							(binding) => binding?.isDefined?.() === true,
-						);
-					return {
-						...(present.find(
-							(binding) => binding.role === role,
-						) ?? present[0]),
-						role,
-						isDefined: everyDefined ? () => true : undefined,
-					};
-				},
-			};
-			mergedNamespaces.set(key, merged);
-			return merged;
-		};
 		const branchRole = (
 			branches: unknown[],
 		): LoaderRole | undefined => {
