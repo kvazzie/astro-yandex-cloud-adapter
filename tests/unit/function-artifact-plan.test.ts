@@ -1523,15 +1523,32 @@ describe("Function Artifact mutation plans", () => {
 			accepted: true,
 			source: "module.exports = ;",
 		},
+		{
+			file: "nested/optional",
+			dynamic: true,
+			accepted: true,
+			source: "export const ready = true;",
+			manifest: "{",
+		},
+		{
+			file: "nested/optional",
+			dynamic: false,
+			accepted: false,
+			source: "export const ready = true;",
+			manifest: "{",
+			rejection: /in JSON at position/,
+		},
 		{ file: "optional", dynamic: false, accepted: false },
 		{ file: "optional.mjs", dynamic: true, accepted: false },
 	])(
-		"preserves an optional extensionless import fallback ($file, dynamic: $dynamic)",
+		"preserves an optional extensionless import fallback ($file, dynamic: $dynamic, manifest: $manifest)",
 		async ({
 			file,
 			dynamic,
 			accepted,
 			source: contents = "export const broken = ;",
+			manifest = '{"type":"commonjs"}',
+			rejection = /Unexpected token/,
 		}) => {
 			const f = await fixture();
 			if (file.startsWith("nested/")) {
@@ -1540,7 +1557,7 @@ describe("Function Artifact mutation plans", () => {
 				});
 				await writeFile(
 					new URL("nested/package.json", f.server),
-					'{"type":"commonjs"}',
+					manifest,
 				);
 				await writeFile(
 					new URL("nested/esm/package.json", f.server),
@@ -1550,7 +1567,7 @@ describe("Function Artifact mutation plans", () => {
 			await writeFile(new URL(file, f.server), contents);
 			const request = JSON.stringify("./" + file);
 			const source = dynamic
-				? `export async function observe() { try { const loaded = await import(${request}); return loaded.default; } catch (error) { if (!(error instanceof SyntaxError)) throw error; return "fallback"; } }`
+				? `export async function observe() { try { const loaded = await import(${request}); return loaded.default; } catch (error) { if (!(error instanceof SyntaxError) && error?.code !== "ERR_INVALID_PACKAGE_CONFIG") throw error; return "fallback"; } }`
 				: `import ${request};`;
 			await writeFile(
 				new URL("index.js", f.server),
@@ -1577,9 +1594,7 @@ describe("Function Artifact mutation plans", () => {
 				}),
 			);
 			if (!accepted) {
-				await expect(planning).rejects.toThrow(
-					/Unexpected token/,
-				);
+				await expect(planning).rejects.toThrow(rejection);
 				expect(await snapshot(f.directory)).toEqual(before);
 				return;
 			}
@@ -1597,40 +1612,82 @@ describe("Function Artifact mutation plans", () => {
 		},
 	);
 
+	const ordinaryRequire = 'module.exports = require("example");';
+	const aliasedRequire =
+		'const load = require; module.exports = load("example");';
 	it.each([
-		{ metadata: { type: "commonjs" }, syntax: "wrapper return" },
+		{
+			metadata: { type: "commonjs" },
+			syntax: "wrapper return",
+			source: `${ordinaryRequire} return;`,
+		},
 		{
 			metadata: { type: "commonjs" },
 			syntax: "ordinary require",
+			source: ordinaryRequire,
 		},
-		{ metadata: {}, syntax: "wrapper return" },
-		{ metadata: {}, syntax: "ordinary require" },
-		{ metadata: {}, syntax: "aliased require" },
-		{ metadata: {}, syntax: "var redeclaration" },
+		{
+			metadata: {},
+			syntax: "wrapper return",
+			source: `${ordinaryRequire} return;`,
+		},
+		{
+			metadata: {},
+			syntax: "ordinary require",
+			source: ordinaryRequire,
+		},
+		{
+			metadata: {},
+			syntax: "aliased require",
+			source: aliasedRequire,
+		},
+		{
+			metadata: {},
+			syntax: "var redeclaration",
+			source:
+				'var require = module.require.bind(module); module.exports = require("example");',
+		},
+		{
+			directory: "vendor/node_modules/demo/",
+			syntax: "aliased require",
+			source: aliasedRequire,
+		},
+		{
+			directory: "",
+			loader: "require",
+			syntax: "aliased require",
+			source: aliasedRequire,
+		},
+		{
+			directory: "",
+			loader: "import then require",
+			syntax: "aliased require",
+			source: aliasedRequire,
+		},
 	])(
-		"rejects a dynamically loaded extensionless CommonJS module ($metadata, $syntax)",
-		async ({ metadata, syntax }) => {
+		"rejects an extensionless CommonJS module ($directory, $metadata, $loader, $syntax)",
+		async ({
+			directory = "nested/",
+			metadata,
+			loader = "import",
+			source,
+		}) => {
 			const f = await fixture();
-			await mkdir(new URL("nested/", f.server), {
+			await mkdir(new URL(directory, f.server), {
 				recursive: true,
 			});
 			await writeFile(
 				new URL("package.json", f.server),
 				'{"type":"module"}',
 			);
+			if (metadata)
+				await writeFile(
+					new URL(`${directory}package.json`, f.server),
+					JSON.stringify(metadata),
+				);
 			await writeFile(
-				new URL("nested/package.json", f.server),
-				JSON.stringify(metadata),
-			);
-			await writeFile(
-				new URL("nested/optional", f.server),
-				{
-					"aliased require":
-						'const load = require; module.exports = load("example");',
-					"var redeclaration":
-						'var require = module.require.bind(module); module.exports = require("example");',
-				}[syntax] ??
-					`module.exports = require("example");${syntax === "wrapper return" ? " return;" : ""}`,
+				new URL(`${directory}optional`, f.server),
+				source,
 			);
 			await mkdir(new URL("node_modules/example/", f.root), {
 				recursive: true,
@@ -1645,7 +1702,11 @@ describe("Function Artifact mutation plans", () => {
 			);
 			await writeFile(
 				new URL("index.js", f.server),
-				`export async function observe() { return (await import("./nested/optional")).default; }\n${f.index}`,
+				{
+					import: `export async function observe() { return (await import("./${directory}optional")).default; }`,
+					require: `import { createRequire } from "node:module"; export function observe() { return createRequire(import.meta.url)("./${directory}optional"); }`,
+					"import then require": `import { createRequire } from "node:module"; export async function observe() { try { await import("./${directory}optional"); } catch (error) { if (!(error instanceof ReferenceError)) throw error; } return createRequire(import.meta.url)("./${directory}optional"); }`,
+				}[loader] + `\n${f.index}`,
 			);
 			const { stdout } = await promisify(execFile)(
 				process.execPath,
@@ -1667,22 +1728,33 @@ describe("Function Artifact mutation plans", () => {
 					),
 				),
 			).rejects.toThrow(
-				/unsupported CommonJS module at nested\/optional/,
+				`unsupported CommonJS module at ${directory}optional.`,
 			);
 			expect(await snapshot(f.directory)).toEqual(before);
 		},
 	);
 
 	it.each([
-		'const __filename = "entry";',
-		"let require;",
-		"const { nested: [module] } = { nested: [] };",
-		"class exports {}",
+		...[
+			'const __filename = "entry";',
+			"let require;",
+			"const { nested: [module] } = { nested: [] };",
+			"class exports {}",
+		].map((declaration) => ({
+			directory: "nested/",
+			manifest: "{}",
+			declaration,
+		})),
+		{
+			directory: "vendor/node_modules/demo/",
+			manifest: '{"type":"module"}',
+			declaration: "/* explicit ESM scope */",
+		},
 	])(
-		"loads a typeless extensionless file as ESM when %s shadows a CommonJS wrapper variable",
-		async (declaration) => {
+		"loads an extensionless file in $directory as ESM ($manifest, $declaration)",
+		async ({ directory, manifest, declaration }) => {
 			const f = await fixture();
-			await mkdir(new URL("nested/", f.server), {
+			await mkdir(new URL(directory, f.server), {
 				recursive: true,
 			});
 			await writeFile(
@@ -1690,11 +1762,11 @@ describe("Function Artifact mutation plans", () => {
 				'{"type":"module"}',
 			);
 			await writeFile(
-				new URL("nested/package.json", f.server),
-				"{}",
+				new URL(`${directory}package.json`, f.server),
+				manifest,
 			);
 			await writeFile(
-				new URL("nested/shadowing", f.server),
+				new URL(`${directory}shadowing`, f.server),
 				`${declaration} globalThis.example = import("example");`,
 			);
 			await mkdir(new URL("node_modules/example/", f.root), {
@@ -1710,7 +1782,7 @@ describe("Function Artifact mutation plans", () => {
 			);
 			await writeFile(
 				new URL("index.js", f.server),
-				`export async function observe() { await import("./nested/shadowing"); return (await globalThis.example).default; }\n${f.index}`,
+				`export async function observe() { await import("./${directory}shadowing"); return (await globalThis.example).default; }\n${f.index}`,
 			);
 			const { stdout } = await promisify(execFile)(
 				process.execPath,

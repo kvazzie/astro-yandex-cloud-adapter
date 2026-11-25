@@ -9,7 +9,13 @@ import {
 	type SyntaxNode,
 } from "../../../.emittedModules.ts";
 import { isBuiltin } from "node:module";
-import { dirname, extname, join, resolve } from "node:path";
+import {
+	basename,
+	dirname,
+	extname,
+	join,
+	resolve,
+} from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
 	PlannedFile,
@@ -101,6 +107,9 @@ export function findRuntimePackageImports(
 	const extensionlessPackageType = (path: string) => {
 		let directory = dirname(path);
 		while (directory !== ".") {
+			// Node's package scope lookup stops at a node_modules directory.
+			if (basename(directory) === "node_modules")
+				return undefined;
 			const metadata = retainedManifest(directory);
 			if (metadata) {
 				const { type } = metadata;
@@ -120,12 +129,12 @@ export function findRuntimePackageImports(
 		string,
 		{ namespace: EmittedNamespace; inspect: () => void }
 	>();
+	const classifiedLoads = new Set<string>();
 	const loadEmittedModule = (
 		url: URL,
 		dynamic = false,
+		loader: "import" | "require" = "import",
 	): EmittedNamespace | undefined => {
-		const loaded = modules.get(url.href);
-		if (loaded) return loaded.namespace;
 		const sourceURL = new URL(url);
 		sourceURL.search = "";
 		sourceURL.hash = "";
@@ -140,26 +149,40 @@ export function findRuntimePackageImports(
 			throw new Error(
 				`Missing computed module contents for ${file.path}.`,
 			);
-		let program = programs.get(sourceURL.href);
-		if (!program) {
-			const extensionless = !isJavaScript(file.path);
-			const packageType = extensionless
-				? extensionlessPackageType(file.path)
-				: "module";
-			const unsupportedCommonJs = () =>
-				new Error(
-					`The function artifact contains an unsupported CommonJS module at ${file.path}. V1 function artifacts must use ESM.`,
-				);
+		const extensionless = !isJavaScript(file.path);
+		// Each loader classifies an extensionless file by its own rules.
+		const load = `${loader} ${sourceURL.href}`;
+		if (extensionless && !classifiedLoads.has(load)) {
+			let packageType: "commonjs" | "module" | undefined;
+			// The CommonJS loader applies a package type only to .js files.
+			if (loader === "import")
+				try {
+					packageType = extensionlessPackageType(file.path);
+				} catch (error) {
+					// Node reports an invalid package scope to this dynamic import's caller.
+					if (dynamic && error instanceof SyntaxError)
+						return undefined;
+					throw error;
+				}
 			// Node runs a typeless file as CommonJS unless it needs ESM syntax.
 			if (packageType !== "module") {
 				const commonJsError = commonJsSyntaxError(file.contents);
-				if (!commonJsError) throw unsupportedCommonJs();
+				if (!commonJsError)
+					throw new Error(
+						`The function artifact contains an unsupported CommonJS module at ${file.path}. V1 function artifacts must use ESM.`,
+					);
 				if (packageType === "commonjs") {
 					// Node reports this dynamic import's failure to the caller at runtime.
 					if (dynamic) return undefined;
 					throw commonJsError;
 				}
 			}
+			classifiedLoads.add(load);
+		}
+		const loaded = modules.get(url.href);
+		if (loaded) return loaded.namespace;
+		let program = programs.get(sourceURL.href);
+		if (!program) {
 			try {
 				program = parseModule(file.contents);
 			} catch (error) {
@@ -238,7 +261,11 @@ export function findRuntimePackageImports(
 			return candidate &&
 				(resolveOnly ||
 					/\.(json|node)$/.test(candidate) ||
-					loadEmittedModule(new URL(candidate)))
+					loadEmittedModule(
+						new URL(candidate),
+						false,
+						"require",
+					))
 				? candidate
 				: undefined;
 		};

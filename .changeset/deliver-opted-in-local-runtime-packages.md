@@ -30,4 +30,5 @@ directory errors, accept BOMs in retained manifests, and validate
 bare CommonJS directory requests. Preserve runtime fallbacks for
 invalid extensionless dynamic imports and accept BOMs in
 installed and archived manifests. Reject extensionless CommonJS
-modules selected by emitted module loads.
+modules selected by emitted module loads, classifying each import
+or require by Node's loader rules.
