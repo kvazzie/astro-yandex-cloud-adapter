@@ -81,19 +81,32 @@ export function wrapFunctionPolicy(
 	policy: Omit<FunctionArtifactPolicy, "artifactDirectory">,
 ): string {
 	let handlerName: string | undefined;
-	let wrapperName = "__yandexArtifactHandler";
-	while (source.includes(wrapperName)) wrapperName += "_";
-	let urlName = "__yandexArtifactURL";
-	while (source.includes(urlName)) urlName += "_";
+	const program = parseModule(source);
+	// Identifiers may use escapes, so compare decoded names as well as source text.
+	const identifiers = new Set<string>();
+	visitSyntax(program, (node) => {
+		if (
+			node.type === "Identifier" &&
+			typeof node.name === "string"
+		)
+			identifiers.add(node.name);
+	});
+	const unusedName = (base: string) => {
+		let name = base;
+		while (source.includes(name) || identifiers.has(name))
+			name += "_";
+		return name;
+	};
+	const wrapperName = unusedName("__yandexArtifactHandler");
+	const urlName = unusedName("__yandexArtifactURL");
 	// One generated rest parameter cannot shadow the original handler binding.
-	let argumentsName = "__yandexArtifactArguments";
-	while (source.includes(argumentsName)) argumentsName += "_";
+	const argumentsName = unusedName("__yandexArtifactArguments");
 	const edits: Array<{
 		start: number;
 		end: number;
 		value: string;
 	}> = [];
-	visitSyntax(parseModule(source), (node) => {
+	visitSyntax(program, (node) => {
 		if (
 			node.type !== "ExportNamedDeclaration" ||
 			!Array.isArray(node.specifiers)
@@ -111,9 +124,7 @@ export function wrapFunctionPolicy(
 				if (isSyntaxNode(node.source)) {
 					if (handlerName === "__yandexArtifactHandler")
 						continue;
-					handlerName = "__yandexOriginalHandler";
-					while (source.includes(handlerName))
-						handlerName += "_";
+					handlerName = unusedName("__yandexOriginalHandler");
 					const imported = source.slice(
 						specifier.local.start,
 						specifier.local.end,

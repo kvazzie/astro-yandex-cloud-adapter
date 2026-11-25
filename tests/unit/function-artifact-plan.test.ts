@@ -764,6 +764,14 @@ describe("Function Artifact mutation plans", () => {
 					"export const runtime=process;",
 					"import * as ns from './bridge.js';const selected=globalThis.missing||ns;const proc=selected.runtime;",
 				],
+				[
+					"export const runtime={};",
+					"import * as a from './bridge.js';import * as b from './other.js';const flag=Math.random()>2;const selected=flag?a:b;const {runtime:proc=process}=selected;",
+				],
+				[
+					"export const runtime={};",
+					"import * as ns from './bridge.js';const selected=Math.random()>2?ns:{};const {runtime:proc=process}=selected;",
+				],
 			] as const
 		).flatMap(([bridge, consumer]) =>
 			(["bundle", "install"] as const).map(
@@ -779,6 +787,10 @@ describe("Function Artifact mutation plans", () => {
 		async ({ bridge, consumer, dependencyStrategy }) => {
 			const f = await fixture();
 			await writeFile(new URL("bridge.js", f.server), bridge);
+			await writeFile(
+				new URL("other.js", f.server),
+				"export const unrelated=1;",
+			);
 			await writeFile(
 				new URL("index.js", f.server),
 				consumer +
@@ -7379,22 +7391,34 @@ ${f.index}`,
 	);
 
 	it("reads a PAX size record for the following tarball entry", () => {
+		// A valid ustar header, including its mandatory checksum.
 		const header = (
 			name: string,
 			size: number,
 			type: string,
 		) => {
 			const block = Buffer.alloc(512);
+			const octal = (value: number, width: number) =>
+				value.toString(8).padStart(width - 1, "0") + "\0";
 			block.write(name, 0, "utf8");
-			block.write("0000644\0", 100, "ascii");
-			block.write(
-				size.toString(8).padStart(11, "0") + "\0",
-				124,
-				"ascii",
-			);
+			block.write(octal(0o644, 8), 100, "ascii");
+			block.write(octal(0, 8), 108, "ascii");
+			block.write(octal(0, 8), 116, "ascii");
+			block.write(octal(size, 12), 124, "ascii");
+			block.write(octal(0, 12), 136, "ascii");
+			block.write(" ".repeat(8), 148, "ascii");
 			block.write(type, 156, "ascii");
 			block.write("ustar\0", 257, "ascii");
 			block.write("00", 263, "ascii");
+			const checksum = block.reduce(
+				(sum, byte) => sum + byte,
+				0,
+			);
+			block.write(
+				`${checksum.toString(8).padStart(6, "0")}\0 `,
+				148,
+				"ascii",
+			);
 			return block;
 		};
 		const padded = (data: Buffer) =>
@@ -7455,16 +7479,41 @@ ${f.index}`,
 		{ server: "", overlaps: true },
 		{ server: "client/nested/", overlaps: true },
 		{ server: "function/", overlaps: false },
+		{ server: "function/", linkedClient: true, overlaps: true },
 	])(
-		"guards server output removal against the client output ($server)",
-		async ({ server, overlaps }) => {
+		"guards server output removal against the client output ($server, linked client: $linkedClient)",
+		async ({ server, overlaps, linkedClient }) => {
 			const f = await fixture();
+			let client = f.build.config.build.client;
+			if (linkedClient) {
+				// The configured paths look like siblings, but the client resolves inside the server.
+				await mkdir(
+					new URL("function/site/", f.build.config.outDir),
+					{
+						recursive: true,
+					},
+				);
+				client = new URL(
+					"linked-client/",
+					f.build.config.outDir,
+				);
+				await symlink(
+					fileURLToPath(
+						new URL("function/site", f.build.config.outDir),
+					),
+					fileURLToPath(
+						new URL("linked-client", f.build.config.outDir),
+					),
+					"dir",
+				);
+			}
 			const build = {
 				...f.build,
 				config: {
 					...f.build.config,
 					build: {
 						...f.build.config.build,
+						client,
 						server: new URL(server, f.build.config.outDir),
 					},
 				},
@@ -7498,7 +7547,14 @@ ${f.index}`,
 		},
 	);
 
-	it.each(["event", "context", "previewUrl"])(
+	it.each([
+		"event",
+		"context",
+		"previewUrl",
+		// Escaped spellings decode to the generated wrapper names.
+		"__yandexArtifactArg\\u0075ments",
+		"__yandexArtifact\\u0055RL",
+	])(
 		"invokes a handler whose local binding is named %s",
 		async (name) => {
 			const f = await fixture();
@@ -8542,6 +8598,17 @@ ${f.index}`,
 			},
 			required: "shared",
 			rejection: "outside the package",
+		},
+		{
+			name: "scans an extensionless CommonJS file required from a module scope",
+			manifest: { type: "module" },
+			files: {
+				"index.cjs": 'module.exports = require("./run");',
+				run: 'module.exports = require("./helper.cjs");',
+				"helper.cjs": 'module.exports = "helper";',
+			},
+			omitted: "helper.cjs",
+			required: "helper",
 		},
 		{
 			name: "scans CommonJS reached through an unregistered extension",
@@ -11064,6 +11131,85 @@ ${f.index}`,
 			if (accepted)
 				await expect(planning).resolves.toBeDefined();
 			else await expect(planning).rejects.toThrow();
+		},
+	);
+
+	it.each(
+		[
+			'const require = typeof globalThis.require === "function" ? globalThis.require : createRequire(import.meta.url);export const value = require("example");',
+			'const load = Math.random() > 2 ? undefined : createRequire(import.meta.url);export const value = load("example");',
+			'const load = globalThis.missing || createRequire(import.meta.url);export const value = load("example");',
+			'const load = Math.random() > 2 ? null : createRequire(import.meta.url);export const value = load?.("example");',
+		].flatMap((source) =>
+			(["bundle", "install"] as const).map(
+				(dependencyStrategy) => ({
+					source,
+					dependencyStrategy,
+				}),
+			),
+		),
+	)(
+		"never accepts a conditional createRequire loader without its package: %j",
+		async ({ source, dependencyStrategy }) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				`import { createRequire } from "node:module";${source}\n${f.index}`,
+			);
+			await mkdir(new URL("node_modules/example/", f.root), {
+				recursive: true,
+			});
+			await writeFile(
+				new URL("node_modules/example/package.json", f.root),
+				'{"name":"example","version":"1.2.3"}',
+			);
+			await writeFile(
+				new URL("node_modules/example/index.js", f.root),
+				'module.exports = "loaded";',
+			);
+			const { stdout } = await promisify(execFile)(
+				process.execPath,
+				[
+					"--input-type=module",
+					"--eval",
+					`const m=await import(${JSON.stringify(new URL("index.js", f.server).href)});process.stdout.write(m.value);`,
+				],
+				{ cwd: f.directory },
+			);
+			expect(stdout).toBe("loaded");
+			const result = await Effect.runPromise(
+				Effect.either(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						{ ...settings, dependencyStrategy },
+						{
+							resolve: () =>
+								Promise.resolve({ version: "1.2.3" }),
+						},
+					),
+				),
+			);
+			// Tracking or rejecting the selected loader are both safe; silent acceptance is not.
+			if (result._tag === "Left") {
+				expect(result.left.message).toMatch(
+					/example|unresolved dynamic/,
+				);
+				return;
+			}
+			expect(dependencyStrategy).toBe("install");
+			const lock = result.right.mutations.find(
+				(m) =>
+					m.kind === "writeFile" &&
+					m.path.pathname.endsWith("package-lock.json"),
+			);
+			expect(
+				lock?.kind === "writeFile" && JSON.parse(lock.contents),
+			).toMatchObject({
+				packages: {
+					"node_modules/example": { version: "1.2.3" },
+				},
+			});
 		},
 	);
 

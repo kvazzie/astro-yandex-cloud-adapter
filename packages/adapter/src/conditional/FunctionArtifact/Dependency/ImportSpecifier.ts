@@ -1869,7 +1869,7 @@ function runtimeLoaderBindings(
 			}
 		}
 
-		// A selected branch keeps a process or namespace role it can transfer.
+		// A selected branch keeps every loader role it can transfer.
 		const branchRole = (
 			branches: unknown[],
 		): LoaderRole | undefined => {
@@ -1877,6 +1877,10 @@ function runtimeLoaderBindings(
 				roleOf(branch, new Set(seen)),
 			);
 			if (roles.includes("process")) return "process";
+			const loader = roles.find(
+				(role) => role !== undefined && typeof role !== "object",
+			);
+			if (loader) return loader;
 			const namespaces = [
 				...new Set(
 					roles.filter(
@@ -1885,7 +1889,20 @@ function runtimeLoaderBindings(
 					),
 				),
 			];
-			if (namespaces.length <= 1) return namespaces[0];
+			if (!namespaces.length) return undefined;
+			// Another value may lack any namespace property; null and undefined throw instead.
+			const opaque = branches.some(
+				(branch, index) =>
+					roles[index] === undefined &&
+					!(
+						isSyntaxNode(branch) &&
+						((branch.type === "Literal" &&
+							branch.value === null) ||
+							isIdentifier(branch, "undefined"))
+					),
+			);
+			if (namespaces.length === 1 && !opaque)
+				return namespaces[0];
 			return {
 				exportNames: (names) =>
 					new Set(
@@ -1897,10 +1914,22 @@ function runtimeLoaderBindings(
 					const selected = namespaces.map((namespace) =>
 						namespace.resolve(name, new Set(path)),
 					);
-					return (
-						selected.find((binding) => binding?.role) ??
-						selected.find(Boolean)
-					);
+					if (selected.includes(ambiguousExport))
+						return ambiguousExport;
+					const binding =
+						selected.find((candidate) => candidate?.role) ??
+						selected.find(Boolean);
+					if (!binding) return undefined;
+					// A property is defined only when every possible branch defines it.
+					const everyDefined =
+						!opaque &&
+						selected.every(
+							(candidate) => candidate?.isDefined?.() === true,
+						);
+					return {
+						...binding,
+						isDefined: everyDefined ? () => true : undefined,
+					};
 				},
 			};
 		};

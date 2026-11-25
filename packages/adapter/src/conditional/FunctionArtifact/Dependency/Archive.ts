@@ -892,7 +892,9 @@ async function verifyLocalRuntimeFiles(
 				? "module"
 				: extension === ".cjs"
 					? "commonjs"
-					: unregistered
+					: // The CommonJS loader applies a package type only to .js files.
+						unregistered ||
+						  (lookup === "commonjs" && extension === "")
 						? undefined
 						: await selectedModuleType(candidate);
 		const source = contents.toString("utf8");

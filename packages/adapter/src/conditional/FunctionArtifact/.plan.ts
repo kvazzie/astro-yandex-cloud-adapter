@@ -1,3 +1,4 @@
+import { realpath } from "node:fs/promises";
 import {
 	dirname,
 	isAbsolute,
@@ -58,7 +59,28 @@ export function planPreparation(
 						!isAbsolute(path)
 					);
 				};
-				if (within(server, client) || within(client, server))
+				// Symlinks can make lexically separate outputs share real directories.
+				const real = async (path: string) => {
+					try {
+						return await realpath(path);
+					} catch (cause) {
+						if (
+							(cause as NodeJS.ErrnoException).code === "ENOENT"
+						)
+							return path;
+						throw cause;
+					}
+				};
+				const [realServer, realClient] = await Promise.all([
+					real(server),
+					real(client),
+				]);
+				if (
+					within(server, client) ||
+					within(client, server) ||
+					within(realServer, realClient) ||
+					within(realClient, realServer)
+				)
 					throw new Errors.InvalidArtifact({
 						message: `The server output ${server} overlaps the client output ${client}, so it cannot be removed when the build has no Function Artifact. Use separate build.server and build.client directories.`,
 					});
