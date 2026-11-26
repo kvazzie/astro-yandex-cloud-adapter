@@ -6996,6 +6996,64 @@ console.log(JSON.stringify({ notFound: m.handler({ httpMethod: "GET", url: "/" }
 	);
 
 	it.each([
+		{
+			name: "inline function declaration",
+			replace: (index: string) =>
+				index
+					.replace(
+						"function handler(",
+						"export function handler(",
+					)
+					.replace("export { handler };", ""),
+		},
+		{
+			name: "function declaration exported by name",
+			replace: (index: string) => index,
+		},
+	])(
+		"keeps a wrapped $name initialized during cyclic module evaluation",
+		async ({ replace }) => {
+			const f = await fixture();
+			// check.js evaluates first and reads the handler before index.js runs.
+			await writeFile(
+				new URL("check.js", f.server),
+				"import { handler } from './index.js';\nglobalThis.handlerType = typeof handler;\n",
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`import './check.js';\n${replace(f.index)}`,
+			);
+			const observe = (expression: string) =>
+				promisify(execFile)(process.execPath, [
+					"--input-type=module",
+					"-e",
+					`const m = await import(${JSON.stringify(new URL("index.js", f.server).href)});
+console.log(JSON.stringify({ type: globalThis.handlerType, ${expression} }));`,
+				]);
+			expect(JSON.parse((await observe("")).stdout)).toEqual({
+				type: "function",
+			});
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					settings,
+				),
+			);
+			await Effect.runPromise(
+				FunctionArtifact.applyPreparation(plan),
+			);
+			const { stdout } = await observe(
+				"notFound: m.handler({}, {}).notFound.length",
+			);
+			expect(JSON.parse(stdout)).toEqual({
+				type: "function",
+				notFound: 1,
+			});
+		},
+	);
+
+	it.each([
 		"event",
 		"context",
 		"previewUrl",
@@ -7638,6 +7696,66 @@ console.log(JSON.stringify({ directory: policy.artifactDirectory.href, page: Obj
 		},
 	);
 
+	it.each([
+		{
+			exported: 'handler as "handler"',
+			local: true,
+			other: false,
+		},
+		{
+			exported: 'h as "handler", other',
+			local: false,
+			other: true,
+		},
+		{ exported: '"h" as "handler"', local: false, other: false },
+		{
+			exported: '"handler", "other"',
+			local: false,
+			other: true,
+		},
+	])(
+		"wraps a handler exported by a string-literal name: $exported",
+		async ({ exported, local, other }) => {
+			const f = await fixture();
+			await mkdir(new URL("chunks/", f.server));
+			await writeFile(
+				new URL("chunks/app.js", f.server),
+				"export function h(event, context, previewUrl, policy) {return policy;} export { h as handler }; export const other = 23;",
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				f.index.replace(
+					"export { handler };",
+					`export {${exported}}${local ? "" : " from './chunks/app.js'"};`,
+				),
+			);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					settings,
+				),
+			);
+			await Effect.runPromise(
+				FunctionArtifact.applyPreparation(plan),
+			);
+			// Node, not the test loader, decides whether the exports are valid.
+			const { stdout } = await promisify(execFile)(
+				process.execPath,
+				[
+					"--input-type=module",
+					"-e",
+					`const m = await import(${JSON.stringify(new URL("index.js", f.server).href)});
+console.log(JSON.stringify({ notFound: m.handler({}, {}).notFound.length, other: m.other ?? null }));`,
+				],
+			);
+			expect(JSON.parse(stdout)).toEqual({
+				notFound: 1,
+				other: other ? 23 : null,
+			});
+		},
+	);
+
 	it("plans the complete artifact without mutations, then applies handlers, 404 and metadata", async () => {
 		const f = await fixture();
 		const before = await snapshot(f.directory);
@@ -7668,7 +7786,9 @@ console.log(JSON.stringify({ directory: policy.artifactDirectory.href, page: Obj
 				new URL("index.js", artifact.directory),
 				"utf8",
 			);
-			expect(source).toContain("const __yandexArtifactHandler");
+			expect(source).toContain(
+				"function __yandexArtifactHandler(",
+			);
 			expect(source).toContain(".yandex/404/");
 			const pages = await readdir(
 				new URL(".yandex/404/", artifact.directory),

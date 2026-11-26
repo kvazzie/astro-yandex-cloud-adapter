@@ -78,6 +78,19 @@ export async function readFunctionOutput(
 const wrapperMarker =
 	"/* @astro-yandex-cloud/adapter: 404 policy wrapper */";
 
+/** Reads an export or import name spelled as an identifier or a string literal. */
+function moduleExportName(node: unknown): string | undefined {
+	if (!isSyntaxNode(node)) return undefined;
+	if (
+		node.type === "Identifier" &&
+		typeof node.name === "string"
+	)
+		return node.name;
+	if (node.type === "Literal" && typeof node.value === "string")
+		return node.value;
+	return undefined;
+}
+
 /** Names the bindings a declaration pattern declares, skipping defaults and computed keys. */
 function patternBindings(pattern: unknown): string[] {
 	if (!isSyntaxNode(pattern)) return [];
@@ -188,12 +201,12 @@ export function wrapFunctionPolicy(
 		for (const specifier of node.specifiers as unknown[]) {
 			if (
 				isSyntaxNode(specifier) &&
-				isSyntaxNode(specifier.exported) &&
-				specifier.exported.name === "handler" &&
+				moduleExportName(specifier.exported) === "handler" &&
 				isSyntaxNode(specifier.local) &&
-				typeof specifier.local.name === "string"
+				moduleExportName(specifier.local) !== undefined
 			) {
-				handlerName = specifier.local.name;
+				// A string-literal local name appears only in a re-export, which is renamed below.
+				handlerName = moduleExportName(specifier.local);
 				if (isSyntaxNode(node.source)) {
 					handlerName = unusedName("__yandexOriginalHandler");
 					const imported = source.slice(
@@ -236,9 +249,10 @@ export function wrapFunctionPolicy(
 			"The emitted handler export is missing or already wrapped.",
 		);
 	const serialized = JSON.stringify(policy);
+	// A hoisted declaration is initialized at link time, so cyclic importers can read the export early.
 	const wrapper =
-		`\n${wrapperMarker}\nimport { URL as ${urlName} } from "node:url";\nconst ${wrapperName} = (...${argumentsName}) => ` +
-		`${handlerName}(${argumentsName}[0], ${argumentsName}[1], ${argumentsName}[2], {...${serialized}, artifactDirectory: new ${urlName}(${JSON.stringify(artifactDirectory)}, import.meta.url)});\n`;
+		`\n${wrapperMarker}\nimport { URL as ${urlName} } from "node:url";\nfunction ${wrapperName}(...${argumentsName}) { return ` +
+		`${handlerName}(${argumentsName}[0], ${argumentsName}[1], ${argumentsName}[2], {...${serialized}, artifactDirectory: new ${urlName}(${JSON.stringify(artifactDirectory)}, import.meta.url)}); }\n`;
 	return (
 		applyEdits(source, edits) +
 		wrapper +
