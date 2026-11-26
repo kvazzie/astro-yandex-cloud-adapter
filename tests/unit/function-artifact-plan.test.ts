@@ -5972,6 +5972,64 @@ ${f.index}`,
 	);
 
 	it.each([
+		{
+			name: "renamed manifest bindings",
+			index:
+				"const a=()=>import('./foo.js');const b=new Map([['page:foo',a]]);const c=new Map([]);export const m={pageMap:b,serverIslandMap:c};",
+			page: "import * as images from './assets.mjs'; export const image = images.renderImage({});",
+			expected: true,
+		},
+		{
+			name: "middleware-only image call",
+			index:
+				"const a=()=>import('./foo.js');const b=new Map([['page:foo',a]]);export const m={pageMap:b,middleware:()=>import('./mw.js')};",
+			page: "export const page = true;",
+			expected: true,
+		},
+		{
+			name: "no middleware image call",
+			index:
+				"const a=()=>import('./foo.js');const b=new Map([['page:foo',a]]);export const m={pageMap:b};",
+			page: "export const page = true;",
+			expected: false,
+		},
+	])(
+		"finds runtime image calls from manifest roots: $name",
+		async ({ index, page, expected }) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				`${index}\nfunction h(e,x,p,q){return q}export{h as handler};`,
+			);
+			await writeFile(new URL("foo.js", f.server), page);
+			await writeFile(
+				new URL("mw.js", f.server),
+				"import * as images from './assets.mjs'; export const onRequest = (context, next) => { context.locals.image = images.renderImage({}); return next(); };",
+			);
+			await writeFile(
+				new URL("assets.mjs", f.server),
+				'export const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function getImage(config){return service.getURL(config)} export {getImage as renderImage};',
+			);
+			expect(
+				await hasRuntimeImageCalls(
+					f.server,
+					[
+						{
+							entrypoint: "page:foo",
+							origin: "project",
+							pattern: "/foo",
+							isPrerendered: false,
+						} as Parameters<
+							typeof hasRuntimeImageCalls
+						>[1][number],
+					],
+					new Map(),
+				),
+			).toBe(expected);
+		},
+	);
+
+	it.each([
 		"404#scope.html",
 		"404?scope.html",
 		"404%20scope.html",
