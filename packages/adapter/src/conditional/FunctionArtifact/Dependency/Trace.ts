@@ -37,6 +37,26 @@ export async function traceRuntimeDependencies(
   );
   const root = parse(server).root;
   const planned = new Map(files.map((file) => [join(server, file.path), file]));
+  // nft analyzes each file at its canonical path, so module identities use it too.
+  const identities = new Map<string, Promise<string>>();
+  const canonical = (path: string) => {
+    let identity = identities.get(path);
+    if (!identity) {
+      identity = realpath(path).catch((cause: unknown) => {
+        if (missing(cause)) return path;
+        throw cause;
+      });
+      identities.set(path, identity);
+    }
+    return identity;
+  };
+  // Computed contents written to a symlinked path replace the file it links to.
+  const aliases = new Map<string, PlannedFile>();
+  for (const [path, file] of planned) {
+    if (file.contents === undefined && file.binaryContents === undefined) continue;
+    const identity = await canonical(path);
+    if (identity !== path) aliases.set(identity, file);
+  }
   const inServer = (path: string) => {
     const local = relative(server, path);
     return (
@@ -58,7 +78,7 @@ export async function traceRuntimeDependencies(
     conditions: ["node", "node-addons"],
     // Planned files may differ from the files on disk or not exist yet.
     readFile: async (path) => {
-      const file = planned.get(path);
+      const file = aliases.get(path) ?? planned.get(path);
       if (file?.contents !== undefined) return file.contents;
       if (file?.binaryContents !== undefined)
         return Buffer.from(file.binaryContents);
@@ -100,12 +120,14 @@ export async function traceRuntimeDependencies(
   }
   // Imports count only from files loaded as modules, not from assets read as text.
   const modules = new Set<string>();
-  const pending = [...entries];
+  const pending = await Promise.all(entries.map(canonical));
   while (pending.length) {
     const path = pending.pop()!;
     if (modules.has(path)) continue;
     modules.add(path);
-    pending.push(...(moduleEdges.get(path) ?? []));
+    pending.push(
+      ...(await Promise.all([...(moduleEdges.get(path) ?? [])].map(canonical))),
+    );
   }
   const packages = new Set(
     imports.filter(({ parent }) => modules.has(parent)).map(({ name }) => name),
