@@ -79,6 +79,8 @@ export async function readFunctionOutput(
 export function wrapFunctionPolicy(
 	source: string,
 	policy: Omit<FunctionArtifactPolicy, "artifactDirectory">,
+	/** The artifact root relative to the wrapped module, ending in `/`. */
+	artifactDirectory = "./",
 ): string {
 	let handlerName: string | undefined;
 	const program = parseModule(source);
@@ -167,7 +169,7 @@ export function wrapFunctionPolicy(
 	const serialized = JSON.stringify(policy);
 	const wrapper =
 		`\nimport { URL as ${urlName} } from "node:url";\nconst ${wrapperName} = (...${argumentsName}) => ` +
-		`${handlerName}(${argumentsName}[0], ${argumentsName}[1], ${argumentsName}[2], {...${serialized}, artifactDirectory: new ${urlName}('./', import.meta.url)});\n`;
+		`${handlerName}(${argumentsName}[0], ${argumentsName}[1], ${argumentsName}[2], {...${serialized}, artifactDirectory: new ${urlName}(${JSON.stringify(artifactDirectory)}, import.meta.url)});\n`;
 	return applyEdits(source, edits) + wrapper;
 }
 

@@ -1,7 +1,15 @@
 import type { Stats } from "node:fs";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { readFile, readlink, realpath, stat } from "node:fs/promises";
 import { isBuiltin } from "node:module";
-import { isAbsolute, join, parse, relative, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  parse,
+  relative,
+  sep,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import { nodeFileTrace, resolve } from "@vercel/nft";
 
@@ -37,26 +45,33 @@ export async function traceRuntimeDependencies(
   );
   const root = parse(server).root;
   const planned = new Map(files.map((file) => [join(server, file.path), file]));
+  // Preparation replaces a planned file that is not already in place, link or not.
+  const configured = fileURLToPath(serverDirectory);
+  const replaced = (path: string) => {
+    const file = planned.get(path);
+    return (
+      file !== undefined &&
+      (file.from === undefined ||
+        fileURLToPath(file.from) !== join(configured, file.path))
+    );
+  };
   // nft analyzes each file at its canonical path, so module identities use it too.
   const identities = new Map<string, Promise<string>>();
-  const canonical = (path: string) => {
+  const canonical = (path: string): Promise<string> => {
     let identity = identities.get(path);
     if (!identity) {
-      identity = realpath(path).catch((cause: unknown) => {
-        if (missing(cause)) return path;
-        throw cause;
-      });
+      identity = replaced(path)
+        ? canonical(dirname(path)).then((directory) =>
+            join(directory, basename(path)),
+          )
+        : realpath(path).catch((cause: unknown) => {
+            if (missing(cause)) return path;
+            throw cause;
+          });
       identities.set(path, identity);
     }
     return identity;
   };
-  // Computed contents written to a symlinked path replace the file it links to.
-  const aliases = new Map<string, PlannedFile>();
-  for (const [path, file] of planned) {
-    if (file.contents === undefined && file.binaryContents === undefined) continue;
-    const identity = await canonical(path);
-    if (identity !== path) aliases.set(identity, file);
-  }
   const inServer = (path: string) => {
     const local = relative(server, path);
     return (
@@ -78,7 +93,7 @@ export async function traceRuntimeDependencies(
     conditions: ["node", "node-addons"],
     // Planned files may differ from the files on disk or not exist yet.
     readFile: async (path) => {
-      const file = aliases.get(path) ?? planned.get(path);
+      const file = planned.get(path);
       if (file?.contents !== undefined) return file.contents;
       if (file?.binaryContents !== undefined)
         return Buffer.from(file.binaryContents);
@@ -97,6 +112,17 @@ export async function traceRuntimeDependencies(
       for (const target of [resolved].flat()) targets.add(target);
       moduleEdges.set(parent, targets);
       return resolved;
+    },
+    // A replaced file is a regular file after preparation, even where a link exists now.
+    readlink: async (path) => {
+      if (replaced(path)) return null;
+      try {
+        return await readlink(path);
+      } catch (cause) {
+        const code = (cause as NodeJS.ErrnoException).code ?? "";
+        if (["EINVAL", "ENOENT", "UNKNOWN"].includes(code)) return null;
+        throw cause;
+      }
     },
     stat: async (path) => {
       const file = planned.get(path);

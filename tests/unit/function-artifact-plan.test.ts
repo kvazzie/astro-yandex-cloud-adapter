@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import {
 	access,
 	cp,
+	lstat,
 	mkdir,
 	mkdtemp,
 	readFile,
@@ -6389,11 +6390,33 @@ ${f.index}`,
 		{ server: "client/nested/", overlaps: true },
 		{ server: "function/", overlaps: false },
 		{ server: "function/", linkedClient: true, overlaps: true },
+		{ server: "function/", throughServer: true, overlaps: true },
 	])(
-		"guards server output removal against the client output ($server, linked client: $linkedClient)",
-		async ({ server, overlaps, linkedClient }) => {
+		"guards server output removal against the client output ($server, linked client: $linkedClient, through server: $throughServer)",
+		async ({
+			server,
+			overlaps,
+			linkedClient,
+			throughServer,
+		}) => {
 			const f = await fixture();
 			let client = f.build.config.build.client;
+			if (throughServer) {
+				// Only an intermediate link lies inside the server output.
+				const outDir = f.build.config.outDir;
+				await mkdir(new URL("outside-site/", outDir));
+				await symlink(
+					fileURLToPath(new URL("outside-site", outDir)),
+					fileURLToPath(new URL("function/site-link", outDir)),
+					"dir",
+				);
+				client = new URL("linked-client/", outDir);
+				await symlink(
+					fileURLToPath(new URL("function/site-link", outDir)),
+					fileURLToPath(new URL("linked-client", outDir)),
+					"dir",
+				);
+			}
 			if (linkedClient) {
 				// The configured paths look like siblings, but the client resolves inside the server.
 				await mkdir(
@@ -6501,6 +6524,149 @@ ${f.index}`,
 			expect(policy.artifactDirectory.href).toBe(f.server.href);
 		},
 	);
+
+	it.each(["bundle", "install"] as const)(
+		"keeps the emitted package imports map with the %s strategy",
+		async (dependencyStrategy) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("package.json", f.server),
+				'{"type":"module","imports":{"#helper":"./helper.js"}}',
+			);
+			await writeFile(
+				new URL("helper.js", f.server),
+				'export const helped = "yes";\n',
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`import { helped } from "#helper";\nexport { helped };\n${f.index}`,
+			);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					{ ...settings, dependencyStrategy },
+					{ resolve: () => Promise.reject(new Error("unused")) },
+				),
+			);
+			await Effect.runPromise(
+				FunctionArtifact.applyPreparation(plan),
+			);
+			const { stdout } = await promisify(execFile)(
+				process.execPath,
+				[
+					"--input-type=module",
+					"-e",
+					`const m = await import(${JSON.stringify(new URL("index.js", f.server).href)}); console.log(m.helped);`,
+				],
+			);
+			expect(stdout.trim()).toBe("yes");
+		},
+	);
+
+	it("replaces a linked output file instead of writing through it", async () => {
+		const f = await fixture();
+		const outside = new URL("package-lock.json", f.root);
+		await writeFile(outside, "application lockfile");
+		await symlink(
+			fileURLToPath(outside),
+			new URL("package-lock.json", f.server),
+			"file",
+		);
+		const plan = await Effect.runPromise(
+			FunctionArtifact.planPreparation(
+				f.build,
+				f.routePlan,
+				{ ...settings, dependencyStrategy: "install" },
+				{ resolve: () => Promise.reject(new Error("unused")) },
+			),
+		);
+		await Effect.runPromise(
+			FunctionArtifact.applyPreparation(plan),
+		);
+		expect(await readFile(outside, "utf8")).toBe(
+			"application lockfile",
+		);
+		const written = new URL("package-lock.json", f.server);
+		expect((await lstat(written)).isSymbolicLink()).toBe(false);
+		expect(
+			JSON.parse(await readFile(written, "utf8")),
+		).toMatchObject({
+			lockfileVersion: 3,
+		});
+	});
+
+	it("wraps a linked entrypoint where Node loads it", async () => {
+		const f = await fixture();
+		await mkdir(new URL("chunks/", f.server));
+		await writeFile(
+			new URL("chunks/entry.js", f.server),
+			f.index,
+		);
+		await rm(new URL("index.js", f.server));
+		await symlink(
+			"chunks/entry.js",
+			new URL("index.js", f.server),
+			"file",
+		);
+		const plan = await Effect.runPromise(
+			FunctionArtifact.planPreparation(
+				f.build,
+				f.routePlan,
+				settings,
+			),
+		);
+		await Effect.runPromise(
+			FunctionArtifact.applyPreparation(plan),
+		);
+		expect(
+			(
+				await lstat(new URL("index.js", f.server))
+			).isSymbolicLink(),
+		).toBe(true);
+		const emitted = (await import(
+			new URL("index.js", f.server).href
+		)) as {
+			handler: (...args: unknown[]) => {
+				notFound: { file: string }[];
+				artifactDirectory: URL;
+			};
+		};
+		const policy = emitted.handler(
+			{ httpMethod: "GET", url: "/" },
+			{ requestId: "1" },
+			"/preview",
+		);
+		expect(policy.artifactDirectory.href).toBe(f.server.href);
+		await access(
+			new URL(
+				policy.notFound[0]!.file,
+				policy.artifactDirectory,
+			),
+		);
+	});
+
+	it("rejects a policy entrypoint that links outside the server output", async () => {
+		const f = await fixture();
+		const outside = new URL("entry.js", f.root);
+		await writeFile(outside, f.index);
+		await rm(new URL("index.js", f.server));
+		await symlink(
+			fileURLToPath(outside),
+			new URL("index.js", f.server),
+			"file",
+		);
+		await expect(
+			Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					settings,
+				),
+			),
+		).rejects.toThrow(/links outside the server output/);
+		expect(await readFile(outside, "utf8")).toBe(f.index);
+	});
 
 	it("pins nested optional lock entries when the application root is a symlink", async () => {
 		const f = await fixture();
@@ -8186,7 +8352,7 @@ ${f.index}`,
 		});
 	});
 
-	it("traces computed entry contents written through a symlink", async () => {
+	it("traces computed entry contents that replace a symlink", async () => {
 		const f = await fixture();
 		await writeFile(
 			new URL("handler", f.server),

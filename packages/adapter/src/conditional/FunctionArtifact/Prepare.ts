@@ -61,7 +61,10 @@ export async function planPackageFiles(
 			...archives,
 			{
 				path: "package.json",
-				contents: formatFunctionPackageJson(pinned),
+				contents: formatFunctionPackageJson(
+					pinned,
+					emittedResolution(files),
+				),
 			},
 			{
 				path: "package-lock.json",
@@ -82,6 +85,7 @@ export async function planPackageFiles(
 		private: true,
 		type: "module",
 		engines: { node: ">=22.12.0" },
+		...emittedResolution(files),
 		dependencies: {},
 	};
 	return [
@@ -90,6 +94,32 @@ export async function planPackageFiles(
 			contents: `${JSON.stringify(packageJson, null, 2)}\n`,
 		},
 	];
+}
+
+/** Keeps the emitted package fields that Node uses to resolve the artifact's own modules. */
+function emittedResolution(
+	files: readonly PlannedFile[],
+): Pick<PackageJson, "imports"> {
+	const emitted = files.find(
+		(file) => file.path === "package.json",
+	);
+	if (emitted?.contents === undefined) return {};
+	let manifest: unknown;
+	try {
+		manifest = JSON.parse(emitted.contents);
+	} catch (cause) {
+		throw new Error(
+			"The emitted Function Artifact package.json is not valid JSON.",
+			{ cause },
+		);
+	}
+	const imports =
+		typeof manifest === "object" && manifest !== null
+			? (manifest as { imports?: unknown }).imports
+			: undefined;
+	return imports === undefined
+		? {}
+		: { imports: imports as PackageJson["imports"] };
 }
 
 type FunctionEntrypointValidation =

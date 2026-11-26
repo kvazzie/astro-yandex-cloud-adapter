@@ -15,7 +15,13 @@ function templateFor(
 	runtimePattern: string,
 	staticPriority: number,
 	runtimePriority: number,
-	{ recursive404 = false }: { recursive404?: boolean } = {},
+	{
+		recursive404 = false,
+		staticKind = "page",
+	}: {
+		recursive404?: boolean;
+		staticKind?: "page" | "endpoint";
+	} = {},
 ) {
 	const manifest = defineDeploymentManifest({
 		schemaVersion: 1,
@@ -40,7 +46,7 @@ function templateFor(
 		routes: {
 			prerendered: [
 				{
-					kind: "page",
+					kind: staticKind,
 					url: staticUrl,
 					objectKey: "page.html",
 					artifactId: "client:primary",
@@ -73,7 +79,7 @@ function templateFor(
 		routes: [
 			{
 				kind: "prerendered",
-				routeKind: "page",
+				routeKind: staticKind,
 				pattern: staticUrl,
 				priority: staticPriority,
 				patternRegex: "^.*$",
@@ -138,6 +144,29 @@ describe("API Gateway template route precedence", () => {
 			]?.["x-yc-apigateway-integration"],
 		).toMatchObject({ type: "cloud_functions" });
 	});
+
+	it.each([
+		["/api/status", ["/api/status", "/api/status/"]],
+		["/api/report.v-1", ["/api/report.v-1", "/api/report.v-1/"]],
+		["/feed.xml", ["/feed.xml"]],
+	])(
+		"serves both slash spellings of an extensionless prerendered endpoint under ignore: %s",
+		(url, paths) => {
+			const template = templateFor(url, "/runtime/[id]", 1, 0, {
+				staticKind: "endpoint",
+			});
+			const literal = Object.keys(template.paths).filter(
+				(path) => !path.startsWith("/runtime"),
+			);
+			expect(literal.sort()).toEqual([...paths].sort());
+			for (const path of paths)
+				expect(
+					template.paths[path]?.get?.[
+						"x-yc-apigateway-integration"
+					],
+				).toMatchObject({ object: "page.html" });
+		},
+	);
 
 	it("encodes literal braces in a prerendered Gateway path", () => {
 		const template = templateFor(
@@ -246,6 +275,16 @@ describe("completed-build route requirements", () => {
 			file: "feed.xml",
 			trailingSlash: "always",
 			url: "/feed.xml",
+		},
+		{
+			file: "api/report.v-1",
+			trailingSlash: "always",
+			url: "/api/report.v-1/",
+		},
+		{
+			file: ".well-known/.env",
+			trailingSlash: "always",
+			url: "/.well-known/.env/",
 		},
 	] as const)(
 		"projects a prerendered endpoint $file under trailingSlash $trailingSlash",

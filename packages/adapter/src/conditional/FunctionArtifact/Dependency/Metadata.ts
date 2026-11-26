@@ -82,11 +82,14 @@ function sortedRecord(
 /** Formats the Function Artifact package.json with exact dependency versions. */
 export function formatFunctionPackageJson(
 	dependencies: ResolvedRuntimeDependency[],
+	/** Emitted fields that resolve the artifact's own modules, such as `imports`. */
+	resolution: Pick<PackageJson, "imports"> = {},
 ): string {
 	const packageJson: PackageJson = {
 		private: true,
 		type: "module",
 		engines: { node: FUNCTION_NODE_RANGE },
+		...resolution,
 		dependencies: exactDependencies(
 			dependencies.filter((entry) => !entry.optional),
 		),

@@ -275,7 +275,7 @@ export function reconcileRoutes(
 			addPrerendered(
 				route,
 				evidence.trailingSlash === "always" &&
-					!/\.[^./]+$/.test(file)
+					!hasFileExtension(`/${file}`)
 					? `${url}/`
 					: url,
 				file,
@@ -354,4 +354,9 @@ export function manifestRoutes(
 	onDemand.sort((a, b) => a.pattern.localeCompare(b.pattern));
 	notFound.sort((a, b) => a.scope.localeCompare(b.scope));
 	return { prerendered, onDemand, notFound };
+}
+
+/** Astro 7's endpoint extension rule: a final segment ending in `.` and word characters. */
+export function hasFileExtension(pathname: string): boolean {
+	return /\/[^/]+\.\w+$/.test(pathname);
 }

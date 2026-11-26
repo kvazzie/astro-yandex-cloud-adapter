@@ -1,9 +1,12 @@
-import { realpath } from "node:fs/promises";
+import { readlink, realpath } from "node:fs/promises";
 import {
+	basename,
 	dirname,
 	isAbsolute,
 	join,
+	posix,
 	relative,
+	resolve,
 	sep,
 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -75,11 +78,17 @@ export function planPreparation(
 					real(server),
 					real(client),
 				]);
+				// Removing a link that the client lookup passes through also breaks the client.
+				const clientLookup = await lookupPaths(client);
 				if (
 					within(server, client) ||
 					within(client, server) ||
 					within(realServer, realClient) ||
-					within(realClient, realServer)
+					within(realClient, realServer) ||
+					clientLookup.some(
+						(path) =>
+							within(path, server) || within(path, realServer),
+					)
 				)
 					throw new Errors.InvalidArtifact({
 						message: `The server output ${server} overlaps the client output ${client}, so it cannot be removed when the build has no Function Artifact. Use separate build.server and build.client directories.`,
@@ -133,16 +142,40 @@ export function planPreparation(
 				);
 				const policy = notFound.policies.get(artifact.id)!;
 				if (Object.keys(policy).length) {
-					const entrypoint = files.get("index.js");
+					// Node loads a linked entrypoint from its target, so wrap the target there.
+					const server = await realpath(
+						fileURLToPath(artifact.directory),
+					);
+					const target = relative(
+						server,
+						await realpath(
+							join(
+								fileURLToPath(artifact.directory),
+								"index.js",
+							),
+						),
+					);
+					if (
+						target === "" ||
+						target === ".." ||
+						target.startsWith(`..${sep}`) ||
+						isAbsolute(target)
+					)
+						throw new Errors.InvalidArtifact({
+							message: `The Function Artifact entrypoint index.js links outside the server output, so the 404 policy cannot be added to it. Emit index.js inside ${fileURLToPath(artifact.directory)}.`,
+						});
+					const path = target.split(sep).join("/");
+					const entrypoint = files.get(path);
 					if (entrypoint?.contents === undefined)
 						throw new Error(
 							"The emitted handler export is missing or already wrapped.",
 						);
-					files.set("index.js", {
-						path: "index.js",
+					files.set(path, {
+						path,
 						contents: wrapFunctionPolicy(
 							entrypoint.contents,
 							policy,
+							`${posix.relative(posix.dirname(path), ".") || "."}/`,
 						),
 					});
 				}
@@ -196,4 +229,40 @@ export function planPreparation(
 						cause,
 					}),
 	});
+}
+
+/** Lists every path that resolving `path` visits, including each intermediate link. */
+async function lookupPaths(
+	path: string,
+	links = new Set<string>(),
+): Promise<string[]> {
+	const parent = dirname(path);
+	if (parent === path) return [path];
+	const visited = await lookupPaths(parent, links);
+	const current = join(visited.at(-1)!, basename(path));
+	let target: string;
+	try {
+		target = await readlink(current);
+	} catch (cause) {
+		if (
+			["EINVAL", "ENOENT", "ENOTDIR"].includes(
+				(cause as NodeJS.ErrnoException).code ?? "",
+			)
+		)
+			return [...visited, current];
+		throw cause;
+	}
+	if (links.has(current))
+		throw new Errors.InvalidArtifact({
+			message: `The client output path ${path} contains a symbolic link loop.`,
+		});
+	links.add(current);
+	return [
+		...visited,
+		current,
+		...(await lookupPaths(
+			resolve(dirname(current), target),
+			links,
+		)),
+	];
 }

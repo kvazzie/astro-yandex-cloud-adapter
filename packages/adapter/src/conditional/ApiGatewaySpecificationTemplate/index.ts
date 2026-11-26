@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 
 import type { DeploymentManifestV1 } from "../../mandatory/DeploymentManifest/Schema.ts";
-import type { RoutePlan } from "../../mandatory/ArtifactGeneration/RouteRequirements";
+import {
+	hasFileExtension,
+	type RoutePlan,
+} from "../../mandatory/ArtifactGeneration/RouteRequirements";
 
 interface GatewayVariable {
 	default: string;
@@ -318,8 +321,11 @@ export function generateApiGatewaySpecificationTemplate(
 			operation,
 			methods: ["get", "head"],
 		});
+		// Astro matches both spellings of pages and extensionless endpoints under "ignore".
 		if (
-			route.kind === "page" &&
+			(route.kind === "page" ||
+				(route.kind === "endpoint" &&
+					!hasFileExtension(route.url))) &&
 			route.url !== "/" &&
 			(routePlan.trailingSlash === "ignore" ||
 				operation.responses["200"]?.["x-yc-status-mapping"] ===
