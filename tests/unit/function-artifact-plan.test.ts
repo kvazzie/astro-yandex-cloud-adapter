@@ -130,6 +130,39 @@ async function seedFixtureTarballCache(
 	return cache;
 }
 
+/** Builds an uncompressed ustar archive with valid header checksums. */
+function ustar(entries: Record<string, string>): Buffer {
+	const blocks: Buffer[] = [];
+	for (const [name, contents] of Object.entries(entries)) {
+		const data = Buffer.from(contents);
+		const header = Buffer.alloc(512);
+		const octal = (value: number, width: number) =>
+			value.toString(8).padStart(width - 1, "0") + "\0";
+		header.write(name, 0, "utf8");
+		header.write(octal(0o644, 8), 100, "ascii");
+		header.write(octal(0, 8), 108, "ascii");
+		header.write(octal(0, 8), 116, "ascii");
+		header.write(octal(data.length, 12), 124, "ascii");
+		header.write(octal(0, 12), 136, "ascii");
+		header.write(" ".repeat(8), 148, "ascii");
+		header.write("0", 156, "ascii");
+		header.write("ustar\0", 257, "ascii");
+		header.write("00", 263, "ascii");
+		const checksum = header.reduce((sum, byte) => sum + byte, 0);
+		header.write(
+			`${checksum.toString(8).padStart(6, "0")}\0 `,
+			148,
+			"ascii",
+		);
+		blocks.push(
+			header,
+			data,
+			Buffer.alloc((512 - (data.length % 512)) % 512),
+		);
+	}
+	return Buffer.concat([...blocks, Buffer.alloc(1024)]);
+}
+
 async function fixture(parent = tmpdir()) {
 	const directory = await mkdtemp(
 		join(parent, "astro-function-plan-"),
@@ -6498,36 +6531,18 @@ ${f.index}`,
 		},
 	])(
 		"validates a bundled peer alias against its target: $provider.name@$provider.version",
-		async ({ provider, valid }) => {
-			const directory = await mkdtemp(
-				join(tmpdir(), "bundled-alias-"),
-			);
-			directories.push(directory);
-			const modules = join(directory, "package/node_modules");
-			for (const [slot, manifest] of [
-				[
-					"consumer",
-					{
-						name: "consumer",
-						version: "1.0.0",
-						peerDependencies: { fmt: "npm:real-fmt@^1" },
-					},
-				],
-				["fmt", provider],
-			] as const) {
-				await mkdir(join(modules, slot), { recursive: true });
-				await writeFile(
-					join(modules, slot, "package.json"),
-					JSON.stringify(manifest),
-				);
-			}
-			await promisify(execFile)(
-				"tar",
-				["-czf", "bundle.tgz", "package"],
-				{ cwd: directory },
-			);
-			const bytes = await readFile(
-				join(directory, "bundle.tgz"),
+		({ provider, valid }) => {
+			const bytes = gzipSync(
+				ustar({
+					"package/node_modules/consumer/package.json":
+						JSON.stringify({
+							name: "consumer",
+							version: "1.0.0",
+							peerDependencies: { fmt: "npm:real-fmt@^1" },
+						}),
+					"package/node_modules/fmt/package.json":
+						JSON.stringify(provider),
+				}),
 			);
 			if (valid) expect(externalBundledPeers(bytes)).toEqual([]);
 			else
@@ -6628,6 +6643,11 @@ ${f.index}`,
 		{ server: "function/", overlaps: false },
 		{ server: "function/", linkedClient: true, overlaps: true },
 		{ server: "function/", throughServer: true, overlaps: true },
+		{
+			server: "function/",
+			revisitedLink: true,
+			overlaps: false,
+		},
 	])(
 		"guards server output removal against the client output ($server, linked client: $linkedClient, through server: $throughServer)",
 		async ({
@@ -6635,9 +6655,33 @@ ${f.index}`,
 			overlaps,
 			linkedClient,
 			throughServer,
+			revisitedLink,
 		}) => {
 			const f = await fixture();
 			let client = f.build.config.build.client;
+			if (revisitedLink) {
+				// The client lookup passes through dist/client twice without a loop.
+				const outDir = f.build.config.outDir;
+				const assets = new URL("assets/", f.root);
+				await mkdir(new URL("site/", assets), {
+					recursive: true,
+				});
+				await rm(new URL("client", outDir), {
+					recursive: true,
+					force: true,
+				});
+				await symlink(
+					fileURLToPath(assets),
+					fileURLToPath(new URL("client", outDir)),
+					"dir",
+				);
+				await symlink(
+					fileURLToPath(new URL("client/site", outDir)),
+					fileURLToPath(new URL("redirect", assets)),
+					"dir",
+				);
+				client = new URL("client/redirect/", outDir);
+			}
 			if (throughServer) {
 				// Only an intermediate link lies inside the server output.
 				const outDir = f.build.config.outDir;
@@ -6817,6 +6861,70 @@ ${f.index}`,
 		},
 	);
 
+	it.each([
+		{ target: '"helper"', key: "#helper", specifier: "#helper" },
+		{
+			target:
+				'{"node":{"import":"helper"},"default":"./missing.js"}',
+			key: "#helper",
+			specifier: "#helper",
+		},
+		{
+			target: '"helper/*"',
+			key: "#lib/*",
+			specifier: "#lib/index.js",
+		},
+	] as const)(
+		"plans the package an emitted imports map targets: $key -> $target",
+		async ({ target, key, specifier }) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("package.json", f.server),
+				`{"type":"module","imports":{${JSON.stringify(key)}:${target}}}`,
+			);
+			await mkdir(new URL("node_modules/helper/", f.root), {
+				recursive: true,
+			});
+			await writeFile(
+				new URL("node_modules/helper/package.json", f.root),
+				'{"name":"helper","version":"1.2.3","type":"module"}',
+			);
+			await writeFile(
+				new URL("node_modules/helper/index.js", f.root),
+				"export const helped = true;\n",
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`import ${JSON.stringify(specifier)};\n${f.index}`,
+			);
+			const plan = (dependencyStrategy: "bundle" | "install") =>
+				Effect.runPromise(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						{ ...settings, dependencyStrategy },
+						{
+							resolve: () =>
+								Promise.resolve({ version: "1.2.3" }),
+						},
+					),
+				);
+			const lock = (await plan("install")).mutations.find(
+				(m) =>
+					m.kind === "writeFile" &&
+					m.path.pathname.endsWith("package-lock.json"),
+			);
+			expect(
+				lock?.kind === "writeFile" && JSON.parse(lock.contents),
+			).toMatchObject({
+				packages: {
+					"node_modules/helper": { version: "1.2.3" },
+				},
+			});
+			await expect(plan("bundle")).rejects.toThrow(/helper/);
+		},
+	);
+
 	it("replaces a linked output file instead of writing through it", async () => {
 		const f = await fixture();
 		const outside = new URL("package-lock.json", f.root);
@@ -6852,9 +6960,11 @@ ${f.index}`,
 	it("wraps a linked entrypoint where Node loads it", async () => {
 		const f = await fixture();
 		await mkdir(new URL("chunks/", f.server));
+		// The target keeps its own relative imports of the emitted pages.
 		await writeFile(
 			new URL("chunks/entry.js", f.server),
-			f.index,
+			f.index.replaceAll("'./", "'../") +
+				"export const loadPage = () => loadFoo();\n",
 		);
 		await rm(new URL("index.js", f.server));
 		await symlink(
@@ -6877,26 +6987,23 @@ ${f.index}`,
 				await lstat(new URL("index.js", f.server))
 			).isSymbolicLink(),
 		).toBe(true);
-		const emitted = (await import(
-			new URL("index.js", f.server).href
-		)) as {
-			handler: (...args: unknown[]) => {
-				notFound: { file: string }[];
-				artifactDirectory: URL;
-			};
-		};
-		const policy = emitted.handler(
-			{ httpMethod: "GET", url: "/" },
-			{ requestId: "1" },
-			"/preview",
+		const { stdout } = await promisify(execFile)(
+			process.execPath,
+			[
+				"--input-type=module",
+				"-e",
+				`import { access } from "node:fs/promises";
+const m = await import(${JSON.stringify(new URL("index.js", f.server).href)});
+const policy = m.handler({ httpMethod: "GET", url: "/" }, { requestId: "1" }, "/preview");
+await access(new URL(policy.notFound[0].file, policy.artifactDirectory));
+const page = await m.loadPage();
+console.log(JSON.stringify({ directory: policy.artifactDirectory.href, page: Object.keys(page) }));`,
+			],
 		);
-		expect(policy.artifactDirectory.href).toBe(f.server.href);
-		await access(
-			new URL(
-				policy.notFound[0]!.file,
-				policy.artifactDirectory,
-			),
-		);
+		expect(JSON.parse(stdout)).toEqual({
+			directory: f.server.href,
+			page: ["asset"],
+		});
 	});
 
 	it("rejects a policy entrypoint that links outside the server output", async () => {

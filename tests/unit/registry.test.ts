@@ -207,6 +207,31 @@ describe("install registry metadata", () => {
 		},
 	);
 
+	it("falls back from a deprecated latest tag for a wildcard like npm", async () => {
+		const tags = { latest: "2.0.0-beta.1" };
+		// npm view child@* returns only the latest manifest.
+		command
+			.mockResolvedValueOnce({
+				stdout: JSON.stringify({
+					version: "2.0.0-beta.1",
+					deprecated: "use 1.0.0",
+					"dist-tags": tags,
+				}),
+				stderr: "",
+			})
+			.mockResolvedValue({
+				stdout: JSON.stringify([
+					{ version: "1.0.0", "dist-tags": tags },
+				]),
+				stderr: "",
+			});
+		expect(
+			await npmRegistry.resolve("child", "*"),
+		).toMatchObject({
+			version: "1.0.0",
+		});
+	});
+
 	it("launches the npm CLI with Node and separate arguments on Windows", async () => {
 		metadata({ version: "1.0.0" });
 		const platform = Object.getOwnPropertyDescriptor(

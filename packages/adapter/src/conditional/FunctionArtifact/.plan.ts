@@ -234,6 +234,7 @@ export function planPreparation(
 /** Lists every path that resolving `path` visits, including each intermediate link. */
 async function lookupPaths(
 	path: string,
+	// Links whose expansion is in progress; a completed link may be passed again.
 	links = new Set<string>(),
 ): Promise<string[]> {
 	const parent = dirname(path);
@@ -257,12 +258,16 @@ async function lookupPaths(
 			message: `The client output path ${path} contains a symbolic link loop.`,
 		});
 	links.add(current);
-	return [
-		...visited,
-		current,
-		...(await lookupPaths(
-			resolve(dirname(current), target),
-			links,
-		)),
-	];
+	try {
+		return [
+			...visited,
+			current,
+			...(await lookupPaths(
+				resolve(dirname(current), target),
+				links,
+			)),
+		];
+	} finally {
+		links.delete(current);
+	}
 }

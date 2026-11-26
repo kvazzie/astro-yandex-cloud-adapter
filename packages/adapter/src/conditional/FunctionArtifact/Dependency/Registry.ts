@@ -276,6 +276,16 @@ async function fetchRegistryMetadata(
 	const versions = Array.isArray(published)
 		? published
 		: [published];
+	// npm view name@* returns only the default tag; npm install falls back to the
+	// other stable versions when that tag is deprecated or unusable.
+	if (requirement === "*")
+		versions.push(
+			...(await requestMetadata<
+				PublishedVersion | PublishedVersion[]
+			>(packageName, ">=0.0.0", appRoot)
+				.then((entries) => [entries].flat())
+				.catch(() => [])),
+		);
 	const version =
 		semver.valid(requirement) ??
 		npmSelection(packageName, requirement, versions);
