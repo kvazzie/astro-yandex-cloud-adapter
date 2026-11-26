@@ -111,7 +111,10 @@ export async function traceRuntimeDependencies(
       const name = barePackageName(specifier);
       if (name && inServer(parent)) imports.push({ name, parent });
       const resolved = await resolve(specifier, parent, job, cjsResolve);
-      const targets = moduleEdges.get(parent) ?? new Set<string>();
+      // Publish the parent's edge set before any await, so sibling resolutions
+      // of the same parent add to it instead of replacing it.
+      let targets = moduleEdges.get(parent);
+      if (!targets) moduleEdges.set(parent, (targets = new Set<string>()));
       for (const target of [resolved].flat()) {
         targets.add(target);
         // nft resolves a package that an imports map selects without calling this
@@ -121,7 +124,6 @@ export async function traceRuntimeDependencies(
           for (const name of await installedBindings(target, parent))
             imports.push({ name, parent });
       }
-      moduleEdges.set(parent, targets);
       return resolved;
     },
     // A replaced file is a regular file after preparation, even where a link exists now.

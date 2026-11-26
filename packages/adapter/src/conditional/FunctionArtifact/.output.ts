@@ -75,6 +75,9 @@ export async function readFunctionOutput(
 	};
 }
 
+const wrapperMarker =
+	"/* @astro-yandex-cloud/adapter: 404 policy wrapper */";
+
 /** Computes a wrapped handler without changing the emitted file. */
 export function wrapFunctionPolicy(
 	source: string,
@@ -82,6 +85,11 @@ export function wrapFunctionPolicy(
 	/** The artifact root relative to the wrapped module, ending in `/`. */
 	artifactDirectory = "./",
 ): string {
+	// A prepared entrypoint carries the marker; a binding name alone proves nothing.
+	if (source.includes(wrapperMarker))
+		throw new Error(
+			"The emitted handler export is missing or already wrapped.",
+		);
 	let handlerName: string | undefined;
 	const program = parseModule(source);
 	// Identifiers may use escapes, so compare decoded names as well as source text.
@@ -108,12 +116,62 @@ export function wrapFunctionPolicy(
 		end: number;
 		value: string;
 	}> = [];
+	const trailingExports: string[] = [];
 	visitSyntax(program, (node) => {
-		if (
-			node.type !== "ExportNamedDeclaration" ||
-			!Array.isArray(node.specifiers)
-		)
+		if (node.type !== "ExportNamedDeclaration") return;
+		// An inline declaration stays local, and the wrapper takes its export name.
+		const declaration = node.declaration;
+		if (isSyntaxNode(declaration)) {
+			const names: string[] = [];
+			if (
+				declaration.type === "FunctionDeclaration" ||
+				declaration.type === "ClassDeclaration"
+			) {
+				if (isSyntaxNode(declaration.id))
+					names.push(String(declaration.id.name));
+			} else if (
+				declaration.type === "VariableDeclaration" &&
+				Array.isArray(declaration.declarations)
+			)
+				for (const declarator of declaration.declarations as unknown[])
+					if (
+						isSyntaxNode(declarator) &&
+						isSyntaxNode(declarator.id)
+					)
+						visitSyntax(declarator.id, (binding, ancestors) => {
+							const parent = ancestors.at(-1);
+							// Property keys and default values are not bindings.
+							if (
+								binding.type === "Identifier" &&
+								typeof binding.name === "string" &&
+								!(
+									parent?.type === "Property" &&
+									parent.key === binding &&
+									parent.value !== binding
+								) &&
+								!(
+									parent?.type === "AssignmentPattern" &&
+									parent.right === binding
+								)
+							)
+								names.push(binding.name);
+						});
+			if (!names.includes("handler")) return;
+			handlerName = "handler";
+			edits.push({
+				start: node.start,
+				end: declaration.start,
+				value: "",
+			});
+			const others = names.filter((name) => name !== "handler");
+			if (others.length)
+				trailingExports.push(`export { ${others.join(", ")} };`);
+			trailingExports.push(
+				`export { ${wrapperName} as handler };`,
+			);
 			return;
+		}
+		if (!Array.isArray(node.specifiers)) return;
 		for (const specifier of node.specifiers as unknown[]) {
 			if (
 				isSyntaxNode(specifier) &&
@@ -124,8 +182,6 @@ export function wrapFunctionPolicy(
 			) {
 				handlerName = specifier.local.name;
 				if (isSyntaxNode(node.source)) {
-					if (handlerName === "__yandexArtifactHandler")
-						continue;
 					handlerName = unusedName("__yandexOriginalHandler");
 					const imported = source.slice(
 						specifier.local.start,
@@ -162,15 +218,19 @@ export function wrapFunctionPolicy(
 			}
 		}
 	});
-	if (!handlerName || handlerName === "__yandexArtifactHandler")
+	if (!handlerName)
 		throw new Error(
 			"The emitted handler export is missing or already wrapped.",
 		);
 	const serialized = JSON.stringify(policy);
 	const wrapper =
-		`\nimport { URL as ${urlName} } from "node:url";\nconst ${wrapperName} = (...${argumentsName}) => ` +
+		`\n${wrapperMarker}\nimport { URL as ${urlName} } from "node:url";\nconst ${wrapperName} = (...${argumentsName}) => ` +
 		`${handlerName}(${argumentsName}[0], ${argumentsName}[1], ${argumentsName}[2], {...${serialized}, artifactDirectory: new ${urlName}(${JSON.stringify(artifactDirectory)}, import.meta.url)});\n`;
-	return applyEdits(source, edits) + wrapper;
+	return (
+		applyEdits(source, edits) +
+		wrapper +
+		trailingExports.map((line) => `${line}\n`).join("")
+	);
 }
 
 /** Applies non-overlapping AST edits from the end to preserve original offsets. */

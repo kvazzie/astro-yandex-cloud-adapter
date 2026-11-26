@@ -6813,6 +6813,81 @@ ${f.index}`,
 	);
 
 	it.each([
+		{
+			name: "inline function declaration",
+			replace: (index: string) =>
+				index
+					.replace(
+						"function handler(",
+						"export function handler(",
+					)
+					.replace("export { handler };", ""),
+		},
+		{
+			name: "inline variable declaration",
+			replace: (index: string) =>
+				index
+					.replace(
+						"function handler(event, context, previewUrl, policy) { return policy; }",
+						"export const handler = (event, context, previewUrl, policy) => policy, kept = 1;",
+					)
+					.replace("export { handler };", ""),
+			kept: true,
+		},
+		{
+			name: "binding named like the generated wrapper",
+			replace: (index: string) =>
+				index.replace(
+					"export { handler };",
+					"const __yandexArtifactHandler = handler; export { __yandexArtifactHandler as handler };",
+				),
+		},
+	])(
+		"wraps a handler exported as an $name",
+		async ({ replace, ...row }) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				replace(f.index),
+			);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					settings,
+				),
+			);
+			await Effect.runPromise(
+				FunctionArtifact.applyPreparation(plan),
+			);
+			const emitted = (await import(
+				`${new URL("index.js", f.server).href}?${Date.now()}`
+			)) as {
+				kept?: number;
+				handler: (...args: unknown[]) => { notFound: unknown[] };
+			};
+			expect(
+				emitted.handler(
+					{ httpMethod: "GET", url: "/" },
+					{},
+					"/preview",
+				).notFound,
+			).toHaveLength(1);
+			if ("kept" in row) expect(emitted.kept).toBe(1);
+			// A prepared entrypoint is recognized by its marker, not a name.
+			await expect(
+				Effect.runPromise(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						settings,
+					),
+				),
+			).rejects.toThrow(/already wrapped/);
+		},
+	);
+
+	it.each([
 		"event",
 		"context",
 		"previewUrl",
@@ -6997,6 +7072,56 @@ ${f.index}`,
 		},
 	);
 
+	it("keeps sibling module edges while naming an imports-map binding", async () => {
+		const f = await fixture();
+		await writeFile(
+			new URL("package.json", f.server),
+			'{"type":"module","imports":{"#helper":"helper"}}',
+		);
+		for (const name of ["helper", "example"]) {
+			await mkdir(new URL(`node_modules/${name}/`, f.root), {
+				recursive: true,
+			});
+			await writeFile(
+				new URL(`node_modules/${name}/package.json`, f.root),
+				`{"name":"${name}","version":"1.0.0","type":"module"}`,
+			);
+			await writeFile(
+				new URL(`node_modules/${name}/index.js`, f.root),
+				"export {};\n",
+			);
+		}
+		await writeFile(
+			new URL("runtime-helper.js", f.server),
+			'import "example";\n',
+		);
+		await writeFile(
+			new URL("index.js", f.server),
+			`import "#helper";\nimport "./runtime-helper.js";\n${f.index}`,
+		);
+		const trace = await traceRuntimeDependencies(
+			[
+				{
+					path: "index.js",
+					from: new URL("index.js", f.server),
+				},
+				{
+					path: "runtime-helper.js",
+					from: new URL("runtime-helper.js", f.server),
+				},
+				{
+					path: "package.json",
+					from: new URL("package.json", f.server),
+				},
+			],
+			f.server,
+		);
+		expect([...trace.packages].sort()).toEqual([
+			"example",
+			"helper",
+		]);
+	});
+
 	it("keeps the linked binding an emitted imports map selects", async () => {
 		const f = await fixture();
 		await writeFile(
@@ -7056,6 +7181,31 @@ ${f.index}`,
 			throw new Error("Expected a generated package.json");
 		expect(JSON.parse(manifest.contents)).toMatchObject({
 			dependencies: { "helper-alias": "npm:real-helper@1.0.0" },
+		});
+	});
+
+	it("reads an emitted package.json that starts with a byte order mark", async () => {
+		const f = await fixture();
+		await writeFile(
+			new URL("package.json", f.server),
+			'\uFEFF{"type":"module","imports":{"#helper":"./helper.js"}}',
+		);
+		const plan = await Effect.runPromise(
+			FunctionArtifact.planPreparation(
+				f.build,
+				f.routePlan,
+				settings,
+			),
+		);
+		const manifest = plan.mutations.find(
+			(m) =>
+				m.kind === "writeFile" &&
+				m.path.pathname.endsWith("/package.json"),
+		);
+		if (manifest?.kind !== "writeFile")
+			throw new Error("Expected a generated package.json");
+		expect(JSON.parse(manifest.contents)).toMatchObject({
+			imports: { "#helper": "./helper.js" },
 		});
 	});
 
@@ -9005,6 +9155,14 @@ console.log(JSON.stringify({ directory: policy.artifactDirectory.href, page: Obj
 					m.kind === "writeFile" &&
 					m.path.pathname.endsWith("package-lock.json"),
 			);
+			// Only the bundle strategy writes no lockfile.
+			if (
+				dependencyStrategy === "install" &&
+				lock?.kind !== "writeFile"
+			)
+				throw new Error(
+					"Expected install planning to write a lockfile",
+				);
 			expect(
 				lock?.kind === "writeFile" ? lock.contents : "",
 			).not.toContain("node_modules/example");
@@ -9081,14 +9239,15 @@ console.log(JSON.stringify({ directory: policy.artifactDirectory.href, page: Obj
 					m.kind === "writeFile" &&
 					m.path.pathname.endsWith("package-lock.json"),
 			);
-			const packages =
-				lock?.kind === "writeFile"
-					? (
-							JSON.parse(lock.contents) as {
-								packages: Record<string, unknown>;
-							}
-						).packages
-					: {};
+			if (lock?.kind !== "writeFile")
+				throw new Error(
+					"Expected install planning to write a lockfile",
+				);
+			const packages = (
+				JSON.parse(lock.contents) as {
+					packages: Record<string, unknown>;
+				}
+			).packages;
 			expect(
 				Object.hasOwn(packages, "node_modules/example"),
 			).toBe(includeDependencies.length > 0);

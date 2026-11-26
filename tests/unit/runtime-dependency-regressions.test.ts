@@ -356,13 +356,13 @@ describe("runtime dependency regressions", () => {
 									"node_modules/alpha/node_modules/a-shared",
 							),
 						).toBeDefined();
-					// Node resolves each consumer's peer from its own location upward.
-					const effectivePeer = (consumer: string) => {
+					// Node resolves each consumer's binding from its own location upward.
+					const effective = (consumer: string, name: string) => {
 						for (let scope = consumer; ;) {
 							const found = graph.find(
 								({ location }) =>
 									location ===
-									`${scope ? `${scope}/` : ""}node_modules/${peerName}`,
+									`${scope ? `${scope}/` : ""}node_modules/${name}`,
 							);
 							if (found || !scope) return found;
 							scope = scope.replace(
@@ -371,19 +371,31 @@ describe("runtime dependency regressions", () => {
 							);
 						}
 					};
+					const effectivePeer = (consumer: string) =>
+						effective(consumer, peerName);
 					for (const parent of ["alpha", "beta"]) {
 						const context =
 							parent === "alpha" && !matching ? "b" : "a";
-						expect(
-							effectivePeer(
-								`${nested ? "node_modules/container/" : ""}node_modules/${parent}`,
-							)?.installedDirectory,
-							parent,
-						).toBe(
-							await realpath(
-								join(root, "installed", `peer-${context}`),
-							),
+						const parentLocation = `${nested ? "node_modules/container/" : ""}node_modules/${parent}`;
+						const expected = await realpath(
+							join(root, "installed", `peer-${context}`),
 						);
+						// The parent's own dependency edge on the peer.
+						expect(
+							effectivePeer(parentLocation)?.installedDirectory,
+							parent,
+						).toBe(expected);
+						// The peer that the renderer this parent loads resolves.
+						const renderer = effective(
+							parentLocation,
+							"a-shared",
+						);
+						expect(renderer, `${parent} a-shared`).toBeDefined();
+						expect(
+							effectivePeer(renderer!.location)
+								?.installedDirectory,
+							`${parent} renderer`,
+						).toBe(expected);
 					}
 					const lock = formatNpmLockfile(graph);
 					if (previous) expect(lock).toBe(previous);

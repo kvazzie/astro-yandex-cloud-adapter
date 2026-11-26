@@ -106,7 +106,10 @@ function emittedResolution(
 	if (emitted?.contents === undefined) return {};
 	let manifest: unknown;
 	try {
-		manifest = JSON.parse(emitted.contents);
+		// Node accepts one leading byte order mark in package.json.
+		manifest = JSON.parse(
+			emitted.contents.replace(/^\uFEFF/, ""),
+		);
 	} catch (cause) {
 		throw new Error(
 			"The emitted Function Artifact package.json is not valid JSON.",
