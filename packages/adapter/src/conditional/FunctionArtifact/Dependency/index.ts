@@ -748,15 +748,20 @@ export async function resolvePinnedRuntimeDependencies(
 			name,
 			source,
 		);
-		const peers = Object.keys(
-			metadata.peerDependencies ?? {},
-		).map((peer) => {
-			const child = children.find(({ name }) => name === peer);
-			return [
-				peer,
-				child ? identity(peer, child.source) : undefined,
-			] as const;
-		});
+		// npm's ordinary edge replaces a peer edge of the same name.
+		const peers = Object.keys(metadata.peerDependencies ?? {})
+			.filter(
+				(peer) =>
+					metadata.dependencies?.[peer] === undefined &&
+					metadata.optionalDependencies?.[peer] === undefined,
+			)
+			.map((peer) => {
+				const child = children.find(({ name }) => name === peer);
+				return [
+					peer,
+					child ? identity(peer, child.source) : undefined,
+				] as const;
+			});
 		let ancestor = parent;
 		const available: string[] = [];
 		let reused: string | undefined;
@@ -946,7 +951,7 @@ export async function resolvePinnedRuntimeDependencies(
 			if (!peer || source.directory)
 				(optional ? optionalDependencies : dependencies)[name] =
 					exactDependencyVersion(child);
-			if (metadata.peerDependencies?.[name] !== undefined)
+			if (peer)
 				peerDependencies[name] = exactDependencyVersion(child);
 		}
 		if (Object.keys(dependencies).length)

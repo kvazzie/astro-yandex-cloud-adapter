@@ -470,6 +470,73 @@ describe("runtime dependency regressions", () => {
 		}
 	});
 
+	it("lets an ordinary dependency take precedence over a peer of the same name", async () => {
+		const root = await mkdtemp(
+			join(tmpdir(), "yandex-ordinary-over-peer-"),
+		);
+		try {
+			for (const [directory, manifest] of [
+				...(["alpha", "beta"] as const).map(
+					(name) =>
+						[
+							`node_modules/${name}`,
+							{
+								name,
+								version: "1.0.0",
+								dependencies: { renderer: "^1.0.0" },
+							},
+						] as const,
+				),
+				[
+					"node_modules/renderer",
+					{
+						name: "renderer",
+						version: "1.0.0",
+						dependencies: { host: "^2.0.0" },
+						peerDependencies: { host: "^1.0.0" },
+					},
+				],
+				[
+					"node_modules/renderer/node_modules/host",
+					{ name: "host", version: "2.0.0" },
+				],
+				[
+					"node_modules/host",
+					{ name: "host", version: "1.0.0" },
+				],
+			] as const) {
+				await mkdir(join(root, directory), { recursive: true });
+				await writeFile(
+					join(root, directory, "package.json"),
+					JSON.stringify(manifest),
+				);
+			}
+			const graph = await resolvePinnedRuntimeDependencies(
+				pathToFileURL(`${root}/`),
+				new Set(["alpha", "beta"]),
+				{ resolve: () => Promise.resolve({}) },
+			);
+			expect(
+				graph
+					.map(({ location, version }) => [location, version])
+					.sort(),
+			).toEqual([
+				["node_modules/alpha", "1.0.0"],
+				["node_modules/beta", "1.0.0"],
+				["node_modules/renderer", "1.0.0"],
+				["node_modules/renderer/node_modules/host", "2.0.0"],
+			]);
+			expect(
+				graph.find(({ name }) => name === "renderer"),
+			).toMatchObject({
+				dependencies: { host: "2.0.0" },
+				peerDependencies: { host: "^1.0.0" },
+			});
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it.each([
 		{ peer: false, reuse: false, barrier: false },
 		{ peer: false, reuse: true, barrier: false },
