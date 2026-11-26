@@ -4,6 +4,7 @@ import { realpath } from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
 
 import pack from "libnpmpack";
+import ssri from "ssri";
 
 import type { PlannedFile } from "../.types.ts";
 import type { ResolvedRuntimeDependency } from "./Metadata.ts";
@@ -95,23 +96,11 @@ export function externalBundledPeers(
 	bytes: Buffer,
 	integrity?: string,
 ) {
-	if (integrity) {
-		const expected = integrity.split(/\s+/).some((token) => {
-			const match =
-				/^(sha1|sha256|sha384|sha512)-([^?]+)(?:\?.*)?$/.exec(
-					token,
-				);
-			return (
-				match &&
-				createHash(match[1]!).update(bytes).digest("base64") ===
-					match[2]
-			);
-		});
-		if (!expected)
-			throw new Error(
-				"Integrity mismatch inspecting the bundled npm tarball.",
-			);
-	}
+	// npm checks only the strongest listed algorithm, so a weaker match is not enough.
+	if (integrity && !ssri.checkData(bytes, integrity))
+		throw new Error(
+			"Integrity mismatch inspecting the bundled npm tarball.",
+		);
 	const manifests = new Map<string, RegistryVersionMetadata>();
 	for (const [name, contents] of packedFiles(bytes))
 		if (

@@ -146,9 +146,11 @@ export interface RegistryVersionMetadata {
 }
 
 export interface Registry {
+	/** `appRoot` selects the application's npm configuration, such as its registry and tag. */
 	resolve(
 		packageName: string,
 		version: string,
+		appRoot?: URL,
 	): Promise<RegistryVersionMetadata>;
 }
 

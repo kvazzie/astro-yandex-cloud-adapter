@@ -133,6 +133,9 @@ importers:
       semver:
         specifier: ^7.8.5
         version: 7.8.5
+      ssri:
+        specifier: ^13.0.1
+        version: 13.0.1
       tinyglobby:
         specifier: ^0.2.17
         version: 0.2.17
@@ -155,6 +158,9 @@ importers:
       "@types/semver":
         specifier: ^7.8.0
         version: 7.8.0
+      "@types/ssri":
+        specifier: ^7.1.5
+        version: 7.1.5
       astro:
         specifier: ^7.1.0
         version: 7.1.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(jiti@2.7.0)(rollup@4.62.4)(yaml@2.9.1)
@@ -2952,6 +2958,12 @@ packages:
     resolution:
       {
         integrity: sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==,
+      }
+
+  "@types/ssri@7.1.5":
+    resolution:
+      {
+        integrity: sha512-odD/56S3B51liILSk5aXJlnYt99S6Rt9EFDDqGtJM26rKHApHcwyU/UoYHrzKkdkHMAIquGWCuHtQTbes+FRQw==,
       }
 
   "@types/unist@3.0.3":
@@ -7959,6 +7971,10 @@ snapshots:
   "@types/npm-package-arg@6.1.4": {}
 
   "@types/semver@7.8.0": {}
+
+  "@types/ssri@7.1.5":
+    dependencies:
+      "@types/node": 24.13.3
 
   "@types/unist@3.0.3": {}
 

@@ -231,6 +231,7 @@ export async function readRootRequirementPrecedence(
 async function findInstalledManifest(
 	base: URL | string,
 	name: string,
+	requireManifest = true,
 ) {
 	for (const modules of createRequire(base).resolve.paths(
 		`${name}/package.json`,
@@ -246,10 +247,12 @@ async function findInstalledManifest(
 				directory: await realpath(location),
 			};
 		// Node loads a nearer folder's index without a manifest before any ancestor.
-		if (await hasDirectoryIndex(location))
+		if (await hasDirectoryIndex(location)) {
+			if (!requireManifest) return undefined;
 			throw new Error(
 				`The installed runtime package "${name}" at ${location} has no package.json, so its exact version cannot be pinned. Reinstall the package.`,
 			);
+		}
 	}
 	return undefined;
 }
@@ -342,9 +345,12 @@ export async function readInstalledProvenance(
 		);
 		for (const [name, edge] of ranges) {
 			if (typeof edge.requested !== "string") continue;
+			// This scan covers bindings the runtime may never import; runtime selection
+			// reports a binding without a manifest when it needs one.
 			const installed = await findInstalledManifest(
 				join(directory, "package.json"),
 				name,
+				false,
 			);
 			if (!installed) continue;
 			const selected = installed.directory;
@@ -470,7 +476,11 @@ export async function inspectInstalledSource(
 	};
 }
 
-/** Selects runtime contents only after enforcing exact versions and the local-source boundary. */
+/**
+ * Selects runtime contents only after enforcing exact versions and the local-source boundary.
+ * A local candidate that `compatible` rejects is returned for the caller to discard, as
+ * npm does not bind an incompatible package to the edge.
+ */
 export async function readInstalledSource(
 	base: URL | string,
 	name: string,
@@ -478,6 +488,7 @@ export async function readInstalledSource(
 	runtimeRequirement?: string,
 	provenance?: ReadonlyMap<string, BindingProvenance>,
 	applicationRoot?: URL,
+	compatible?: (candidate: InstalledSource) => boolean,
 ): Promise<InstalledSource | undefined> {
 	const source = await inspectInstalledSource(
 		base,
@@ -491,11 +502,16 @@ export async function readInstalledSource(
 		throw new Error(
 			`Cannot read an exact version for runtime package "${name}".`,
 		);
-	if (source.local && !includeLocal)
+	const installed = { ...source, version: source.version };
+	if (
+		source.local &&
+		!includeLocal &&
+		(compatible?.(installed) ?? true)
+	)
 		throw new Error(
 			`The "install" dependency strategy cannot pin the linked local runtime package "${name}" to registry code. Enable includeLocal to deliver its local contents, or install a registry dependency.`,
 		);
-	return { ...source, version: source.version };
+	return installed;
 }
 
 /** Local protocols select installed content, never registry versions. */

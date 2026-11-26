@@ -97,6 +97,7 @@ export async function resolvePinnedRuntimeDependencies(
 		base: string,
 		name: string,
 		runtimeRequirement?: string,
+		compatible?: (candidate: InstalledSource) => boolean,
 	) => {
 		const installed = await readInstalledSource(
 			base,
@@ -105,6 +106,7 @@ export async function resolvePinnedRuntimeDependencies(
 			runtimeRequirement,
 			provenance,
 			appRoot,
+			compatible,
 		);
 		if (!installed || installed.local || !lock) return installed;
 		const entry =
@@ -115,7 +117,8 @@ export async function resolvePinnedRuntimeDependencies(
 			!(await matchesLockedInstallation(lock, entry, installed))
 		)
 			return installed;
-		if (!includeLocal) throw localRuntimeSourceRequired(name);
+		if (!includeLocal && (compatible?.(installed) ?? true))
+			throw localRuntimeSourceRequired(name);
 		return { ...installed, local: true };
 	};
 	const lockedInstallation = async (
@@ -295,6 +298,7 @@ export async function resolvePinnedRuntimeDependencies(
 						: await registry.resolve(
 								source.registryName ?? packageName,
 								source.version,
+								appRoot,
 							));
 				const metadata = {
 					...selected,
@@ -393,6 +397,9 @@ export async function resolvePinnedRuntimeDependencies(
 									bundleMember || source.inBundle
 										? range
 										: override.spec,
+									// The repeated lookup below applies the local-source gate once
+									// this edge's compatibility is known.
+									() => false,
 								)
 							: await inspectInstalledSource(
 									childBase,
@@ -440,6 +447,7 @@ export async function resolvePinnedRuntimeDependencies(
 							childBase,
 							name,
 							shrinkwrapped ? range : override.spec,
+							compatible,
 						);
 
 					if (!inBundle && requirement.local) {
@@ -544,6 +552,7 @@ export async function resolvePinnedRuntimeDependencies(
 							const childMetadata = await registry.resolve(
 								requirement.name,
 								requirement.requirement,
+								appRoot,
 							);
 							const version =
 								childMetadata.version ??

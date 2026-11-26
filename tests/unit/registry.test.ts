@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
+import {
+	mkdir,
+	mkdtemp,
+	realpath,
+	rm,
+	writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 
 const command = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => {
@@ -12,6 +21,7 @@ vi.mock("node:child_process", () => {
 	return { execFile };
 });
 
+import { resolvePinnedRuntimeDependencies } from "../../packages/adapter/src/conditional/FunctionArtifact/Dependency";
 import { npmRegistry } from "../../packages/adapter/src/conditional/FunctionArtifact/Dependency/Registry.ts";
 
 afterEach(() => {
@@ -172,6 +182,51 @@ describe("install registry metadata", () => {
 			expect.objectContaining({ cwd: root, timeout: 30_000 }),
 		);
 	});
+	it("resolves installed and missing runtime packages in the application's npm context", async () => {
+		const directory = await mkdtemp(
+			join(tmpdir(), "yandex-registry-root-"),
+		);
+		try {
+			await mkdir(join(directory, "node_modules/renderer"), {
+				recursive: true,
+			});
+			await writeFile(
+				join(directory, "node_modules/renderer/package.json"),
+				JSON.stringify({
+					name: "renderer",
+					version: "1.0.0",
+					optionalDependencies: { native: "^1.0.0" },
+				}),
+			);
+			metadata({ version: "1.0.0" });
+			await onPlatform("linux", () =>
+				resolvePinnedRuntimeDependencies(
+					pathToFileURL(`${directory}/`),
+					new Set(["renderer"]),
+					npmRegistry,
+				),
+			);
+			const root = pathToFileURL(
+				(await realpath(directory)) + sep,
+			);
+			for (const spec of ["renderer@1.0.0", "native@^1.0.0"])
+				expect(command).toHaveBeenCalledWith(
+					"npm",
+					["view", "--json", "--", spec],
+					expect.objectContaining({ cwd: root }),
+				);
+			expect(
+				command.mock.calls.every(
+					([, , options]) =>
+						String((options as { cwd?: unknown }).cwd) ===
+						root.href,
+				),
+			).toBe(true);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	it("pins missing optional package ranges from registry metadata", async () => {
 		metadata([
 			{ version: "1.0.0" },

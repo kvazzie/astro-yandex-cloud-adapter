@@ -2677,7 +2677,11 @@ describe("Function Artifact mutation plans", () => {
 					dependencies: { leaf: "2.0.0" },
 				},
 			);
-			expect(resolve).toHaveBeenCalledWith("helper", range);
+			expect(resolve).toHaveBeenCalledWith(
+				"helper",
+				range,
+				expect.any(URL),
+			);
 		},
 	);
 
@@ -5065,6 +5069,7 @@ require('node:fs').writeFileSync('generated.cjs', 'module.exports = "generated b
 			expect(registry.resolve).toHaveBeenCalledWith(
 				"leaf",
 				"^2",
+				expect.any(URL),
 			);
 		},
 	);
@@ -5469,6 +5474,7 @@ require('node:fs').writeFileSync('generated.cjs', 'module.exports = "generated b
 		expect(registry.resolve).toHaveBeenCalledWith(
 			"real-b",
 			"1.2.3",
+			expect.any(URL),
 		);
 	});
 
@@ -6768,6 +6774,47 @@ ${f.index}`,
 				expect(() => externalBundledPeers(bytes)).toThrow(
 					/requires fmt@npm:real-fmt@\^1/,
 				);
+		},
+	);
+
+	it.each([
+		{ tokens: ["sha512"], accepted: true },
+		{ tokens: ["sha1"], accepted: true },
+		{ tokens: ["sha256", "sha512"], accepted: true },
+		{ tokens: ["sha256", "wrong-sha512"], accepted: false },
+		{
+			tokens: ["wrong-sha512", "sha512", "sha256"],
+			accepted: true,
+		},
+		{ tokens: ["wrong-sha512"], accepted: false },
+	])(
+		"checks tarball integrity with npm's strongest algorithm ($tokens)",
+		({ tokens, accepted }) => {
+			const bytes = gzipSync(
+				ustar({
+					"package/package.json": JSON.stringify({
+						name: "owner",
+						version: "1.0.0",
+					}),
+				}),
+			);
+			const integrity = tokens
+				.map((token) => {
+					const wrong = token.startsWith("wrong-");
+					const algorithm = wrong ? token.slice(6) : token;
+					return `${algorithm}-${createHash(algorithm)
+						.update(wrong ? Buffer.from("other") : bytes)
+						.digest("base64")}`;
+				})
+				.join(" ");
+			if (accepted)
+				expect(externalBundledPeers(bytes, integrity)).toEqual(
+					[],
+				);
+			else
+				expect(() =>
+					externalBundledPeers(bytes, integrity),
+				).toThrow(/Integrity mismatch/);
 		},
 	);
 

@@ -989,69 +989,193 @@ describe("runtime dependency regressions", () => {
 		},
 	);
 
-	it("uses the nested lock pin when the installed candidate misses an optional edge", async () => {
-		const root = await mkdtemp(
-			join(tmpdir(), "yandex-optional-pin-"),
-		);
-		try {
-			for (const [name, manifest] of [
-				[
-					"carrier",
-					{
-						name: "carrier",
-						version: "1.0.0",
-						optionalDependencies: { leaf: "2.0.0" },
-					},
-				],
-				["leaf", { name: "leaf", version: "1.0.0" }],
-			] as const) {
-				await mkdir(join(root, "node_modules", name), {
-					recursive: true,
-				});
-				await writeFile(
-					join(root, "node_modules", name, "package.json"),
-					JSON.stringify(manifest),
-				);
-			}
-			await writeFile(
-				join(root, "package-lock.json"),
-				JSON.stringify({
-					packages: {
-						"node_modules/carrier": {
+	it.each([
+		{ hoisted: "registry", installed: "directory" },
+		{ hoisted: "local", installed: "directory" },
+		{ hoisted: "local", installed: "link" },
+	] as const)(
+		"uses the nested lock pin when the installed candidate misses an optional edge (hoisted $hoisted $installed)",
+		async ({ hoisted, installed }) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-optional-pin-"),
+			);
+			try {
+				for (const [name, manifest] of [
+					[
+						"carrier",
+						{
+							name: "carrier",
 							version: "1.0.0",
 							optionalDependencies: { leaf: "2.0.0" },
 						},
-						// An unrelated hoisted development copy.
-						"node_modules/leaf": { version: "1.0.0", dev: true },
-						// npm skipped this platform-specific copy on this host.
-						"node_modules/carrier/node_modules/leaf": {
-							version: "2.0.0",
-							optional: true,
-							os: ["darwin"],
+					],
+					["leaf", { name: "leaf", version: "1.0.0" }],
+				] as const) {
+					const directory =
+						name === "leaf" && installed === "link"
+							? join(root, "packages/leaf")
+							: join(root, "node_modules", name);
+					await mkdir(directory, { recursive: true });
+					await writeFile(
+						join(directory, "package.json"),
+						JSON.stringify(manifest),
+					);
+				}
+				if (installed === "link")
+					await symlink(
+						join(root, "packages/leaf"),
+						join(root, "node_modules/leaf"),
+						"dir",
+					);
+				// An unrelated hoisted development copy.
+				const hoistedLeaf =
+					hoisted === "registry"
+						? {
+								"node_modules/leaf": {
+									version: "1.0.0",
+									dev: true,
+								},
+							}
+						: installed === "link"
+							? {
+									"node_modules/leaf": {
+										resolved: "packages/leaf",
+										link: true,
+										dev: true,
+									},
+									"packages/leaf": {
+										name: "leaf",
+										version: "1.0.0",
+										dev: true,
+									},
+								}
+							: {
+									"node_modules/leaf": {
+										version: "1.0.0",
+										resolved: "file:leaf-1.0.0.tgz",
+										dev: true,
+									},
+								};
+				await writeFile(
+					join(root, "package-lock.json"),
+					JSON.stringify({
+						packages: {
+							"node_modules/carrier": {
+								version: "1.0.0",
+								optionalDependencies: { leaf: "2.0.0" },
+							},
+							...hoistedLeaf,
+							// npm skipped this platform-specific copy on this host.
+							"node_modules/carrier/node_modules/leaf": {
+								version: "2.0.0",
+								optional: true,
+								os: ["darwin"],
+							},
+						},
+					}),
+				);
+				const graph = await resolvePinnedRuntimeDependencies(
+					pathToFileURL(`${root}/`),
+					new Set(["carrier"]),
+					{
+						resolve: () => {
+							throw new Error("must use the nested lock pin");
 						},
 					},
-				}),
+					false,
+				);
+				expect(
+					graph.find(
+						({ location }) =>
+							location ===
+							"node_modules/carrier/node_modules/leaf",
+					),
+				).toMatchObject({ version: "2.0.0", optional: true });
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
+	it.each(["link", "tarball"] as const)(
+		"rejects a compatible local %s candidate for an optional edge without includeLocal",
+		async (installed) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-optional-local-"),
 			);
-			const graph = await resolvePinnedRuntimeDependencies(
-				pathToFileURL(`${root}/`),
-				new Set(["carrier"]),
-				{
-					resolve: () => {
-						throw new Error("must use the nested lock pin");
-					},
-				},
-			);
-			expect(
-				graph.find(
-					({ location }) =>
-						location ===
-						"node_modules/carrier/node_modules/leaf",
-				),
-			).toMatchObject({ version: "2.0.0", optional: true });
-		} finally {
-			await rm(root, { recursive: true, force: true });
-		}
-	});
+			try {
+				const leaf =
+					installed === "link"
+						? join(root, "packages/leaf")
+						: join(root, "node_modules/leaf");
+				for (const [directory, manifest] of [
+					[
+						join(root, "node_modules/carrier"),
+						{
+							name: "carrier",
+							version: "1.0.0",
+							optionalDependencies: { leaf: "^1.0.0" },
+						},
+					],
+					[leaf, { name: "leaf", version: "1.0.0" }],
+				] as const) {
+					await mkdir(directory, { recursive: true });
+					await writeFile(
+						join(directory, "package.json"),
+						JSON.stringify(manifest),
+					);
+				}
+				if (installed === "link")
+					await symlink(
+						leaf,
+						join(root, "node_modules/leaf"),
+						"dir",
+					);
+				await writeFile(
+					join(root, "package-lock.json"),
+					JSON.stringify({
+						packages: {
+							"node_modules/carrier": {
+								version: "1.0.0",
+								optionalDependencies: { leaf: "^1.0.0" },
+							},
+							...(installed === "link"
+								? {
+										"node_modules/leaf": {
+											resolved: "packages/leaf",
+											link: true,
+										},
+										"packages/leaf": {
+											name: "leaf",
+											version: "1.0.0",
+										},
+									}
+								: {
+										"node_modules/leaf": {
+											version: "1.0.0",
+											resolved: "file:leaf-1.0.0.tgz",
+										},
+									}),
+						},
+					}),
+				);
+				await expect(
+					resolvePinnedRuntimeDependencies(
+						pathToFileURL(`${root}/`),
+						new Set(["carrier"]),
+						{
+							resolve: () => {
+								throw new Error("must not reselect leaf");
+							},
+						},
+						false,
+					),
+				).rejects.toThrow(/local runtime package "leaf"/i);
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
 
 	it.each([
 		{ index: true, rejected: true },
@@ -1095,6 +1219,61 @@ describe("runtime dependency regressions", () => {
 						/no package\.json/,
 					);
 				else await expect(planning).resolves.toBeDefined();
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
+	it.each([
+		{ imported: false, rejected: false },
+		{ imported: true, rejected: true },
+	])(
+		"defers a manifestless development binding until the runtime needs it (imported: $imported)",
+		async ({ imported, rejected }) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-manifestless-dev-"),
+			);
+			try {
+				await writeFile(
+					join(root, "package.json"),
+					JSON.stringify({
+						name: "app",
+						dependencies: { renderer: "^1.0.0" },
+						devDependencies: { tool: "^1.0.0" },
+					}),
+				);
+				await mkdir(join(root, "node_modules/renderer"), {
+					recursive: true,
+				});
+				await writeFile(
+					join(root, "node_modules/renderer/package.json"),
+					'{"name":"renderer","version":"1.0.0"}',
+				);
+				await mkdir(join(root, "node_modules/tool"), {
+					recursive: true,
+				});
+				await writeFile(
+					join(root, "node_modules/tool/index.js"),
+					"module.exports = 'tool';",
+				);
+				const planning = resolvePinnedRuntimeDependencies(
+					pathToFileURL(`${root}/`),
+					new Set(
+						imported ? ["renderer", "tool"] : ["renderer"],
+					),
+					{
+						resolve: () => Promise.resolve({ version: "1.0.0" }),
+					},
+				);
+				if (rejected)
+					await expect(planning).rejects.toThrow(
+						/"tool" .*no package\.json/,
+					);
+				else
+					expect(
+						(await planning).map(({ name }) => name),
+					).toEqual(["renderer"]);
 			} finally {
 				await rm(root, { recursive: true, force: true });
 			}
