@@ -829,6 +829,72 @@ describe("runtime dependency regressions", () => {
 		},
 	);
 
+	it("skips an incompatible local lock entry before the local-source gate", async () => {
+		const root = await mkdtemp(
+			join(tmpdir(), "yandex-local-lock-"),
+		);
+		try {
+			for (const [name, version] of [
+				["native", "1.0.0"],
+				["leaf", "1.0.0"],
+			] as const) {
+				await mkdir(join(root, "node_modules", name), {
+					recursive: true,
+				});
+				await writeFile(
+					join(root, "node_modules", name, "package.json"),
+					JSON.stringify({
+						name,
+						version,
+						...(name === "native"
+							? { optionalDependencies: { variant: "1.0.0" } }
+							: {}),
+					}),
+				);
+			}
+			await writeFile(
+				join(root, "package-lock.json"),
+				JSON.stringify({
+					packages: {
+						"node_modules/native": {
+							version: "1.0.0",
+							optionalDependencies: { variant: "1.0.0" },
+						},
+						// An unrelated hoisted local package that does not satisfy ^2.
+						"node_modules/leaf": {
+							version: "1.0.0",
+							resolved: "file:../leaf",
+						},
+						"node_modules/variant": {
+							version: "1.0.0",
+							os: ["darwin"],
+							optional: true,
+							optionalDependencies: { leaf: "^2" },
+						},
+					},
+				}),
+			);
+			const graph = await resolvePinnedRuntimeDependencies(
+				pathToFileURL(`${root}/`),
+				new Set(["native"]),
+				{
+					resolve: (name, range) =>
+						Promise.resolve(
+							name === "leaf" && range === "^2"
+								? { version: "2.0.0" }
+								: { version: "0.0.0" },
+						),
+				},
+				false,
+			);
+			expect(
+				graph.find(({ name }) => name === "leaf"),
+			).toMatchObject({ version: "2.0.0", optional: true });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it.each([true, false])(
 		"terminates symlink cycles without banning reusable ancestors (conflicting=%s)",
 		async (conflicting) => {

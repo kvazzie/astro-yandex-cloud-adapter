@@ -437,6 +437,15 @@ export async function resolvePinnedRuntimeDependencies(
 							throw unresolved(name, packageName, range, peer);
 						installed = selected;
 					}
+					// An entry that cannot satisfy this edge is not its binding, local or not.
+					if (
+						locked &&
+						!compatible({
+							version: locked.metadata.version,
+							registryName: locked.metadata.name,
+						})
+					)
+						locked = undefined;
 					let child: DependencySource | undefined =
 						locked && !requirement.local
 							? await selectLockedChild(locked, childBase, name)

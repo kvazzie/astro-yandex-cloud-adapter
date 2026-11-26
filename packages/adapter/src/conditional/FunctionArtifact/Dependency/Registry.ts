@@ -4,6 +4,7 @@ import { basename, dirname, join, posix } from "node:path";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
+import pickManifest from "npm-pick-manifest";
 import semver from "semver";
 
 /** npm reads the `npm:` alias prefix case-insensitively. */
@@ -196,7 +197,37 @@ export async function readRegistryTarball(
 	}
 }
 
+/** Selects a version as npm install does, preferring a compatible, current latest tag. */
+function npmSelection(
+	packageName: string,
+	requirement: string,
+	versions: readonly PublishedVersion[],
+): string | undefined {
+	const manifests = versions.filter(
+		(entry): entry is PublishedVersion & { version: string } =>
+			typeof entry.version === "string",
+	);
+	try {
+		return pickManifest(
+			{
+				name: packageName,
+				"dist-tags": manifests.find(
+					(entry) => entry["dist-tags"],
+				)?.["dist-tags"],
+				versions: Object.fromEntries(
+					manifests.map((entry) => [entry.version, entry]),
+				),
+			},
+			requirement,
+		)?.version;
+	} catch {
+		return undefined;
+	}
+}
+
 interface PublishedVersion {
+	"dist-tags"?: Record<string, string>;
+	deprecated?: string;
 	bundleDependencies?: boolean | string[];
 	bundledDependencies?: boolean | string[];
 	bin?: unknown;
@@ -229,16 +260,7 @@ async function fetchRegistryMetadata(
 		: [published];
 	const version =
 		semver.valid(requirement) ??
-		(requirement === "*" || isRegistryTag(requirement)
-			? semver.valid(versions.at(-1)?.version)
-			: semver.maxSatisfying(
-					versions.flatMap((entry) =>
-						typeof entry.version === "string"
-							? [entry.version]
-							: [],
-					),
-					requirement,
-				));
+		npmSelection(packageName, requirement, versions);
 	const metadata = versions.find(
 		(entry) =>
 			entry.version === version ||

@@ -170,6 +170,43 @@ describe("install registry metadata", () => {
 			libc: ["glibc"],
 		});
 	});
+	it.each([
+		{
+			name: "the compatible latest tag",
+			latest: "1.2.0",
+			versions: [{ version: "1.2.0" }, { version: "1.3.0" }],
+			expected: "1.2.0",
+		},
+		{
+			name: "the highest version when latest is out of range",
+			latest: "2.0.0",
+			versions: [{ version: "1.2.0" }, { version: "1.3.0" }],
+			expected: "1.3.0",
+		},
+		{
+			name: "a version that is not deprecated",
+			latest: "2.0.0",
+			versions: [
+				{ version: "1.2.0" },
+				{ version: "1.3.0", deprecated: "use 1.2.0" },
+			],
+			expected: "1.2.0",
+		},
+	])(
+		"selects $name for an uninstalled range like npm",
+		async ({ latest, versions, expected }) => {
+			metadata(
+				versions.map((entry) => ({
+					...entry,
+					"dist-tags": { latest, next: "1.3.0" },
+				})),
+			);
+			expect(
+				await npmRegistry.resolve("child", "^1"),
+			).toMatchObject({ version: expected });
+		},
+	);
+
 	it("launches the npm CLI with Node and separate arguments on Windows", async () => {
 		metadata({ version: "1.0.0" });
 		const platform = Object.getOwnPropertyDescriptor(

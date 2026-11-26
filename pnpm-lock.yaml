@@ -127,6 +127,9 @@ importers:
       npm-package-arg:
         specifier: ^13.0.2
         version: 13.0.2
+      npm-pick-manifest:
+        specifier: ^11.0.3
+        version: 11.0.3
       semver:
         specifier: ^7.8.5
         version: 7.8.5
