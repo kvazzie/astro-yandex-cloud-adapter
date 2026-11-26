@@ -1,6 +1,9 @@
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
+import {
+	execFile,
+	type ExecFileOptions,
+} from "node:child_process";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import {
@@ -115,8 +118,7 @@ async function seedFixtureTarballCache(
 ): Promise<string> {
 	const cache = join(directory, "npm-cache");
 	for (const { resolved } of entries)
-		await promisify(execFile)(
-			"npm",
+		await npmCli(
 			[
 				"cache",
 				"add",
@@ -129,6 +131,24 @@ async function seedFixtureTarballCache(
 			{ cwd: directory },
 		);
 	return cache;
+}
+
+/** Runs the npm CLI without a shell; Windows exposes npm only as npm.cmd. */
+function npmCli(args: string[], options: ExecFileOptions = {}) {
+	if (process.platform !== "win32")
+		return promisify(execFile)("npm", args, options);
+	const cli =
+		process.env.npm_execpath?.endsWith("npm-cli.js") === true
+			? process.env.npm_execpath
+			: join(
+					dirname(process.execPath),
+					"node_modules/npm/bin/npm-cli.js",
+				);
+	return promisify(execFile)(
+		process.execPath,
+		[cli, ...args],
+		options,
+	);
 }
 
 /** Writes a ustar header with a valid checksum; `size` may differ from the payload. */
@@ -672,8 +692,7 @@ describe("Function Artifact mutation plans", () => {
 				["plugin", parent],
 				["helper", helperSource],
 			] as const) {
-				await promisify(execFile)(
-					"npm",
+				await npmCli(
 					[
 						"pack",
 						"--ignore-scripts",
@@ -778,8 +797,7 @@ describe("Function Artifact mutation plans", () => {
 				f.directory,
 				Object.values(metadata),
 			);
-			await promisify(execFile)(
-				"npm",
+			await npmCli(
 				[
 					"ci",
 					"--include=optional",
@@ -1468,8 +1486,7 @@ describe("Function Artifact mutation plans", () => {
 						"node_modules/parent",
 						name === "child" ? "node_modules/child" : "",
 					);
-					await promisify(execFile)(
-						"npm",
+					await npmCli(
 						[
 							"pack",
 							"--ignore-scripts",
@@ -1534,8 +1551,7 @@ describe("Function Artifact mutation plans", () => {
 				);
 				directories.push(isolated);
 				await cp(f.server, isolated, { recursive: true });
-				await promisify(execFile)(
-					"npm",
+				await npmCli(
 					[
 						"ci",
 						"--offline",
@@ -1705,8 +1721,7 @@ describe("Function Artifact mutation plans", () => {
 				integrity?: string;
 			} = { version: "1.0.0" };
 			if (includeLocal) {
-				await promisify(execFile)(
-					"npm",
+				await npmCli(
 					[
 						"pack",
 						"--ignore-scripts",
@@ -1773,8 +1788,7 @@ describe("Function Artifact mutation plans", () => {
 			);
 			directories.push(isolated);
 			await cp(f.server, isolated, { recursive: true });
-			await promisify(execFile)(
-				"npm",
+			await npmCli(
 				[
 					"ci",
 					"--offline",
@@ -2242,8 +2256,7 @@ describe("Function Artifact mutation plans", () => {
 			);
 			directories.push(isolated);
 			await cp(f.server, isolated, { recursive: true });
-			await promisify(execFile)(
-				"npm",
+			await npmCli(
 				[
 					"ci",
 					"--offline",
@@ -3176,8 +3189,7 @@ describe("Function Artifact mutation plans", () => {
 			}
 			const archives = new URL("archives/", f.root);
 			await mkdir(archives, { recursive: true });
-			await promisify(execFile)(
-				"npm",
+			await npmCli(
 				[
 					"pack",
 					"--ignore-scripts",
@@ -3206,8 +3218,7 @@ describe("Function Artifact mutation plans", () => {
 				new URL("index.js", shared),
 				'export default " with external peer";',
 			);
-			await promisify(execFile)(
-				"npm",
+			await npmCli(
 				[
 					"pack",
 					"--ignore-scripts",
@@ -3262,8 +3273,7 @@ describe("Function Artifact mutation plans", () => {
 				join(isolated, "package-lock.json"),
 				"utf8",
 			);
-			await promisify(execFile)(
-				"npm",
+			await npmCli(
 				["ci", "--offline", "--no-audit", "--no-fund"],
 				{ cwd: isolated },
 			);
@@ -3355,8 +3365,7 @@ describe("Function Artifact mutation plans", () => {
 					? 'export {default} from "leaf";'
 					: 'export default "overridden version executed";',
 			);
-			await promisify(execFile)(
-				"npm",
+			await npmCli(
 				[
 					"pack",
 					"--ignore-scripts",
@@ -3409,8 +3418,7 @@ describe("Function Artifact mutation plans", () => {
 			join(isolated, "package-lock.json"),
 			"utf8",
 		);
-		await promisify(execFile)(
-			"npm",
+		await npmCli(
 			["ci", "--offline", "--no-audit", "--no-fund"],
 			{ cwd: isolated },
 		);
@@ -3573,8 +3581,7 @@ describe("Function Artifact mutation plans", () => {
 									? 'import child from "child";export default {value:child};'
 									: 'export default {value:"installed leaf"};',
 				);
-				await promisify(execFile)(
-					"npm",
+				await npmCli(
 					[
 						"pack",
 						"--ignore-scripts",
@@ -3671,8 +3678,7 @@ describe("Function Artifact mutation plans", () => {
 				f.directory,
 				Object.values(packages),
 			);
-			await promisify(execFile)(
-				"npm",
+			await npmCli(
 				[
 					"ci",
 					"--offline",
@@ -3757,8 +3763,7 @@ describe("Function Artifact mutation plans", () => {
 						? `export default {version:${JSON.stringify(manifest.version)}};`
 						: 'export {default} from "shared";',
 				);
-				await promisify(execFile)(
-					"npm",
+				await npmCli(
 					[
 						"pack",
 						"--ignore-scripts",
@@ -3850,8 +3855,7 @@ describe("Function Artifact mutation plans", () => {
 				join(isolated, "package-lock.json"),
 				"utf8",
 			);
-			await promisify(execFile)(
-				"npm",
+			await npmCli(
 				["ci", "--offline", "--no-audit", "--no-fund"],
 				{ cwd: isolated },
 			);
@@ -4219,11 +4223,14 @@ describe("Function Artifact mutation plans", () => {
 		"bundled",
 		"bundled BOM",
 		"undeclared bundled peer",
+		"bundled peer on its owner",
 	] as const)(
 		"validates the required peers of an absent optional package (%s)",
 		async (mode) => {
 			const bundledHelper = mode !== "unbundled";
 			const bundlePeerOnly = mode === "undeclared bundled peer";
+			// Node resolves this peer to the enclosing owner installed as helper.
+			const ownerPeer = mode === "bundled peer on its owner";
 			const f = await fixture();
 			const archives = new URL("archives/", f.root);
 			await mkdir(archives, { recursive: true });
@@ -4299,7 +4306,9 @@ describe("Function Artifact mutation plans", () => {
 								main: "index.js",
 								...(bundlePeerOnly
 									? { peerDependencies: { absent: "^3" } }
-									: {}),
+									: ownerPeer
+										? { peerDependencies: { helper: "^2" } }
+										: {}),
 							}),
 					);
 					await writeFile(
@@ -4309,8 +4318,7 @@ describe("Function Artifact mutation plans", () => {
 							: 'export default " bundled";',
 					);
 				}
-				await promisify(execFile)(
-					"npm",
+				await npmCli(
 					[
 						"pack",
 						"--ignore-scripts",
@@ -4368,8 +4376,7 @@ describe("Function Artifact mutation plans", () => {
 				join(isolated, "package-lock.json"),
 				"utf8",
 			);
-			await promisify(execFile)(
-				"npm",
+			await npmCli(
 				[
 					"ci",
 					"--include=optional",
@@ -4493,8 +4500,7 @@ describe("Function Artifact mutation plans", () => {
 					}),
 				);
 				await writeFile(new URL("index.js", dir), code);
-				await promisify(execFile)(
-					"npm",
+				await npmCli(
 					[
 						"pack",
 						"--ignore-scripts",
@@ -4557,8 +4563,7 @@ describe("Function Artifact mutation plans", () => {
 				join(isolated, "package-lock.json"),
 				"utf8",
 			);
-			await promisify(execFile)(
-				"npm",
+			await npmCli(
 				[
 					"ci",
 					"--include=optional",
@@ -4757,8 +4762,7 @@ require('node:fs').writeFileSync('generated.cjs', 'module.exports = "generated b
 				join(isolated, "package-lock.json"),
 				"utf8",
 			);
-			await promisify(execFile)(
-				"npm",
+			await npmCli(
 				[
 					"ci",
 					"--ignore-scripts=false",
@@ -5191,8 +5195,7 @@ require('node:fs').writeFileSync('generated.cjs', 'module.exports = "generated b
 			join(isolated, "package-lock.json"),
 			"utf8",
 		);
-		await promisify(execFile)(
-			"npm",
+		await npmCli(
 			[
 				"ci",
 				"--ignore-scripts=false",
@@ -5300,8 +5303,7 @@ require('node:fs').writeFileSync('generated.cjs', 'module.exports = "generated b
 				join(isolated, "package-lock.json"),
 				"utf8",
 			);
-			await promisify(execFile)(
-				"npm",
+			await npmCli(
 				["ci", "--offline", "--no-audit", "--no-fund"],
 				{ cwd: isolated },
 			);
@@ -5485,8 +5487,7 @@ require('node:fs').writeFileSync('generated.cjs', 'module.exports = "generated b
 			join(isolated, "package-lock.json"),
 			"utf8",
 		);
-		await promisify(execFile)(
-			"npm",
+		await npmCli(
 			["ci", "--offline", "--no-audit", "--no-fund"],
 			{ cwd: isolated },
 		);
@@ -5610,8 +5611,7 @@ ${f.index.replace("return policy;", "return local;")}`,
 				join(isolated, "package-lock.json"),
 				"utf8",
 			);
-			await promisify(execFile)(
-				"npm",
+			await npmCli(
 				["ci", "--offline", "--no-audit", "--no-fund"],
 				{ cwd: isolated },
 			);
@@ -6636,6 +6636,11 @@ ${f.index}`,
 			overlaps: false,
 		},
 		{ server: "function/", dotDotLink: true, overlaps: true },
+		{
+			server: "function/",
+			clientFileLink: true,
+			overlaps: true,
+		},
 		// "\\" is an ordinary filename character outside Windows.
 		...(process.platform === "win32"
 			? []
@@ -6656,9 +6661,28 @@ ${f.index}`,
 			revisitedLink,
 			dotDotLink,
 			backslashLink,
+			clientFileLink,
 		}) => {
 			const f = await fixture();
 			let client = f.build.config.build.client;
+			if (clientFileLink) {
+				// A client file links to a file in the server output.
+				const outDir = f.build.config.outDir;
+				await mkdir(new URL("client/images/", outDir), {
+					recursive: true,
+				});
+				await writeFile(
+					new URL("function/logo.svg", outDir),
+					"<svg/>",
+				);
+				await symlink(
+					"../../function/logo.svg",
+					fileURLToPath(
+						new URL("client/images/logo.svg", outDir),
+					),
+					"file",
+				);
+			}
 			if (backslashLink) {
 				// dist/linked-client -> "pivot\\name"; that link enters the server.
 				const outDir = f.build.config.outDir;
@@ -7906,8 +7930,7 @@ console.log(JSON.stringify({ directory: policy.artifactDirectory.href, page: Obj
 				);
 				directories.push(isolated);
 				await cp(f.server, isolated, { recursive: true });
-				await promisify(execFile)(
-					"npm",
+				await npmCli(
 					[
 						"ci",
 						"--offline",

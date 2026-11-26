@@ -841,6 +841,118 @@ describe("runtime dependency regressions", () => {
 		},
 	);
 
+	it("uses the nested lock pin when the installed candidate misses an optional edge", async () => {
+		const root = await mkdtemp(
+			join(tmpdir(), "yandex-optional-pin-"),
+		);
+		try {
+			for (const [name, manifest] of [
+				[
+					"carrier",
+					{
+						name: "carrier",
+						version: "1.0.0",
+						optionalDependencies: { leaf: "2.0.0" },
+					},
+				],
+				["leaf", { name: "leaf", version: "1.0.0" }],
+			] as const) {
+				await mkdir(join(root, "node_modules", name), {
+					recursive: true,
+				});
+				await writeFile(
+					join(root, "node_modules", name, "package.json"),
+					JSON.stringify(manifest),
+				);
+			}
+			await writeFile(
+				join(root, "package-lock.json"),
+				JSON.stringify({
+					packages: {
+						"node_modules/carrier": {
+							version: "1.0.0",
+							optionalDependencies: { leaf: "2.0.0" },
+						},
+						// An unrelated hoisted development copy.
+						"node_modules/leaf": { version: "1.0.0", dev: true },
+						// npm skipped this platform-specific copy on this host.
+						"node_modules/carrier/node_modules/leaf": {
+							version: "2.0.0",
+							optional: true,
+							os: ["darwin"],
+						},
+					},
+				}),
+			);
+			const graph = await resolvePinnedRuntimeDependencies(
+				pathToFileURL(`${root}/`),
+				new Set(["carrier"]),
+				{
+					resolve: () => {
+						throw new Error("must use the nested lock pin");
+					},
+				},
+			);
+			expect(
+				graph.find(
+					({ location }) =>
+						location ===
+						"node_modules/carrier/node_modules/leaf",
+				),
+			).toMatchObject({ version: "2.0.0", optional: true });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it.each([
+		{ index: true, rejected: true },
+		{ index: false, rejected: false },
+	])(
+		"does not skip a nearer binding without a manifest (index: $index)",
+		async ({ index, rejected }) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-manifestless-"),
+			);
+			try {
+				const app = join(root, "app");
+				await mkdir(join(app, "node_modules/leaf"), {
+					recursive: true,
+				});
+				await writeFile(
+					join(app, "package.json"),
+					'{"name":"app"}',
+				);
+				if (index)
+					await writeFile(
+						join(app, "node_modules/leaf/index.js"),
+						"module.exports = 'nearer';",
+					);
+				await mkdir(join(root, "node_modules/leaf"), {
+					recursive: true,
+				});
+				await writeFile(
+					join(root, "node_modules/leaf/package.json"),
+					'{"name":"leaf","version":"1.0.0"}',
+				);
+				const planning = resolvePinnedRuntimeDependencies(
+					pathToFileURL(`${app}/`),
+					new Set(["leaf"]),
+					{
+						resolve: () => Promise.resolve({ version: "1.0.0" }),
+					},
+				);
+				if (rejected)
+					await expect(planning).rejects.toThrow(
+						/no package\.json/,
+					);
+				else await expect(planning).resolves.toBeDefined();
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
 	it("skips an incompatible local lock entry before the local-source gate", async () => {
 		const root = await mkdtemp(
 			join(tmpdir(), "yandex-local-lock-"),

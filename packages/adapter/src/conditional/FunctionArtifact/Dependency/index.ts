@@ -470,8 +470,10 @@ export async function resolvePinnedRuntimeDependencies(
 					)
 						throw localRuntimeSourceRequired(name);
 					if (child && !compatible(child)) {
+						// An installed parent's optional registry edge can still have a
+						// contextual lock pin that npm skipped on this platform.
 						if (
-							source.directory ||
+							(source.directory && !optional) ||
 							requirement.local ||
 							child.local
 						)
@@ -570,6 +572,16 @@ export async function resolvePinnedRuntimeDependencies(
 						bundlePeers.set(key, required);
 					}
 					for (const { child, name, range } of await required) {
+						// Node resolves a bundled child's peer to the enclosing owner when the
+						// owner is installed under that peer's name.
+						if (
+							name === packageName &&
+							satisfiesRequirement(name, range, {
+								name: source.registryName ?? packageName,
+								version: source.version,
+							})
+						)
+							continue;
 						const provider = children.find(
 							(edge) => edge.name === name && !edge.optional,
 						);

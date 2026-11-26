@@ -245,8 +245,31 @@ async function findInstalledManifest(
 				manifest,
 				directory: await realpath(location),
 			};
+		// Node loads a nearer folder's index without a manifest before any ancestor.
+		if (await hasDirectoryIndex(location))
+			throw new Error(
+				`The installed runtime package "${name}" at ${location} has no package.json, so its exact version cannot be pinned. Reinstall the package.`,
+			);
 	}
 	return undefined;
+}
+
+async function hasDirectoryIndex(
+	location: string,
+): Promise<boolean> {
+	for (const file of ["index.js", "index.json", "index.node"])
+		try {
+			if ((await stat(join(location, file))).isFile())
+				return true;
+		} catch (cause) {
+			if (
+				!["ENOENT", "ENOTDIR"].includes(
+					(cause as NodeJS.ErrnoException).code ?? "",
+				)
+			)
+				throw cause;
+		}
+	return false;
 }
 
 interface BindingProvenance {

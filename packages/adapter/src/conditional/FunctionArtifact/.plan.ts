@@ -1,4 +1,4 @@
-import { readlink, realpath } from "node:fs/promises";
+import { readdir, readlink, realpath } from "node:fs/promises";
 import {
 	dirname,
 	isAbsolute,
@@ -77,8 +77,19 @@ export function planPreparation(
 					real(server),
 					real(client),
 				]);
-				// Removing a link that the client lookup passes through also breaks the client.
+				// Removing a link that the client lookup passes through also breaks the client,
+				// and so does removing the target of a link inside the client output.
 				const clientLookup = await lookupPaths(client);
+				for (const entry of await readdir(client, {
+					recursive: true,
+					withFileTypes: true,
+				}).catch(() => []))
+					if (entry.isSymbolicLink())
+						clientLookup.push(
+							...(await lookupPaths(
+								join(entry.parentPath, entry.name),
+							)),
+						);
 				if (
 					within(server, client) ||
 					within(client, server) ||
