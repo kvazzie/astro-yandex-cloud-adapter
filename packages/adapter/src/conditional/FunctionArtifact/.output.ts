@@ -78,6 +78,39 @@ export async function readFunctionOutput(
 const wrapperMarker =
 	"/* @astro-yandex-cloud/adapter: 404 policy wrapper */";
 
+/** Names the bindings a declaration pattern declares, skipping defaults and computed keys. */
+function patternBindings(pattern: unknown): string[] {
+	if (!isSyntaxNode(pattern)) return [];
+	switch (pattern.type) {
+		case "Identifier":
+			return typeof pattern.name === "string"
+				? [pattern.name]
+				: [];
+		case "AssignmentPattern":
+			return patternBindings(pattern.left);
+		case "RestElement":
+			return patternBindings(pattern.argument);
+		case "ArrayPattern":
+			return Array.isArray(pattern.elements)
+				? pattern.elements.flatMap(patternBindings)
+				: [];
+		case "ObjectPattern":
+			return Array.isArray(pattern.properties)
+				? pattern.properties.flatMap((property: unknown) =>
+						isSyntaxNode(property)
+							? patternBindings(
+									property.type === "RestElement"
+										? property.argument
+										: property.value,
+								)
+							: [],
+					)
+				: [];
+		default:
+			return [];
+	}
+}
+
 /** Computes a wrapped handler without changing the emitted file. */
 export function wrapFunctionPolicy(
 	source: string,
@@ -134,28 +167,8 @@ export function wrapFunctionPolicy(
 				Array.isArray(declaration.declarations)
 			)
 				for (const declarator of declaration.declarations as unknown[])
-					if (
-						isSyntaxNode(declarator) &&
-						isSyntaxNode(declarator.id)
-					)
-						visitSyntax(declarator.id, (binding, ancestors) => {
-							const parent = ancestors.at(-1);
-							// Property keys and default values are not bindings.
-							if (
-								binding.type === "Identifier" &&
-								typeof binding.name === "string" &&
-								!(
-									parent?.type === "Property" &&
-									parent.key === binding &&
-									parent.value !== binding
-								) &&
-								!(
-									parent?.type === "AssignmentPattern" &&
-									parent.right === binding
-								)
-							)
-								names.push(binding.name);
-						});
+					if (isSyntaxNode(declarator))
+						names.push(...patternBindings(declarator.id));
 			if (!names.includes("handler")) return;
 			handlerName = "handler";
 			edits.push({

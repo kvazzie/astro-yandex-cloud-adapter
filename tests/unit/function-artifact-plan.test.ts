@@ -21,9 +21,10 @@ import {
 	symlink,
 	writeFile,
 } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { gzipSync } from "node:zlib";
-import { dirname, join, relative } from "node:path";
+import { delimiter, dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import * as Effect from "effect/Effect";
@@ -137,13 +138,28 @@ async function seedFixtureTarballCache(
 function npmCli(args: string[], options: ExecFileOptions = {}) {
 	if (process.platform !== "win32")
 		return promisify(execFile)("npm", args, options);
-	const cli =
+	// Prefer the running npm, then one beside node.exe, then the npm on PATH.
+	const candidates = [
 		process.env.npm_execpath?.endsWith("npm-cli.js") === true
 			? process.env.npm_execpath
-			: join(
-					dirname(process.execPath),
-					"node_modules/npm/bin/npm-cli.js",
-				);
+			: undefined,
+		join(
+			dirname(process.execPath),
+			"node_modules/npm/bin/npm-cli.js",
+		),
+		...(process.env.PATH ?? "")
+			.split(delimiter)
+			.filter(Boolean)
+			.map((directory) =>
+				join(directory, "node_modules/npm/bin/npm-cli.js"),
+			),
+	];
+	const cli = candidates.find(
+		(candidate) =>
+			candidate !== undefined && existsSync(candidate),
+	);
+	if (!cli)
+		throw new Error("Cannot find the npm CLI for the tests.");
 	return promisify(execFile)(
 		process.execPath,
 		[cli, ...args],
@@ -6859,6 +6875,17 @@ ${f.index}`,
 			kept: true,
 		},
 		{
+			name: "destructured declaration with a default",
+			replace: (index: string) =>
+				index
+					.replace(
+						"function handler(event, context, previewUrl, policy) { return policy; }",
+						"export const { handler = Object.assign((event, context, previewUrl, policy) => policy, {}), kept = 1 } = {};",
+					)
+					.replace("export { handler };", ""),
+			kept: true,
+		},
+		{
 			name: "binding named like the generated wrapper",
 			replace: (index: string) =>
 				index.replace(
@@ -6884,20 +6911,20 @@ ${f.index}`,
 			await Effect.runPromise(
 				FunctionArtifact.applyPreparation(plan),
 			);
-			const emitted = (await import(
-				`${new URL("index.js", f.server).href}?${Date.now()}`
-			)) as {
-				kept?: number;
-				handler: (...args: unknown[]) => { notFound: unknown[] };
-			};
-			expect(
-				emitted.handler(
-					{ httpMethod: "GET", url: "/" },
-					{},
-					"/preview",
-				).notFound,
-			).toHaveLength(1);
-			if ("kept" in row) expect(emitted.kept).toBe(1);
+			// Node, not the test loader, decides whether the exports are valid.
+			const { stdout } = await promisify(execFile)(
+				process.execPath,
+				[
+					"--input-type=module",
+					"-e",
+					`const m = await import(${JSON.stringify(new URL("index.js", f.server).href)});
+console.log(JSON.stringify({ notFound: m.handler({ httpMethod: "GET", url: "/" }, {}, "/preview").notFound.length, kept: m.kept ?? null }));`,
+				],
+			);
+			expect(JSON.parse(stdout)).toEqual({
+				notFound: 1,
+				kept: "kept" in row ? 1 : null,
+			});
 			// A prepared entrypoint is recognized by its marker, not a name.
 			await expect(
 				Effect.runPromise(
@@ -7123,15 +7150,12 @@ ${f.index}`,
 			new URL("index.js", f.server),
 			`import "#helper";\nimport "./runtime-helper.js";\n${f.index}`,
 		);
+		// runtime-helper.js is reached only through the edge from index.js.
 		const trace = await traceRuntimeDependencies(
 			[
 				{
 					path: "index.js",
 					from: new URL("index.js", f.server),
-				},
-				{
-					path: "runtime-helper.js",
-					from: new URL("runtime-helper.js", f.server),
 				},
 				{
 					path: "package.json",
