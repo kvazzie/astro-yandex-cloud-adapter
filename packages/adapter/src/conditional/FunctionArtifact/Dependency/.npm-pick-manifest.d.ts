@@ -6,6 +6,6 @@ declare module "npm-pick-manifest" {
       versions: Record<string, Manifest>;
     },
     wanted: string,
-    options?: { defaultTag?: string },
+    options?: { defaultTag?: string; nodeVersion?: string },
   ): Manifest;
 }

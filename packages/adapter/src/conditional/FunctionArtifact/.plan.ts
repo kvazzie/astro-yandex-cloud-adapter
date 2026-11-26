@@ -234,7 +234,9 @@ export function planPreparation(
 async function lookupPaths(path: string): Promise<string[]> {
 	// Walk components in lookup order, so a link is followed before a later "..".
 	const root = parse(path).root;
-	const pending = path.slice(root.length).split(/[\\/]+/);
+	// Only Windows treats a backslash as a separator; elsewhere it names a file.
+	const separators = sep === "\\" ? /[\\/]+/ : /\/+/;
+	const pending = path.slice(root.length).split(separators);
 	const visited = [root];
 	let current = root;
 	// Linux follows at most 40 links in one lookup; a revisited link is not a loop.
@@ -268,7 +270,7 @@ async function lookupPaths(path: string): Promise<string[]> {
 		const targetRoot = parse(target).root;
 		if (targetRoot) current = targetRoot;
 		pending.unshift(
-			...target.slice(targetRoot.length).split(/[\\/]+/),
+			...target.slice(targetRoot.length).split(separators),
 		);
 	}
 	return visited;

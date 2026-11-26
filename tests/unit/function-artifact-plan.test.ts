@@ -6636,6 +6636,16 @@ ${f.index}`,
 			overlaps: false,
 		},
 		{ server: "function/", dotDotLink: true, overlaps: true },
+		// "\\" is an ordinary filename character outside Windows.
+		...(process.platform === "win32"
+			? []
+			: [
+					{
+						server: "function/",
+						backslashLink: true,
+						overlaps: true,
+					},
+				]),
 	])(
 		"guards server output removal against the client output ($server, linked client: $linkedClient, through server: $throughServer)",
 		async ({
@@ -6645,9 +6655,34 @@ ${f.index}`,
 			throughServer,
 			revisitedLink,
 			dotDotLink,
+			backslashLink,
 		}) => {
 			const f = await fixture();
 			let client = f.build.config.build.client;
+			if (backslashLink) {
+				// dist/linked-client -> "pivot\\name"; that link enters the server.
+				const outDir = f.build.config.outDir;
+				const assets = new URL("assets/", f.root);
+				await mkdir(new URL("site/", assets), {
+					recursive: true,
+				});
+				await symlink(
+					fileURLToPath(assets),
+					fileURLToPath(new URL("function/bridge", outDir)),
+					"dir",
+				);
+				await symlink(
+					"function/bridge/site",
+					join(fileURLToPath(outDir), "pivot\\name"),
+					"dir",
+				);
+				await symlink(
+					"pivot\\name",
+					fileURLToPath(new URL("linked-client", outDir)),
+					"dir",
+				);
+				client = new URL("linked-client/", outDir);
+			}
 			if (dotDotLink) {
 				// dist/linked-client -> pivot/../site; dist/pivot -> function/bridge/deep;
 				// dist/function/bridge -> assets. Only the bridge lies in the server.
@@ -6939,12 +6974,14 @@ ${f.index}`,
 					m.kind === "writeFile" &&
 					m.path.pathname.endsWith("package-lock.json"),
 			);
+			if (lock?.kind !== "writeFile")
+				throw new Error(
+					"Expected install planning to write a lockfile",
+				);
 			const packages = (
-				lock?.kind === "writeFile"
-					? (JSON.parse(lock.contents) as {
-							packages: Record<string, { version?: string }>;
-						})
-					: { packages: {} }
+				JSON.parse(lock.contents) as {
+					packages: Record<string, { version?: string }>;
+				}
 			).packages;
 			if ("blocked" in row) {
 				expect(packages).not.toHaveProperty(
@@ -6959,6 +6996,68 @@ ${f.index}`,
 			await expect(plan("bundle")).rejects.toThrow(/helper/);
 		},
 	);
+
+	it("keeps the linked binding an emitted imports map selects", async () => {
+		const f = await fixture();
+		await writeFile(
+			new URL("package.json", f.root),
+			JSON.stringify({
+				name: "app",
+				dependencies: { "helper-alias": "npm:real-helper@^1" },
+			}),
+		);
+		await writeFile(
+			new URL("package.json", f.server),
+			'{"type":"module","imports":{"#helper":"helper-alias"}}',
+		);
+		// pnpm links the alias name to the real package's store directory.
+		const store = new URL(
+			"node_modules/.pnpm/real-helper@1.0.0/node_modules/real-helper/",
+			f.root,
+		);
+		await mkdir(store, { recursive: true });
+		await writeFile(
+			new URL("package.json", store),
+			'{"name":"real-helper","version":"1.0.0","type":"module"}',
+		);
+		await writeFile(
+			new URL("index.js", store),
+			"export const helped = true;\n",
+		);
+		await symlink(
+			store,
+			new URL("node_modules/helper-alias", f.root),
+			"dir",
+		);
+		await writeFile(
+			new URL("index.js", f.server),
+			`import "#helper";\n${f.index}`,
+		);
+		const plan = await Effect.runPromise(
+			FunctionArtifact.planPreparation(
+				f.build,
+				f.routePlan,
+				{ ...settings, dependencyStrategy: "install" },
+				{
+					resolve: () =>
+						Promise.resolve({
+							version: "1.0.0",
+							name: "real-helper",
+						}),
+				},
+			),
+		);
+		const manifest = plan.mutations.find(
+			(m) =>
+				m.kind === "writeFile" &&
+				m.path.pathname.endsWith("/package.json"),
+		);
+		if (manifest?.kind !== "writeFile")
+			throw new Error("Expected a generated package.json");
+		expect(JSON.parse(manifest.contents)).toMatchObject({
+			dependencies: { "helper-alias": "npm:real-helper@1.0.0" },
+		});
+	});
 
 	it("replaces a linked output file instead of writing through it", async () => {
 		const f = await fixture();

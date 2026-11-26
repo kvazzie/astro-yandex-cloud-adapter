@@ -1,6 +1,6 @@
 import type { Stats } from "node:fs";
-import { readFile, readlink, realpath, stat } from "node:fs/promises";
-import { isBuiltin } from "node:module";
+import { readFile, readdir, readlink, realpath, stat } from "node:fs/promises";
+import { createRequire, isBuiltin } from "node:module";
 import {
   basename,
   dirname,
@@ -115,12 +115,11 @@ export async function traceRuntimeDependencies(
       for (const target of [resolved].flat()) {
         targets.add(target);
         // nft resolves a package that an imports map selects without calling this
-        // hook again, so name it from the installed path nft resolved.
-        const selected = specifier.startsWith("#")
-          ? installedPackageName(target)
-          : undefined;
-        if (selected && inServer(parent) && !inServer(target))
-          imports.push({ name: selected, parent });
+        // hook again and returns its canonical path, so name the binding that
+        // Node's lookup from the importing file reaches it through.
+        if (specifier.startsWith("#") && inServer(parent) && !inServer(target))
+          for (const name of await installedBindings(target, parent))
+            imports.push({ name, parent });
       }
       moduleEdges.set(parent, targets);
       return resolved;
@@ -175,14 +174,38 @@ export async function traceRuntimeDependencies(
   return { packages, files: traced, parents: parentsOf };
 }
 
-/** Names the installed package that contains a resolved path. */
-function installedPackageName(path: string): string | undefined {
-  const parts = path.split(sep);
+/** Lists the node_modules bindings, nearest first, that resolve to a package path. */
+async function installedBindings(
+  target: string,
+  parent: string,
+): Promise<string[]> {
+  const parts = target.split(sep);
   const index = parts.lastIndexOf("node_modules");
-  if (index === -1) return undefined;
-  const [first, second] = parts.slice(index + 1);
-  if (!first) return undefined;
-  return first.startsWith("@") ? second && `${first}/${second}` : first;
+  if (index === -1) return [];
+  const scoped = parts[index + 1]?.startsWith("@");
+  const root = parts.slice(0, index + (scoped ? 3 : 2)).join(sep);
+  for (const directory of createRequire(parent).resolve.paths("x") ?? []) {
+    const names = await installedNames(directory);
+    const matches: string[] = [];
+    for (const name of names)
+      if ((await realpath(join(directory, name)).catch(() => "")) === root)
+        matches.push(name);
+    if (matches.length) return matches;
+  }
+  return [parts.slice(index + 1, index + (scoped ? 3 : 2)).join("/")];
+}
+
+async function installedNames(directory: string): Promise<string[]> {
+  const entries = await readdir(directory).catch(() => []);
+  const names: string[] = [];
+  for (const entry of entries) {
+    if (entry.startsWith(".")) continue;
+    if (!entry.startsWith("@")) names.push(entry);
+    else
+      for (const scoped of await readdir(join(directory, entry)).catch(() => []))
+        names.push(`${entry}/${scoped}`);
+  }
+  return names;
 }
 
 /** Names the package of a bare specifier, excluding builtins, URLs and private imports. */

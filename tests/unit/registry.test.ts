@@ -282,6 +282,52 @@ describe("install registry metadata", () => {
 		});
 	});
 
+	it("skips a version whose engines exclude the function runtime", async () => {
+		const tags = { latest: "1.1.0" };
+		metadata([
+			{ version: "1.0.0", "dist-tags": tags },
+			{
+				version: "1.1.0",
+				engines: { node: ">=24" },
+				"dist-tags": tags,
+			},
+		]);
+		expect(
+			await npmRegistry.resolve("child", "^1"),
+		).toMatchObject({
+			version: "1.0.0",
+		});
+	});
+
+	it("selects a wildcard when the configured tag does not exist", async () => {
+		command.mockImplementation(
+			(_file: string, args: string[]) => {
+				if (args.includes("config"))
+					return Promise.resolve({
+						stdout: "next\n",
+						stderr: "",
+					});
+				// npm view child@* fails when the configured tag is missing.
+				if (args.at(-1) === "child@*")
+					return Promise.reject(new Error("E404 no such tag"));
+				return Promise.resolve({
+					stdout: JSON.stringify([
+						{
+							version: "1.0.0",
+							"dist-tags": { latest: "1.0.0" },
+						},
+					]),
+					stderr: "",
+				});
+			},
+		);
+		expect(
+			await npmRegistry.resolve("child", "*"),
+		).toMatchObject({
+			version: "1.0.0",
+		});
+	});
+
 	it("selects tags and manifests from one registry snapshot", async () => {
 		// The tag moved between the two reads.
 		views({

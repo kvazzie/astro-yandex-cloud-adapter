@@ -7,6 +7,13 @@ import { tmpdir } from "node:os";
 import pickManifest from "npm-pick-manifest";
 import semver from "semver";
 
+import { FUNCTION_NODE_RANGE } from "./Metadata.ts";
+
+// The lowest Node version the Function Artifact supports, for engine checks.
+const FUNCTION_NODE_VERSION = semver.minVersion(
+	FUNCTION_NODE_RANGE,
+)!.version;
+
 /** npm reads the `npm:` alias prefix case-insensitively. */
 export function isRegistryAlias(requirement: string): boolean {
 	return /^npm:/i.test(requirement);
@@ -238,7 +245,8 @@ function npmSelection(
 				),
 			},
 			requirement,
-			{ defaultTag },
+			// Engines are checked against the function runtime, not the build host.
+			{ defaultTag, nodeVersion: FUNCTION_NODE_VERSION },
 		)?.version;
 	} catch {
 		return undefined;
@@ -272,9 +280,21 @@ async function fetchRegistryMetadata(
 	requirement: string,
 	appRoot?: URL,
 ): Promise<RegistryVersionMetadata> {
+	let viewFailure: Error | undefined;
+	// npm view name@* fails when the configured tag does not exist; the stable
+	// versions read below still give npm's selection.
 	const published = await requestMetadata<
 		PublishedVersion | PublishedVersion[]
-	>(packageName, requirement, appRoot);
+	>(packageName, requirement, appRoot).catch(
+		(cause: unknown) => {
+			if (requirement !== "*") throw cause;
+			viewFailure =
+				cause instanceof Error
+					? cause
+					: new Error(String(cause));
+			return [];
+		},
+	);
 	const tag = await configuredTag(appRoot);
 	let versions = [published].flat();
 	// npm view name@* returns only the configured tag; npm install falls back to the
@@ -305,7 +325,7 @@ async function fetchRegistryMetadata(
 				stable.push(head);
 			}
 			versions = stable;
-		}
+		} else if (viewFailure) throw viewFailure;
 	}
 	const version =
 		semver.valid(requirement) ??
