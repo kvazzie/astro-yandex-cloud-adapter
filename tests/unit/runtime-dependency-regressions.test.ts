@@ -470,6 +470,87 @@ describe("runtime dependency regressions", () => {
 		}
 	});
 
+	it.each([
+		{ shrinkwrap: true, nested: true, accepted: true },
+		{ shrinkwrap: false, nested: true, accepted: false },
+		{ shrinkwrap: true, nested: false, accepted: false },
+	])(
+		"validates a published shrinkwrap's children against raw ranges under a conflicting override: %j",
+		async ({ shrinkwrap, nested, accepted }) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-published-shrinkwrap-"),
+			);
+			try {
+				const leaf = nested
+					? "node_modules/carrier/node_modules/leaf"
+					: "node_modules/leaf";
+				for (const [directory, manifest] of [
+					[
+						"",
+						{
+							name: "app",
+							version: "1.0.0",
+							dependencies: { carrier: "1.0.0" },
+							overrides: { leaf: "2.0.0" },
+						},
+					],
+					[
+						"node_modules/carrier",
+						{
+							name: "carrier",
+							version: "1.0.0",
+							dependencies: { leaf: "^1.0.0" },
+						},
+					],
+					[leaf, { name: "leaf", version: "1.0.0" }],
+				] as const) {
+					await mkdir(join(root, directory), {
+						recursive: true,
+					});
+					await writeFile(
+						join(root, directory, "package.json"),
+						JSON.stringify(manifest),
+					);
+				}
+				if (shrinkwrap)
+					await writeFile(
+						join(
+							root,
+							"node_modules/carrier/npm-shrinkwrap.json",
+						),
+						JSON.stringify({
+							lockfileVersion: 3,
+							packages: {
+								"": { name: "carrier", version: "1.0.0" },
+								"node_modules/leaf": { version: "1.0.0" },
+							},
+						}),
+					);
+				const planning = resolvePinnedRuntimeDependencies(
+					pathToFileURL(`${root}/`),
+					new Set(["carrier"]),
+					{ resolve: () => Promise.resolve({}) },
+				);
+				if (!accepted) {
+					await expect(planning).rejects.toThrow(
+						/"leaf" \(required by "carrier" as "\^1\.0\.0"\)/,
+					);
+					return;
+				}
+				const graph = await planning;
+				expect(
+					graph.find(({ name }) => name === "leaf"),
+				).toMatchObject({ version: "1.0.0" });
+				expect(
+					graph.find(({ name }) => name === "carrier")
+						?.dependencies,
+				).toEqual({ leaf: "1.0.0" });
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
 	it("lets an ordinary dependency take precedence over a peer of the same name", async () => {
 		const root = await mkdtemp(
 			join(tmpdir(), "yandex-ordinary-over-peer-"),

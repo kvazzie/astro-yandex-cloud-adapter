@@ -209,6 +209,31 @@ export async function resolvePinnedRuntimeDependencies(
 		source.directory ??
 		source.lockLocation ??
 		`${source.registryName ?? name}@${source.version}${source.overrides?.identity ?? ""}`;
+	const shrinkwraps = new Map<string, Promise<boolean>>();
+	// npm's Node.inShrinkwrap: a tree parent owns or is inside a published shrinkwrap.
+	const inPublishedShrinkwrap = async (
+		directory: string,
+	): Promise<boolean> => {
+		const modules = `${sep}node_modules${sep}`;
+		const index = directory.lastIndexOf(modules);
+		const parent =
+			index === -1 ? undefined : directory.slice(0, index);
+		if (
+			!parent ||
+			parent === appDirectory ||
+			!parent.includes(modules)
+		)
+			return false;
+		let result = shrinkwraps.get(parent);
+		if (!result) {
+			result = (async () =>
+				(await existingRealPath(
+					join(parent, "npm-shrinkwrap.json"),
+				)) !== undefined || inPublishedShrinkwrap(parent))();
+			shrinkwraps.set(parent, result);
+		}
+		return result;
+	};
 	// A lock reference can name a binding whose installed contents were already selected.
 	const reconcileSource = (
 		name: string,
@@ -387,9 +412,14 @@ export async function resolvePinnedRuntimeDependencies(
 									installed.directory,
 								) !== undefined)),
 					);
+					// Like a bundle, npm checks a shrinkwrapped binding against the raw range.
+					const shrinkwrapped =
+						!inBundle &&
+						installed !== undefined &&
+						(await inPublishedShrinkwrap(installed.directory));
 					const requirement = parseRuntimeRequirement(
 						name,
-						inBundle ? range : override.spec,
+						inBundle || shrinkwrapped ? range : override.spec,
 					);
 					const compatible = (candidate: {
 						version: string;
@@ -409,7 +439,7 @@ export async function resolvePinnedRuntimeDependencies(
 						installed = await findInstalledPackage(
 							childBase,
 							name,
-							override.spec,
+							shrinkwrapped ? range : override.spec,
 						);
 
 					if (!inBundle && requirement.local) {
