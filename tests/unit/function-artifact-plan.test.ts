@@ -6294,6 +6294,96 @@ ${f.index}`,
 		},
 	);
 
+	it.each(["catalog:", "^1"])(
+		"keeps a registry child of an opted-in local package on the registry path: %s",
+		async (spec) => {
+			const f = await fixture();
+			const lib = new URL("packages/lib/", f.root);
+			await mkdir(lib, { recursive: true });
+			await writeFile(
+				new URL("package.json", lib),
+				JSON.stringify({
+					name: "lib",
+					version: "1.0.0",
+					main: "index.js",
+					dependencies: { helper: spec },
+				}),
+			);
+			await writeFile(
+				new URL("index.js", lib),
+				"module.exports = require('helper');",
+			);
+			await writeFile(
+				new URL("package.json", f.root),
+				JSON.stringify({
+					name: "app",
+					dependencies: { lib: "link:./packages/lib" },
+				}),
+			);
+			await writeFile(
+				new URL("pnpm-workspace.yaml", f.root),
+				"catalog:\n  helper: ^1\n",
+			);
+			await mkdir(new URL("node_modules/helper/", f.root), {
+				recursive: true,
+			});
+			await writeFile(
+				new URL("node_modules/helper/package.json", f.root),
+				'{"name":"helper","version":"1.0.0","main":"index.js"}',
+			);
+			await writeFile(
+				new URL("node_modules/helper/index.js", f.root),
+				"module.exports = 'helper';",
+			);
+			await symlink(
+				lib,
+				new URL("node_modules/lib", f.root),
+				"dir",
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`import "lib";\n${f.index}`,
+			);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					{
+						...settings,
+						dependencyStrategy: "install",
+						includeLocal: true,
+					},
+					{
+						resolve: () =>
+							Promise.resolve({
+								version: "1.0.0",
+								resolved: "https://example.test/helper.tgz",
+							}),
+					},
+				),
+			);
+			const lock = plan.mutations.find(
+				(m) =>
+					m.kind === "writeFile" &&
+					m.path.pathname.endsWith("package-lock.json"),
+			);
+			if (lock?.kind !== "writeFile")
+				throw new Error("Expected lockfile");
+			const packages = (
+				JSON.parse(lock.contents) as {
+					packages: Record<string, { resolved?: string }>;
+				}
+			).packages;
+			expect(packages["node_modules/lib"]?.resolved).toContain(
+				".yandex/dependencies/",
+			);
+			expect(packages["node_modules/helper"]).toMatchObject({
+				version: "1.0.0",
+				resolved: "https://example.test/helper.tgz",
+			});
+		},
+	);
+
 	it.each([
 		{
 			spec: "catalog:",
@@ -6309,6 +6399,22 @@ ${f.index}`,
 			spec: "catalog:",
 			workspace: "catalog:\n  renderer: link:../renderer\n",
 			accepted: false,
+		},
+		{
+			spec: "catalog:",
+			workspace: 'catalog: { renderer: "^1.0.0" }\n',
+			accepted: true,
+		},
+		{
+			spec: "catalog:web",
+			workspace: "catalogs: { web: { renderer: '^1' } }\n",
+			accepted: true,
+		},
+		{
+			spec: "catalog:",
+			workspace:
+				'packages:\n  - \'apps/*\'\ncatalog:\n  # pinned\n  "renderer": "^1.0.0" # registry\n',
+			accepted: true,
 		},
 		{ spec: "catalog:", workspace: undefined, accepted: false },
 	])(

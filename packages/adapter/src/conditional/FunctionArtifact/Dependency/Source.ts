@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import type { PackageJson } from "pkg-types";
 import semver from "semver";
+import { parse as parseYaml } from "yaml";
 import {
 	type ApplicationOverrides,
 	applicationDependencyRequirement,
@@ -61,46 +62,39 @@ async function readPnpmCatalogs(
 				throw cause;
 		}
 		if (source !== undefined) {
-			const catalogs = new Map<string, Map<string, string>>();
-			const unquote = (value: string) =>
-				value.replace(/^(['"])(.*)\1$/, "$2");
-			let section: "catalog" | "catalogs" | undefined;
-			let current: string | undefined;
-			for (const raw of source.split(/\r?\n/)) {
-				const line = raw.replace(/\s+#.*$/, "");
-				const text = line.trim();
-				if (!text || text.startsWith("#")) continue;
-				if (!/^\s/.test(line)) {
-					section =
-						text === "catalog:"
-							? "catalog"
-							: text === "catalogs:"
-								? "catalogs"
-								: undefined;
-					current =
-						section === "catalog" ? "default" : undefined;
-					continue;
-				}
-				const entry = /^(['"]?)([^'"]+?)\1\s*:\s*(.*)$/.exec(
-					text,
+			let workspace: unknown;
+			try {
+				workspace = parseYaml(source);
+			} catch (cause) {
+				throw new Error(
+					`${join(directory, "pnpm-workspace.yaml")} is not valid YAML.`,
+					{ cause },
 				);
-				if (!section || !entry) continue;
-				const [, , key, value] = entry as unknown as [
-					string,
-					string,
-					string,
-					string,
-				];
-				if (section === "catalogs" && value === "") {
-					current = key;
-					continue;
-				}
-				if (!current || value === "") continue;
-				const catalog =
-					catalogs.get(current) ?? new Map<string, string>();
-				catalog.set(key, unquote(value));
-				catalogs.set(current, catalog);
 			}
+			const record = (value: unknown) =>
+				typeof value === "object" &&
+				value !== null &&
+				!Array.isArray(value)
+					? (value as Record<string, unknown>)
+					: {};
+			// pnpm requires string versions; other entries cannot resolve a requirement.
+			const entries = (value: unknown) =>
+				new Map(
+					Object.entries(record(value)).flatMap(
+						([name, version]) =>
+							typeof version === "string"
+								? [[name, version] as const]
+								: [],
+					),
+				);
+			const catalogs = new Map<string, Map<string, string>>();
+			const root = record(workspace);
+			for (const [name, catalog] of Object.entries(
+				record(root.catalogs),
+			))
+				catalogs.set(name, entries(catalog));
+			if (root.catalog !== undefined)
+				catalogs.set("default", entries(root.catalog));
 			return catalogs;
 		}
 		if (dirname(directory) === directory) return undefined;

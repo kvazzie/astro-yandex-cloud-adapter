@@ -59,7 +59,8 @@
 		"libnpmpack": "^9.1.15",
 		"npm-package-arg": "^13.0.2",
 		"semver": "^7.8.5",
-		"tinyglobby": "^0.2.17"
+		"tinyglobby": "^0.2.17",
+		"yaml": "^2.9.1"
 	},
 	"scripts": {
 		"build": "pnpm --filter @astro-yandex-cloud/targets build && pnpm --filter @astro-yandex-cloud/deployment-manifest build && pnpm --filter @astro-yandex-cloud/function-runtime-bridge build && pnpm schema:generate && tsdown",

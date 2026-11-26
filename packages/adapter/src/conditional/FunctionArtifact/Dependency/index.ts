@@ -240,8 +240,12 @@ export async function resolvePinnedRuntimeDependencies(
 		let result = resolvedSources.get(key);
 		if (!result) {
 			result = (async () => {
+				// Use the same catalog-aware manifest as source discovery.
 				const local = source.directory
-					? await readJsonFile<PackageJson>(
+					? await resolvePnpmCatalogs(
+							await readJsonFile<PackageJson>(
+								join(source.directory, "package.json"),
+							),
 							join(source.directory, "package.json"),
 						)
 					: undefined;
