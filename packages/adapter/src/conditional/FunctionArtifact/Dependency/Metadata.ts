@@ -83,7 +83,10 @@ function sortedRecord(
 export function formatFunctionPackageJson(
 	dependencies: ResolvedRuntimeDependency[],
 	/** Emitted fields that resolve the artifact's own modules, such as `imports`. */
-	resolution: Pick<PackageJson, "imports"> = {},
+	resolution: Pick<
+		PackageJson,
+		"name" | "exports" | "imports"
+	> = {},
 ): string {
 	const packageJson: PackageJson = {
 		private: true,

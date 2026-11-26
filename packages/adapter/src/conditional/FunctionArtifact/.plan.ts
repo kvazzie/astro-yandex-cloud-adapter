@@ -124,6 +124,18 @@ export function planPreparation(
 			);
 			for (const prepared of output ? [output] : []) {
 				const { artifact } = prepared;
+				// npm ci reads npm-shrinkwrap.json before package-lock.json, so an emitted
+				// one would replace the generated graph. The application's own shrinkwrap
+				// still supplies pins, because it is read from the application root.
+				if (
+					settings.dependencyStrategy === "install" &&
+					prepared.files.some(
+						(file) => file.path === "npm-shrinkwrap.json",
+					)
+				)
+					throw new Errors.InvalidArtifact({
+						message: `The server output ${fileURLToPath(artifact.directory)} contains npm-shrinkwrap.json, which npm ci would read instead of the generated package-lock.json. Remove it from the server output; the application's own npm-shrinkwrap.json still pins its dependencies.`,
+					});
 				let packageFiles: PlannedFile[];
 				try {
 					packageFiles = await planPackageFiles(
@@ -197,22 +209,26 @@ export function planPreparation(
 					const parent = pathToFileURL(
 						dirname(fileURLToPath(destination)) + "/",
 					);
-					mutations.push({ kind: "mkdir", path: parent });
+					const root = artifact.directory;
+					mutations.push({ kind: "mkdir", root, path: parent });
 					if (file.binaryContents !== undefined)
 						mutations.push({
 							kind: "writeBinaryFile",
+							root,
 							path: destination,
 							contents: file.binaryContents,
 						});
 					else if (file.contents !== undefined)
 						mutations.push({
 							kind: "writeFile",
+							root,
 							path: destination,
 							contents: file.contents,
 						});
 					else
 						mutations.push({
 							kind: "copyFile",
+							root,
 							from: file.from,
 							to: destination,
 						});

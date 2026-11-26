@@ -2926,6 +2926,49 @@ describe("Function Artifact mutation plans", () => {
 		},
 	);
 
+	it("rejects a server shrinkwrap that npm would read instead of the generated lockfile", async () => {
+		const f = await fixture();
+		await mkdir(new URL("node_modules/example/", f.root), {
+			recursive: true,
+		});
+		await writeFile(
+			new URL("package.json", f.root),
+			JSON.stringify({ name: "app" }),
+		);
+		await writeFile(
+			new URL("node_modules/example/package.json", f.root),
+			JSON.stringify({ name: "example", version: "1.2.3" }),
+		);
+		await writeFile(
+			new URL("index.js", f.server),
+			`import 'example';\n${f.index}`,
+		);
+		// npm ci reads this before package-lock.json and finds example missing.
+		await writeFile(
+			new URL("npm-shrinkwrap.json", f.server),
+			JSON.stringify({
+				lockfileVersion: 3,
+				requires: true,
+				packages: { "": {} },
+			}),
+		);
+		const before = await snapshot(f.directory);
+		await expect(
+			Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					{ ...settings, dependencyStrategy: "install" },
+					{
+						resolve: (name, version) =>
+							Promise.resolve({ name, version }),
+					},
+				),
+			),
+		).rejects.toThrow(/npm-shrinkwrap\.json/);
+		expect(await snapshot(f.directory)).toEqual(before);
+	});
+
 	it.each([
 		{
 			label: "inactive dependency scope",
@@ -7276,6 +7319,51 @@ console.log(JSON.stringify({ notFound: m.handler({ httpMethod: "GET", url: "/" }
 		});
 	});
 
+	it.each(["bundle", "install"] as const)(
+		"keeps the package self-reference an emitted imports map uses: %s",
+		async (dependencyStrategy) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("package.json", f.server),
+				JSON.stringify({
+					type: "module",
+					name: "server-app",
+					exports: { "./helper": "./helper.js" },
+					imports: { "#helper": "server-app/helper" },
+				}),
+			);
+			await writeFile(
+				new URL("helper.js", f.server),
+				"export const helped = true;\n",
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`export { helped } from "#helper";\n${f.index}`,
+			);
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					{ ...settings, dependencyStrategy },
+					{ resolve: () => Promise.reject(new Error("unused")) },
+				),
+			);
+			await Effect.runPromise(
+				FunctionArtifact.applyPreparation(plan),
+			);
+			const { stdout } = await promisify(execFile)(
+				process.execPath,
+				[
+					"--input-type=module",
+					"-e",
+					`const m = await import(${JSON.stringify(new URL("index.js", f.server).href)});
+console.log(JSON.stringify(m.helped));`,
+				],
+			);
+			expect(JSON.parse(stdout)).toBe(true);
+		},
+	);
+
 	it("replaces a linked output file instead of writing through it", async () => {
 		const f = await fixture();
 		const outside = new URL("package-lock.json", f.root);
@@ -7307,6 +7395,39 @@ console.log(JSON.stringify({ notFound: m.handler({ httpMethod: "GET", url: "/" }
 			lockfileVersion: 3,
 		});
 	});
+
+	it.each([
+		{ name: "outside", target: "../outside", inside: false },
+		{ name: "inside", target: "artifact-data", inside: true },
+	])(
+		"confines 404 writes through a parent linked $name the artifact",
+		async ({ target, inside }) => {
+			const f = await fixture();
+			const linked = new URL(`${target}/`, f.server);
+			await mkdir(linked);
+			await symlink(target, new URL(".yandex", f.server), "dir");
+			const plan = await Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					settings,
+				),
+			);
+			const applied = Effect.runPromise(
+				FunctionArtifact.applyPreparation(plan),
+			);
+			if (inside) {
+				await applied;
+				const pages = await readdir(new URL("404/", linked));
+				expect(pages).toHaveLength(1);
+				return;
+			}
+			await expect(applied).rejects.toThrow(
+				/outside the Function Artifact/,
+			);
+			expect(await readdir(linked)).toEqual([]);
+		},
+	);
 
 	it("wraps a linked entrypoint where Node loads it", async () => {
 		const f = await fixture();
@@ -9020,13 +9141,24 @@ console.log(JSON.stringify({ directory: policy.artifactDirectory.href, page: Obj
 		const last = new URL("last.txt", f.root);
 		const plan: FunctionArtifact.PreparationPlan = {
 			mutations: [
-				{ kind: "writeFile", path: first, contents: "first" },
 				{
 					kind: "writeFile",
+					root: f.root,
+					path: first,
+					contents: "first",
+				},
+				{
+					kind: "writeFile",
+					root: f.root,
 					path: new URL("missing/child.txt", f.root),
 					contents: "fail",
 				},
-				{ kind: "writeFile", path: last, contents: "never" },
+				{
+					kind: "writeFile",
+					root: f.root,
+					path: last,
+					contents: "never",
+				},
 			],
 			plannedOutput: { routePlan: f.routePlan, functions: [] },
 		};

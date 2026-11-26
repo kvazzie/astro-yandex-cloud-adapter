@@ -3,10 +3,20 @@ import { constants } from "node:fs";
 import {
 	copyFile,
 	mkdir,
+	realpath,
 	rename,
 	rm,
 	writeFile,
 } from "node:fs/promises";
+import {
+	basename,
+	dirname,
+	isAbsolute,
+	join,
+	relative,
+	sep,
+} from "node:path";
+import { fileURLToPath } from "node:url";
 import * as Effect from "effect/Effect";
 import type { PreparationPlan } from "./.types.ts";
 import { Errors } from ".";
@@ -20,7 +30,7 @@ export function applyPreparation(plan: PreparationPlan) {
 				signal.throwIfAborted();
 				switch (mutation.kind) {
 					case "mkdir":
-						await mkdir(mutation.path, { recursive: true });
+						await createDirectory(mutation.root, mutation.path);
 						break;
 					case "removeDirectory":
 						await rm(mutation.path, {
@@ -29,20 +39,26 @@ export function applyPreparation(plan: PreparationPlan) {
 						});
 						break;
 					case "copyFile":
-						await replaceFile(mutation.to, (temporary) =>
-							copyFile(
-								mutation.from,
-								temporary,
-								constants.COPYFILE_EXCL,
-							),
+						await replaceFile(
+							mutation.root,
+							mutation.to,
+							(temporary) =>
+								copyFile(
+									mutation.from,
+									temporary,
+									constants.COPYFILE_EXCL,
+								),
 						);
 						break;
 					case "writeBinaryFile":
 					case "writeFile":
-						await replaceFile(mutation.path, (temporary) =>
-							writeFile(temporary, mutation.contents, {
-								flag: "wx",
-							}),
+						await replaceFile(
+							mutation.root,
+							mutation.path,
+							(temporary) =>
+								writeFile(temporary, mutation.contents, {
+									flag: "wx",
+								}),
 						);
 						break;
 				}
@@ -58,18 +74,74 @@ export function applyPreparation(plan: PreparationPlan) {
 	});
 }
 
-/** Writes beside the destination and renames, so a linked destination is replaced, not followed. */
-async function replaceFile(
-	destination: URL,
-	write: (temporary: URL) => Promise<void>,
-): Promise<void> {
-	const temporary = new URL(
-		`.${randomUUID()}.yandex-tmp`,
-		new URL("./", destination),
+/** Whether `child` is `parent` or lies below it. */
+function within(child: string, parent: string): boolean {
+	const path = relative(parent, child);
+	return (
+		path !== ".." &&
+		!path.startsWith(`..${sep}`) &&
+		!isAbsolute(path)
 	);
+}
+
+/** Resolves `path` and rejects it unless its real location stays inside the real root. */
+async function realWithin(
+	root: URL,
+	path: string,
+): Promise<string> {
+	const real = await realpath(path);
+	if (!within(real, await realpath(root)))
+		throw new Error(
+			`The Function Artifact path ${path} resolves through a symbolic link to ${real}, outside the Function Artifact ${fileURLToPath(root)}. Remove the link from the server output.`,
+		);
+	return real;
+}
+
+/** Rejects a destination that is not lexically below the artifact root. */
+function lexicalPath(root: URL, path: URL): string {
+	const file = fileURLToPath(path);
+	if (!within(file, fileURLToPath(root)))
+		throw new Error(
+			`The Function Artifact path ${file} is outside the Function Artifact ${fileURLToPath(root)}.`,
+		);
+	return file;
+}
+
+/** Creates one component at a time, so a linked parent cannot place directories elsewhere. */
+async function createDirectory(root: URL, directory: URL) {
+	let current = fileURLToPath(root);
+	for (const component of relative(
+		current,
+		lexicalPath(root, directory),
+	).split(sep)) {
+		if (component === "") continue;
+		current = join(current, component);
+		try {
+			await mkdir(current);
+		} catch (cause) {
+			if ((cause as NodeJS.ErrnoException).code !== "EEXIST")
+				throw cause;
+		}
+		current = await realWithin(root, current);
+	}
+}
+
+/**
+ * Writes beside the destination in its real parent directory and renames, so a
+ * linked destination is replaced, not followed, and a linked parent cannot
+ * redirect the file outside the artifact.
+ */
+async function replaceFile(
+	root: URL,
+	destination: URL,
+	write: (temporary: string) => Promise<void>,
+): Promise<void> {
+	const file = lexicalPath(root, destination);
+	const parent = await realWithin(root, dirname(file));
+	const temporary = join(parent, `.${randomUUID()}.yandex-tmp`);
 	try {
 		await write(temporary);
-		await rename(temporary, destination);
+		await rename(temporary, join(parent, basename(file)));
 	} catch (cause) {
 		await rm(temporary, { force: true });
 		throw cause;

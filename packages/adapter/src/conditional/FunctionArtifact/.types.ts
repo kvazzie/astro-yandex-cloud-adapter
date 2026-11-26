@@ -29,23 +29,31 @@ export interface PreparationOutput {
 	readonly routePlan: RoutePlan;
 	readonly functions: readonly FunctionArtifactDescriptor[];
 }
+/** File and directory mutations stay within `root`, the Function Artifact directory. */
 export type Mutation =
 	| {
 			readonly kind: "writeBinaryFile";
+			readonly root: URL;
 			readonly path: URL;
 			readonly contents: Uint8Array;
 	  }
 	| {
 			readonly kind: "writeFile";
+			readonly root: URL;
 			readonly path: URL;
 			readonly contents: string;
 	  }
 	| {
 			readonly kind: "copyFile";
+			readonly root: URL;
 			readonly from: URL;
 			readonly to: URL;
 	  }
-	| { readonly kind: "mkdir"; readonly path: URL }
+	| {
+			readonly kind: "mkdir";
+			readonly root: URL;
+			readonly path: URL;
+	  }
 	| { readonly kind: "removeDirectory"; readonly path: URL };
 export interface PreparationPlan {
 	readonly mutations: readonly Mutation[];

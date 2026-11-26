@@ -96,10 +96,14 @@ export async function planPackageFiles(
 	];
 }
 
-/** Keeps the emitted package fields that Node uses to resolve the artifact's own modules. */
+/**
+ * Keeps the emitted package fields that Node uses to resolve the artifact's own modules:
+ * `imports`, and the `name` and `exports` a package self-reference such as an
+ * `imports` target `"server-app/helper"` resolves through.
+ */
 function emittedResolution(
 	files: readonly PlannedFile[],
-): Pick<PackageJson, "imports"> {
+): Pick<PackageJson, "name" | "exports" | "imports"> {
 	const emitted = files.find(
 		(file) => file.path === "package.json",
 	);
@@ -116,13 +120,24 @@ function emittedResolution(
 			{ cause },
 		);
 	}
-	const imports =
-		typeof manifest === "object" && manifest !== null
-			? (manifest as { imports?: unknown }).imports
-			: undefined;
-	return imports === undefined
-		? {}
-		: { imports: imports as PackageJson["imports"] };
+	if (typeof manifest !== "object" || manifest === null)
+		return {};
+	const { name, exports, imports } = manifest as {
+		name?: unknown;
+		exports?: unknown;
+		imports?: unknown;
+	};
+	return {
+		...(name === undefined
+			? {}
+			: { name: name as PackageJson["name"] }),
+		...(exports === undefined
+			? {}
+			: { exports: exports as PackageJson["exports"] }),
+		...(imports === undefined
+			? {}
+			: { imports: imports as PackageJson["imports"] }),
+	};
 }
 
 type FunctionEntrypointValidation =
@@ -190,6 +205,7 @@ export function planNotFoundArtifacts(
 			policy.notFound = [];
 			mutations.push({
 				kind: "mkdir",
+				root: artifact.directory,
 				path: new URL(".yandex/404/", artifact.directory),
 			});
 			for (const scope of scopes) {
@@ -200,6 +216,7 @@ export function planNotFoundArtifacts(
 				const file = `.yandex/404/${name}.html`;
 				mutations.push({
 					kind: "copyFile",
+					root: artifact.directory,
 					from: pathToFileURL(
 						join(
 							fileURLToPath(build.config.build.client),
