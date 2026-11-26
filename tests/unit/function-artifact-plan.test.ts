@@ -7344,6 +7344,19 @@ ${f.index}`,
 			rejection: "omits node_modules/.generated/settings.cjs",
 		},
 		{
+			name: "rejects a relative import into the server output",
+			manifest: { exports: "./index.mjs" },
+			files: {
+				"index.mjs":
+					'export { default } from "../../dist/function/shared.mjs";',
+			},
+			installedFiles: {
+				"dist/function/shared.mjs": 'export default "shared";',
+			},
+			required: "shared",
+			rejection: "outside the package",
+		},
+		{
 			name: "accepts a manifest with a byte order mark",
 			manifestBom: true,
 			files: { "index.cjs": 'module.exports = "bom";' },

@@ -19,7 +19,10 @@ import type { PlannedFile } from "../.types.ts";
 export interface RuntimeTrace {
   /** Packages that emitted server files load directly. */
   readonly packages: ReadonlySet<string>;
-  /** Absolute paths of traced files outside the server output, including symlinks. */
+  /**
+   * Absolute paths of traced files outside the server output, including symlinks,
+   * and of server files that a file outside the server output loads.
+   */
   readonly files: ReadonlySet<string>;
   /** Absolute paths of the files that load each traced file. */
   readonly parents: ReadonlyMap<string, readonly string[]>;
@@ -139,9 +142,11 @@ export async function traceRuntimeDependencies(
   const parentsOf = new Map<string, readonly string[]>();
   for (const path of fileList) {
     const file = absolute(path);
-    if (inServer(file)) continue;
-    traced.add(file);
     const parents = [...(reasons.get(path)?.parents ?? [])].map(absolute);
+    // A server file loaded from outside the server output, such as by a local
+    // package, still needs its edge for archive validation.
+    if (inServer(file) && parents.every(inServer)) continue;
+    traced.add(file);
     parentsOf.set(file, parents);
   }
   // Imports count only from files loaded as modules, not from assets read as text.
