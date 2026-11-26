@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { Targets } from "@astro-yandex-cloud/targets";
 
 import { generateApiGatewaySpecificationTemplate } from "../../packages/adapter/src/conditional/ApiGatewaySpecificationTemplate";
-import { defineDeploymentManifest } from "../../packages/adapter/src/mandatory/DeploymentManifest";
+import {
+	defineDeploymentManifest,
+	encodeDeploymentManifest,
+} from "../../packages/adapter/src/mandatory/DeploymentManifest";
 import {
 	reconcileRoutes,
 	requiredOnDemandRoutes,
@@ -31,6 +34,7 @@ function templateFor(
 			apiGateway: true,
 			...(recursive404 ? { recursive404 } : {}),
 		},
+		gatewayTemplate: { path: "api-gateway.yaml" },
 		base: "/",
 		artifacts: {
 			client: { id: "client:primary", path: "client" },
@@ -51,6 +55,17 @@ function templateFor(
 					objectKey: "page.html",
 					artifactId: "client:primary",
 				},
+				// The root 404 scope must name a prerendered page.
+				...(recursive404
+					? [
+							{
+								kind: "page" as const,
+								url: "/404",
+								objectKey: "404.html",
+								artifactId: "client:primary",
+							},
+						]
+					: []),
 			],
 			onDemand: [
 				{
@@ -65,7 +80,7 @@ function templateFor(
 				? [
 						{
 							scope: "/",
-							url: "/404.html",
+							url: "/404",
 							objectKey: "404.html",
 							artifactId: "client:primary",
 						},
@@ -73,6 +88,29 @@ function templateFor(
 				: [],
 		},
 	});
+	// Astro ranks the static 404 page ahead of dynamic routes.
+	const notFoundRoutes: RoutePlan["routes"] = recursive404
+		? [
+				{
+					kind: "prerendered",
+					routeKind: "page",
+					pattern: "/404",
+					priority: -1,
+					patternRegex: "^/404/?$",
+					paths: [
+						{
+							url: "/404",
+							objectKey: "404.html",
+							artifactId: manifest.artifacts.client
+								.id as Extract<
+								RoutePlan["routes"][number],
+								{ kind: "prerendered" }
+							>["paths"][number]["artifactId"],
+						},
+					],
+				},
+			]
+		: [];
 	const routePlan: RoutePlan = {
 		base: "/",
 		trailingSlash: "ignore",
@@ -83,17 +121,18 @@ function templateFor(
 				pattern: staticUrl,
 				priority: staticPriority,
 				patternRegex: "^.*$",
-				paths: manifest.routes.prerendered.map(
-					({ url, objectKey, artifactId }) => ({
+				paths: manifest.routes.prerendered
+					.filter(({ url }) => url === staticUrl)
+					.map(({ url, objectKey, artifactId }) => ({
 						url,
 						objectKey,
 						artifactId: artifactId as Extract<
 							RoutePlan["routes"][number],
 							{ kind: "prerendered" }
 						>["paths"][number]["artifactId"],
-					}),
-				),
+					})),
 			},
+			...notFoundRoutes,
 			{
 				kind: "on-demand",
 				routeKind: "page",
@@ -109,6 +148,8 @@ function templateFor(
 			},
 		],
 	};
+	// The production writer validates the Manifest before Gateway generation.
+	if (recursive404) encodeDeploymentManifest(manifest);
 	return generateApiGatewaySpecificationTemplate(
 		manifest,
 		routePlan,

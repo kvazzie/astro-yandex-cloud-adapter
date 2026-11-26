@@ -24,7 +24,13 @@ import {
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { gzipSync } from "node:zlib";
-import { delimiter, dirname, join, relative } from "node:path";
+import {
+	delimiter,
+	dirname,
+	join,
+	relative,
+	sep,
+} from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import * as Effect from "effect/Effect";
@@ -67,21 +73,24 @@ async function snapshot(
 	directory: string,
 ): Promise<Record<string, string>> {
 	const result: Record<string, string> = {};
+	// Keys use "/" on every platform, as the lookups that read them do.
+	const key = (child: string) =>
+		relative(directory, child).split(sep).join("/");
 	const visit = async (path: string): Promise<void> => {
 		for (const entry of await readdir(path, {
 			withFileTypes: true,
 		})) {
 			const child = join(path, entry.name);
 			if (entry.isDirectory()) {
-				result[relative(directory, child) + "/"] = "directory";
+				result[key(child) + "/"] = "directory";
 				await visit(child);
 			} else if (entry.isSymbolicLink())
-				result[relative(directory, child)] =
+				result[key(child)] =
 					"symlink:" + (await readlink(child));
 			else
-				result[relative(directory, child)] = (
-					await readFile(child)
-				).toString("base64");
+				result[key(child)] = (await readFile(child)).toString(
+					"base64",
+				);
 		}
 	};
 	await visit(directory);
@@ -6291,7 +6300,12 @@ ${f.index}`,
 			expect(emitted.URL).toBe(17);
 			const policy = emitted.handler({}, {});
 			expect(policy.notFound).toHaveLength(1);
-			expect(policy.artifactDirectory.href).toBe(f.server.href);
+			// Node reports the real module path in import.meta.url.
+			expect(policy.artifactDirectory.href).toBe(
+				pathToFileURL(
+					`${await realpath(fileURLToPath(f.server))}/`,
+				).href,
+			);
 		},
 	);
 
@@ -6980,7 +6994,12 @@ console.log(JSON.stringify({ notFound: m.handler({ httpMethod: "GET", url: "/" }
 				"/preview",
 			);
 			expect(policy.notFound).toHaveLength(1);
-			expect(policy.artifactDirectory.href).toBe(f.server.href);
+			// Node reports the real module path in import.meta.url.
+			expect(policy.artifactDirectory.href).toBe(
+				pathToFileURL(
+					`${await realpath(fileURLToPath(f.server))}/`,
+				).href,
+			);
 		},
 	);
 
@@ -7490,7 +7509,9 @@ console.log(JSON.stringify({ directory: policy.artifactDirectory.href, page: Obj
 			expect(emitted.other).toBe(other ? 23 : undefined);
 			const policy = emitted.handler({}, {});
 			expect(policy.artifactDirectory.href).toBe(
-				artifact.directory.href,
+				pathToFileURL(
+					`${await realpath(fileURLToPath(artifact.directory))}/`,
+				).href,
 			);
 			expect(policy.notFound).toHaveLength(1);
 		},
