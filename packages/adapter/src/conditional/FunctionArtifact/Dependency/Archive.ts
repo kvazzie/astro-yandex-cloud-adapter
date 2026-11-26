@@ -1,15 +1,18 @@
 import { createHash } from "node:crypto";
 import { isAbsolute, posix, relative, sep } from "node:path";
+import { realpath } from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
 
 import pack from "libnpmpack";
-import semver from "semver";
 
 import type { PlannedFile } from "../.types.ts";
 import type { ResolvedRuntimeDependency } from "./Metadata.ts";
 import type { RuntimeTrace } from "./Trace.ts";
 import { stripJsonBom } from "./Source.ts";
-import type { RegistryVersionMetadata } from "./Registry.ts";
+import {
+	satisfiesRequirement,
+	type RegistryVersionMetadata,
+} from "./Registry.ts";
 
 /** Reads npm's gzip-compressed tar entries in memory without extracting paths. */
 function packedFiles(bytes: Buffer): Map<string, Buffer> {
@@ -134,21 +137,24 @@ export function externalBundledPeers(
 			if (metadata.peerDependenciesMeta?.[name]?.optional)
 				continue;
 			let scope = child;
-			let version: string | undefined;
+			let provider: RegistryVersionMetadata | undefined;
 			while (true) {
-				version = manifests.get(
+				provider = manifests.get(
 					posix.join(scope, "node_modules", name),
-				)?.version;
-				if (version || scope === ".") break;
+				);
+				if (provider?.version || scope === ".") break;
 				scope = posix.dirname(scope);
 			}
+			const version = provider?.version;
 			if (
 				version &&
-				range !== "*" &&
-				!semver.satisfies(version, range)
+				!satisfiesRequirement(name, range, {
+					name: (provider as { name?: string }).name,
+					version,
+				})
 			)
 				throw new Error(
-					`Bundled ${child} requires ${name}@${range}, but its archive supplies ${version}.`,
+					`Bundled ${child} requires ${name}@${range}, but its archive supplies ${(provider as { name?: string }).name ?? name}@${version}.`,
 				);
 			if (!version) required.push({ child, name, range });
 		}
@@ -196,7 +202,7 @@ export async function planLocalArchives(
 				bytes,
 			};
 			packed.set(directory, archive);
-			verifyTracedFilesArePacked(
+			await verifyTracedFilesArePacked(
 				directory,
 				bytes,
 				trace,
@@ -210,12 +216,12 @@ export async function planLocalArchives(
 }
 
 /** Every file the trace reached inside a local package must be in its npm archive. */
-function verifyTracedFilesArePacked(
+async function verifyTracedFilesArePacked(
 	directory: string,
 	bytes: Buffer,
 	{ files, parents }: Pick<RuntimeTrace, "files" | "parents">,
 	packageDirectories: readonly string[],
-): void {
+): Promise<void> {
 	const archived = packedFiles(bytes);
 	const within = (root: string, file: string) => {
 		const path = relative(root, file);
@@ -241,10 +247,18 @@ function verifyTracedFilesArePacked(
 				);
 			continue;
 		}
-		if (path.split(sep).includes("node_modules")) continue;
-		// A nested graph package is packed and verified with its own archive.
+		// A nested graph package, including one under node_modules, is delivered with its
+		// own package; anything else must be in this archive, as bundled files are.
+		// A traced dependency link is delivered with the package it points to.
+		const real = await realpath(file).catch(() => file);
 		const owner = [directory, ...packageDirectories]
-			.filter((root) => root === directory || within(root, file))
+			.filter(
+				(root) =>
+					root === directory ||
+					within(root, file) ||
+					root === real ||
+					within(root, real),
+			)
 			.sort((a, b) => b.length - a.length)[0];
 		if (owner !== directory) continue;
 		const archivedPath = path.split(sep).join("/");

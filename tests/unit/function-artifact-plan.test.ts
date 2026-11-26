@@ -6483,6 +6483,60 @@ ${f.index}`,
 		},
 	);
 
+	it.each([
+		{
+			provider: { name: "real-fmt", version: "1.2.0" },
+			valid: true,
+		},
+		{
+			provider: { name: "real-fmt", version: "2.0.0" },
+			valid: false,
+		},
+		{
+			provider: { name: "other-fmt", version: "1.2.0" },
+			valid: false,
+		},
+	])(
+		"validates a bundled peer alias against its target: $provider.name@$provider.version",
+		async ({ provider, valid }) => {
+			const directory = await mkdtemp(
+				join(tmpdir(), "bundled-alias-"),
+			);
+			directories.push(directory);
+			const modules = join(directory, "package/node_modules");
+			for (const [slot, manifest] of [
+				[
+					"consumer",
+					{
+						name: "consumer",
+						version: "1.0.0",
+						peerDependencies: { fmt: "npm:real-fmt@^1" },
+					},
+				],
+				["fmt", provider],
+			] as const) {
+				await mkdir(join(modules, slot), { recursive: true });
+				await writeFile(
+					join(modules, slot, "package.json"),
+					JSON.stringify(manifest),
+				);
+			}
+			await promisify(execFile)(
+				"tar",
+				["-czf", "bundle.tgz", "package"],
+				{ cwd: directory },
+			);
+			const bytes = await readFile(
+				join(directory, "bundle.tgz"),
+			);
+			if (valid) expect(externalBundledPeers(bytes)).toEqual([]);
+			else
+				expect(() => externalBundledPeers(bytes)).toThrow(
+					/requires fmt@npm:real-fmt@\^1/,
+				);
+		},
+	);
+
 	it("reads a PAX size record for the following tarball entry", () => {
 		// A valid ustar header, including its mandatory checksum.
 		const header = (
@@ -7276,6 +7330,18 @@ ${f.index}`,
 			},
 			required: "shared",
 			rejection: "outside the package",
+		},
+		{
+			name: "rejects a generated file under the package's node_modules",
+			files: {
+				"index.cjs":
+					'module.exports = require("./node_modules/.generated/settings.cjs");',
+				"node_modules/.generated/settings.cjs":
+					'module.exports = "generated";',
+			},
+			required: "generated",
+			// npm does not pack node_modules content that is not bundled.
+			rejection: "omits node_modules/.generated/settings.cjs",
 		},
 		{
 			name: "accepts a manifest with a byte order mark",

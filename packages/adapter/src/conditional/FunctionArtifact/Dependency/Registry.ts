@@ -29,6 +29,24 @@ export function parseRegistryRequirement(
 		: { name: target, requirement: "*" };
 }
 
+/** Checks a provider against a dependency range, following an npm alias to its target. */
+export function satisfiesRequirement(
+	slot: string,
+	range: string,
+	provider: { name?: string; version: string },
+): boolean {
+	const target = parseRegistryRequirement(slot, range);
+	if (
+		isRegistryAlias(range) &&
+		(provider.name ?? slot) !== target.name
+	)
+		return false;
+	return (
+		target.requirement === "*" ||
+		semver.satisfies(provider.version, target.requirement)
+	);
+}
+
 /** npm tags are non-range strings that need no URL escaping. */
 export function isRegistryTag(requirement: string): boolean {
 	return (

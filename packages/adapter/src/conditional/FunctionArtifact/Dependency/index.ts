@@ -38,6 +38,7 @@ import {
 	hasInstallLifecycleScripts,
 	normalizePackageBin,
 	normalizeBundleDependencies,
+	satisfiesRequirement,
 	type Registry,
 	type RegistryVersionMetadata,
 } from "./Registry.ts";
@@ -574,11 +575,10 @@ export async function resolvePinnedRuntimeDependencies(
 						);
 						if (
 							!provider ||
-							(range !== "*" &&
-								!semver.satisfies(
-									provider.source.version,
-									range,
-								))
+							!satisfiesRequirement(name, range, {
+								name: provider.source.registryName ?? name,
+								version: provider.source.version,
+							})
 						)
 							throw new Error(
 								`The install dependency strategy cannot pin ${packageName}: bundled ${child} needs external peer ${name}@${range}. Declare that peer on the bundle owner or install the owner before building.`,
