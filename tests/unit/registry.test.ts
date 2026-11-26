@@ -19,10 +19,32 @@ afterEach(() => {
 	vi.unstubAllEnvs();
 });
 
-function metadata(value: unknown) {
-	command.mockResolvedValue({
-		stdout: JSON.stringify(value),
-		stderr: "",
+/** Answers npm view with `value` and npm config get tag with `tag`. */
+function metadata(value: unknown, tag = "latest") {
+	command.mockImplementation((_file: string, args: string[]) =>
+		Promise.resolve({
+			stdout: args.includes("config")
+				? `${tag}\n`
+				: JSON.stringify(value),
+			stderr: "",
+		}),
+	);
+}
+
+/** Answers npm view by requested spec. */
+function views(
+	byRequest: Record<string, unknown>,
+	tag = "latest",
+) {
+	command.mockImplementation((_file: string, args: string[]) => {
+		if (args.includes("config"))
+			return Promise.resolve({ stdout: `${tag}\n`, stderr: "" });
+		const spec = args.at(-1)!;
+		const request = spec.slice(spec.lastIndexOf("@") + 1);
+		return Promise.resolve({
+			stdout: JSON.stringify(byRequest[request] ?? []),
+			stderr: "",
+		});
 	});
 }
 
@@ -210,25 +232,77 @@ describe("install registry metadata", () => {
 	it("falls back from a deprecated latest tag for a wildcard like npm", async () => {
 		const tags = { latest: "2.0.0-beta.1" };
 		// npm view child@* returns only the latest manifest.
-		command
-			.mockResolvedValueOnce({
-				stdout: JSON.stringify({
-					version: "2.0.0-beta.1",
-					deprecated: "use 1.0.0",
-					"dist-tags": tags,
-				}),
-				stderr: "",
-			})
-			.mockResolvedValue({
-				stdout: JSON.stringify([
-					{ version: "1.0.0", "dist-tags": tags },
-				]),
-				stderr: "",
-			});
+		views({
+			"*": {
+				version: "2.0.0-beta.1",
+				deprecated: "use 1.0.0",
+				"dist-tags": tags,
+			},
+			">=0.0.0": [{ version: "1.0.0", "dist-tags": tags }],
+		});
 		expect(
 			await npmRegistry.resolve("child", "*"),
 		).toMatchObject({
 			version: "1.0.0",
+		});
+	});
+
+	it("keeps npm's configured tag when selecting *", async () => {
+		const tags = { latest: "1.0.0", next: "2.0.0-beta.1" };
+		views(
+			{
+				"*": { version: "2.0.0-beta.1", "dist-tags": tags },
+				">=0.0.0": [{ version: "1.0.0", "dist-tags": tags }],
+			},
+			"next",
+		);
+		expect(
+			await npmRegistry.resolve("child", "*"),
+		).toMatchObject({
+			version: "2.0.0-beta.1",
+		});
+	});
+
+	it("prefers npm's configured tag inside a range", async () => {
+		const tags = { latest: "1.0.0", next: "1.1.0" };
+		views(
+			{
+				"^1": [
+					{ version: "1.0.0", "dist-tags": tags },
+					{ version: "1.1.0", "dist-tags": tags },
+					{ version: "1.2.0", "dist-tags": tags },
+				],
+			},
+			"next",
+		);
+		expect(
+			await npmRegistry.resolve("child", "^1"),
+		).toMatchObject({
+			version: "1.1.0",
+		});
+	});
+
+	it("selects tags and manifests from one registry snapshot", async () => {
+		// The tag moved between the two reads.
+		views({
+			"*": {
+				version: "1.0.0",
+				"dist-tags": { latest: "1.0.0" },
+			},
+			">=0.0.0": [
+				{
+					version: "1.0.0",
+					deprecated: "moved",
+					"dist-tags": { latest: "1.1.0" },
+				},
+				{ version: "1.1.0", "dist-tags": { latest: "1.1.0" } },
+				{ version: "1.2.0", "dist-tags": { latest: "1.1.0" } },
+			],
+		});
+		expect(
+			await npmRegistry.resolve("child", "*"),
+		).toMatchObject({
+			version: "1.1.0",
 		});
 	});
 

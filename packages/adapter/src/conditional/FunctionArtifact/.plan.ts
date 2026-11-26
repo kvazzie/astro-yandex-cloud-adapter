@@ -1,12 +1,11 @@
 import { readlink, realpath } from "node:fs/promises";
 import {
-	basename,
 	dirname,
 	isAbsolute,
 	join,
+	parse,
 	posix,
 	relative,
-	resolve,
 	sep,
 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -232,42 +231,45 @@ export function planPreparation(
 }
 
 /** Lists every path that resolving `path` visits, including each intermediate link. */
-async function lookupPaths(
-	path: string,
-	// Links whose expansion is in progress; a completed link may be passed again.
-	links = new Set<string>(),
-): Promise<string[]> {
-	const parent = dirname(path);
-	if (parent === path) return [path];
-	const visited = await lookupPaths(parent, links);
-	const current = join(visited.at(-1)!, basename(path));
-	let target: string;
-	try {
-		target = await readlink(current);
-	} catch (cause) {
-		if (
-			["EINVAL", "ENOENT", "ENOTDIR"].includes(
-				(cause as NodeJS.ErrnoException).code ?? "",
+async function lookupPaths(path: string): Promise<string[]> {
+	// Walk components in lookup order, so a link is followed before a later "..".
+	const root = parse(path).root;
+	const pending = path.slice(root.length).split(/[\\/]+/);
+	const visited = [root];
+	let current = root;
+	// Linux follows at most 40 links in one lookup; a revisited link is not a loop.
+	let links = 0;
+	while (pending.length) {
+		const component = pending.shift()!;
+		if (component === "" || component === ".") continue;
+		if (component === "..") {
+			current = dirname(current);
+			continue;
+		}
+		const next = join(current, component);
+		visited.push(next);
+		let target: string;
+		try {
+			target = await readlink(next);
+		} catch (cause) {
+			if (
+				!["EINVAL", "ENOENT", "ENOTDIR"].includes(
+					(cause as NodeJS.ErrnoException).code ?? "",
+				)
 			)
-		)
-			return [...visited, current];
-		throw cause;
+				throw cause;
+			current = next;
+			continue;
+		}
+		if (++links > 40)
+			throw new Errors.InvalidArtifact({
+				message: `The client output path ${path} contains a symbolic link loop.`,
+			});
+		const targetRoot = parse(target).root;
+		if (targetRoot) current = targetRoot;
+		pending.unshift(
+			...target.slice(targetRoot.length).split(/[\\/]+/),
+		);
 	}
-	if (links.has(current))
-		throw new Errors.InvalidArtifact({
-			message: `The client output path ${path} contains a symbolic link loop.`,
-		});
-	links.add(current);
-	try {
-		return [
-			...visited,
-			current,
-			...(await lookupPaths(
-				resolve(dirname(current), target),
-				links,
-			)),
-		];
-	} finally {
-		links.delete(current);
-	}
+	return visited;
 }

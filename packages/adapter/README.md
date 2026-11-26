@@ -184,6 +184,8 @@ cases:
   `import(process.env.PLUGIN)`;
 - files reached only through `require.resolve` or `import.meta.resolve`;
 - a loader chosen at runtime, such as `flag ? moduleA : moduleB`.
+- a package reached through an `imports` pattern such as
+  `"#lib/*": "pkg/*"`, or through an `imports` fallback array.
 - a local package export target with percent-encoded characters, such as
   `./my%20entry.mjs`, whose actual file tracing does not check.
 

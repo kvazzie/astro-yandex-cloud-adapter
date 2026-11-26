@@ -84,33 +84,6 @@ export async function traceRuntimeDependencies(
       !isAbsolute(local)
     );
   };
-  // The nearest package.json scopes an emitted module's imports map.
-  const manifests = new Map<string, Promise<unknown>>();
-  const nearestManifest = async (directory: string): Promise<unknown> => {
-    const path = join(directory, "package.json");
-    let manifest = manifests.get(path);
-    if (!manifest) {
-      manifest = (async () => {
-        const file = planned.get(path);
-        const source =
-          file?.contents ??
-          (await readFile(file?.from ?? path, "utf8").catch((cause: unknown) => {
-            if (missing(cause)) return undefined;
-            throw cause;
-          }));
-        if (source === undefined) return undefined;
-        try {
-          return JSON.parse(source.replace(/^\uFEFF/, "")) as unknown;
-        } catch {
-          return null;
-        }
-      })();
-      manifests.set(path, manifest);
-    }
-    const found = await manifest;
-    if (found !== undefined || !inServer(path)) return found;
-    return nearestManifest(dirname(directory));
-  };
   // Emitted imports name the packages, as aliases and symlinks hide them in paths.
   // An import nft cannot resolve still names a package the artifact needs.
   const imports: { name: string; parent: string }[] = [];
@@ -135,19 +108,20 @@ export async function traceRuntimeDependencies(
       }
     },
     resolve: async (specifier, parent, job, cjsResolve) => {
-      // nft resolves a package that an imports map targets without calling this hook.
-      const target = specifier.startsWith("#")
-        ? importsTarget(
-            await nearestManifest(dirname(parent)),
-            specifier,
-            new Set(["node", "node-addons", cjsResolve ? "require" : "import"]),
-          )
-        : specifier;
-      const name = target === undefined ? undefined : barePackageName(target);
+      const name = barePackageName(specifier);
       if (name && inServer(parent)) imports.push({ name, parent });
       const resolved = await resolve(specifier, parent, job, cjsResolve);
       const targets = moduleEdges.get(parent) ?? new Set<string>();
-      for (const target of [resolved].flat()) targets.add(target);
+      for (const target of [resolved].flat()) {
+        targets.add(target);
+        // nft resolves a package that an imports map selects without calling this
+        // hook again, so name it from the installed path nft resolved.
+        const selected = specifier.startsWith("#")
+          ? installedPackageName(target)
+          : undefined;
+        if (selected && inServer(parent) && !inServer(target))
+          imports.push({ name: selected, parent });
+      }
       moduleEdges.set(parent, targets);
       return resolved;
     },
@@ -201,64 +175,14 @@ export async function traceRuntimeDependencies(
   return { packages, files: traced, parents: parentsOf };
 }
 
-/** Selects an imports map target as Node does, for exact and single-wildcard keys. */
-function importsTarget(
-  manifest: unknown,
-  specifier: string,
-  conditions: ReadonlySet<string>,
-): string | undefined {
-  const map =
-    typeof manifest === "object" && manifest !== null
-      ? (manifest as { imports?: unknown }).imports
-      : undefined;
-  if (typeof map !== "object" || map === null || Array.isArray(map))
-    return undefined;
-  const entries = map as Record<string, unknown>;
-  if (Object.hasOwn(entries, specifier) && !specifier.includes("*"))
-    return selectTarget(entries[specifier], conditions);
-  // Node prefers the matching pattern with the longest prefix.
-  const [key, match] =
-    Object.keys(entries)
-      .flatMap((key) => {
-        const star = key.indexOf("*");
-        if (star === -1 || key.indexOf("*", star + 1) !== -1) return [];
-        const prefix = key.slice(0, star);
-        const suffix = key.slice(star + 1);
-        return specifier.length >= key.length &&
-          specifier.startsWith(prefix) &&
-          specifier.endsWith(suffix)
-          ? [
-              [
-                key,
-                specifier.slice(prefix.length, specifier.length - suffix.length),
-              ] as const,
-            ]
-          : [];
-      })
-      .sort(
-        ([a], [b]) => b.indexOf("*") - a.indexOf("*") || b.length - a.length,
-      )[0] ?? [];
-  if (key === undefined || match === undefined) return undefined;
-  return selectTarget(entries[key], conditions)?.replaceAll("*", match);
-}
-
-function selectTarget(
-  target: unknown,
-  conditions: ReadonlySet<string>,
-): string | undefined {
-  if (typeof target === "string") return target;
-  if (Array.isArray(target))
-    for (const entry of target) {
-      const selected = selectTarget(entry, conditions);
-      if (selected !== undefined) return selected;
-    }
-  else if (typeof target === "object" && target !== null)
-    for (const [condition, value] of Object.entries(target)) {
-      if (condition !== "default" && !conditions.has(condition)) continue;
-      const selected = selectTarget(value, conditions);
-      if (selected !== undefined) return selected;
-    }
-  return undefined;
+/** Names the installed package that contains a resolved path. */
+function installedPackageName(path: string): string | undefined {
+  const parts = path.split(sep);
+  const index = parts.lastIndexOf("node_modules");
+  if (index === -1) return undefined;
+  const [first, second] = parts.slice(index + 1);
+  if (!first) return undefined;
+  return first.startsWith("@") ? second && `${first}/${second}` : first;
 }
 
 /** Names the package of a bare specifier, excluding builtins, URLs and private imports. */

@@ -220,6 +220,7 @@ function npmSelection(
 	packageName: string,
 	requirement: string,
 	versions: readonly PublishedVersion[],
+	defaultTag: string,
 ): string | undefined {
 	const manifests = versions.filter(
 		(entry): entry is PublishedVersion & { version: string } =>
@@ -237,6 +238,7 @@ function npmSelection(
 				),
 			},
 			requirement,
+			{ defaultTag },
 		)?.version;
 	} catch {
 		return undefined;
@@ -273,22 +275,41 @@ async function fetchRegistryMetadata(
 	const published = await requestMetadata<
 		PublishedVersion | PublishedVersion[]
 	>(packageName, requirement, appRoot);
-	const versions = Array.isArray(published)
-		? published
-		: [published];
-	// npm view name@* returns only the default tag; npm install falls back to the
+	const tag = await configuredTag(appRoot);
+	let versions = [published].flat();
+	// npm view name@* returns only the configured tag; npm install falls back to the
 	// other stable versions when that tag is deprecated or unusable.
-	if (requirement === "*")
-		versions.push(
-			...(await requestMetadata<
-				PublishedVersion | PublishedVersion[]
-			>(packageName, ">=0.0.0", appRoot)
-				.then((entries) => [entries].flat())
-				.catch(() => [])),
-		);
+	if (requirement === "*") {
+		const stable = await requestMetadata<
+			PublishedVersion | PublishedVersion[]
+		>(packageName, ">=0.0.0", appRoot)
+			.then((entries) => [entries].flat())
+			.catch(() => undefined);
+		if (stable) {
+			// Tags and manifests come from one read; only a prerelease tag target,
+			// which that read omits, comes from the first, and only if both agree.
+			const tagged = stable.find(
+				(entry) => entry["dist-tags"],
+			)?.["dist-tags"]?.[tag];
+			if (
+				tagged !== undefined &&
+				!stable.some((entry) => entry.version === tagged)
+			) {
+				const head = versions.find(
+					(entry) => entry.version === tagged,
+				);
+				if (!head)
+					throw new Error(
+						`The npm registry changed while the "install" dependency strategy resolved ${packageName}@*. Run the build again.`,
+					);
+				stable.push(head);
+			}
+			versions = stable;
+		}
+	}
 	const version =
 		semver.valid(requirement) ??
-		npmSelection(packageName, requirement, versions);
+		npmSelection(packageName, requirement, versions, tag);
 	const metadata = versions.find(
 		(entry) =>
 			entry.version === version ||
@@ -325,6 +346,19 @@ async function fetchRegistryMetadata(
 		cpu: metadata.cpu,
 		libc: metadata.libc,
 	};
+}
+
+/** Reads npm's configured default tag, which npm install prefers for ranges. */
+async function configuredTag(appRoot?: URL): Promise<string> {
+	try {
+		const { stdout } = await runNpm(
+			["config", "get", "tag"],
+			appRoot,
+		);
+		return stdout.trim() || "latest";
+	} catch {
+		return "latest";
+	}
 }
 
 async function requestMetadata<T>(
