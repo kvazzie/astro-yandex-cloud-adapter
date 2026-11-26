@@ -6,12 +6,17 @@ import { tmpdir } from "node:os";
 
 import semver from "semver";
 
+/** npm reads the `npm:` alias prefix case-insensitively. */
+export function isRegistryAlias(requirement: string): boolean {
+	return /^npm:/i.test(requirement);
+}
+
 /** Separates npm alias identity from its version requirement. */
 export function parseRegistryRequirement(
 	name: string,
 	requirement: string,
 ): { name: string; requirement: string } {
-	if (!requirement.startsWith("npm:"))
+	if (!isRegistryAlias(requirement))
 		return { name, requirement };
 	const target = requirement.slice(4);
 	const separator = target.lastIndexOf("@");

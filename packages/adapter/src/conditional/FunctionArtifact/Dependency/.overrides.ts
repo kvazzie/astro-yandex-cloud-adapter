@@ -50,7 +50,8 @@ export class ApplicationOverrides {
 				? key.slice(0, split)
 				: key
 			: undefined;
-		this.range = split > 0 ? key.slice(split + 1) : "*";
+		// npm reads an empty qualifier, as in "parent@", as "*".
+		this.range = (split > 0 && key.slice(split + 1)) || "*";
 		// npm defaults a rule without "." to its key range; "*" keeps the requested spec.
 		this.value =
 			typeof object["."] === "string"

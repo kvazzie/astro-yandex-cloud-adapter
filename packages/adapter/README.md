@@ -173,7 +173,7 @@ The adapter traces the emitted server with
 Vercel and Netlify adapters. It finds fixed `import`, `import()`, `require()`,
 `createRequire(import.meta.url)` loaders, and files read through
 `new URL(…, import.meta.url)`. This is a deliberate trade-off, recorded in
-[ADR 0011](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/main/docs/adr/0011-discover-runtime-dependencies-with-vercel-nft.md):
+[ADR 0011](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/508b3d634939bde62ef300c94d01915cba0f82d0/docs/adr/0011-discover-runtime-dependencies-with-vercel-nft.md):
 loads that static tracing cannot follow are not discovered and are not rejected at
 build time. The deployed function then fails with `Cannot find module`. Known
 cases:

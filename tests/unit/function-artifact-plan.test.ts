@@ -32,6 +32,8 @@ import type { RoutePlan } from "../../packages/adapter/src/mandatory/ArtifactGen
 import { hasRuntimeImageCalls } from "../../packages/adapter/src/mandatory/ArtifactGeneration/RuntimeImageRoutes";
 import { validateFunctionEntrypoint } from "../../packages/adapter/src/conditional/FunctionArtifact/Prepare.ts";
 import { externalBundledPeers } from "../../packages/adapter/src/conditional/FunctionArtifact/Dependency/Archive.ts";
+import { parseRegistryRequirement } from "../../packages/adapter/src/conditional/FunctionArtifact/Dependency/Registry.ts";
+import { parseRuntimeRequirement } from "../../packages/adapter/src/conditional/FunctionArtifact/Dependency/Source.ts";
 import { traceRuntimeDependencies } from "../../packages/adapter/src/conditional/FunctionArtifact/Dependency/Trace.ts";
 
 const directories: string[] = [];
@@ -1779,6 +1781,12 @@ describe("Function Artifact mutation plans", () => {
 		{
 			spec: "github:owner/parent#main",
 			key: "parent",
+			leaf: "2.0.0",
+		},
+		// npm reads an empty qualifier as "*".
+		{
+			spec: "github:owner/parent#main",
+			key: "parent@",
 			leaf: "2.0.0",
 		},
 		{
@@ -6095,7 +6103,8 @@ ${f.index}`,
 
 	it.each([
 		"404#scope.html",
-		"404?scope.html",
+		// Windows reserves "?" in filenames.
+		...(process.platform === "win32" ? [] : ["404?scope.html"]),
 		"404%20scope.html",
 	])("copies the exact raw 404 filename %s", async (name) => {
 		const f = await fixture();
@@ -6138,7 +6147,12 @@ ${f.index}`,
 		).toBe("<h1>Exact fallback</h1>");
 	});
 
-	it.each(["a#b.js", "a%b.js", "a?b.js"])(
+	it.each([
+		"a#b.js",
+		"a%b.js",
+		// Windows reserves "?" in filenames.
+		...(process.platform === "win32" ? [] : ["a?b.js"]),
+	])(
 		"preserves emitted filesystem name %s during planning and application",
 		async (name) => {
 			const f = await fixture();
@@ -6624,6 +6638,22 @@ ${f.index}`,
 				],
 			);
 			expect(stdout.trim()).toBe("yes");
+		},
+	);
+
+	it.each(["npm:", "NPM:", "Npm:"])(
+		"reads %s as a registry alias like npm",
+		(prefix) => {
+			expect(
+				parseRegistryRequirement("fmt", `${prefix}real-fmt@^1`),
+			).toEqual({ name: "real-fmt", requirement: "^1" });
+			expect(
+				parseRuntimeRequirement("fmt", `${prefix}real-fmt@^1`),
+			).toMatchObject({
+				name: "real-fmt",
+				requirement: "^1",
+				local: false,
+			});
 		},
 	);
 

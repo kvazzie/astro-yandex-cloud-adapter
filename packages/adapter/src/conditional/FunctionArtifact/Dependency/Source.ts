@@ -16,6 +16,7 @@ import {
 	applicationDependencyRequirement,
 } from "./.overrides.ts";
 import {
+	isRegistryAlias,
 	normalizeBundleDependencies,
 	parseRegistryRequirement,
 } from "./Registry.ts";
@@ -511,7 +512,7 @@ export function parseRuntimeRequirement(
 		);
 	}
 	if (
-		!value.startsWith("npm:") &&
+		!isRegistryAlias(value) &&
 		(/[\\/:]/.test(value) || /\.(?:tgz|tar\.gz)$/i.test(value))
 	)
 		return { name, local: true };
