@@ -5974,6 +5974,69 @@ ${f.index}`,
 
 	it.each([
 		{
+			name: "named import alias",
+			body: "import { renderImage as renderAsset } from './assets.mjs'; export function run() { return renderAsset({}); }",
+			expected: true,
+		},
+		{
+			name: "parameter shadowing a named import",
+			body: "import { renderImage as renderAsset } from './assets.mjs'; export function run(renderAsset) { return renderAsset({}); }",
+			expected: false,
+		},
+		{
+			name: "static bracket access on a namespace",
+			body: "import * as images from './assets.mjs'; export const image = images['renderImage']({});",
+			expected: true,
+		},
+		{
+			name: "dynamic bracket access on a namespace",
+			body: "import * as images from './assets.mjs'; const key = 'renderImage'; export const image = images[key]({});",
+			expected: false,
+		},
+		{
+			name: "module read only as an asset",
+			body: "export const template = new URL('./template.mjs', import.meta.url);",
+			expected: false,
+		},
+		{
+			name: "module that is imported",
+			body: "import './template.mjs';",
+			expected: true,
+		},
+	])(
+		"classifies runtime image calls by binding: $name",
+		async ({ body, expected }) => {
+			const f = await fixture();
+			await writeFile(new URL("foo.js", f.server), body);
+			await writeFile(
+				new URL("template.mjs", f.server),
+				"import { renderImage } from './assets.mjs'; export const image = renderImage({});",
+			);
+			await writeFile(
+				new URL("assets.mjs", f.server),
+				'export const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function getImage(config){return service.getURL(config)} export {getImage as renderImage};',
+			);
+			expect(
+				await hasRuntimeImageCalls(
+					f.server,
+					[
+						{
+							entrypoint: "page:foo",
+							origin: "project",
+							pattern: "/foo",
+							isPrerendered: false,
+						} as Parameters<
+							typeof hasRuntimeImageCalls
+						>[1][number],
+					],
+					new Map(),
+				),
+			).toBe(expected);
+		},
+	);
+
+	it.each([
+		{
 			name: "renamed manifest bindings",
 			index:
 				"const a=()=>import('./foo.js');const b=new Map([['page:foo',a]]);const c=new Map([]);export const m={pageMap:b,serverIslandMap:c};",

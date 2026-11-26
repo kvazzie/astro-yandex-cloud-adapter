@@ -380,8 +380,11 @@ export async function hasRuntimeImageCalls(
 		const module = modules.get(url);
 		if (!module) continue;
 		let imageCall = false;
-		const bindings = new Set(localImageExports.get(url));
-		const imports = new Set<string>();
+		// Calls are matched by declaration, so a shadowing local does not count.
+		const localNames =
+			localImageExports.get(url) ?? new Set<string>();
+		const bindings = new Set<SyntaxNode>();
+		const imports = new Set<SyntaxNode>();
 		const namespaces = new Map<
 			SyntaxNode,
 			ReadonlySet<string>
@@ -398,7 +401,7 @@ export async function hasRuntimeImageCalls(
 					isSyntaxNode(specifier.local) &&
 					typeof specifier.local.name === "string"
 				)
-					imports.add(specifier.local.name);
+					imports.add(specifier.local);
 			}
 			const reference = getStaticString(node.source);
 			const exported =
@@ -424,12 +427,13 @@ export async function hasRuntimeImageCalls(
 					specifier.imported.name ??
 					getStaticString(specifier.imported);
 				if (typeof name === "string" && exported.has(name))
-					bindings.add(specifier.local.name);
+					bindings.add(specifier.local);
 			}
 		});
-		const identifierBinding = namespaces.size
-			? readIdentifierBindings(module.syntax)
-			: undefined;
+		const identifierBinding = readIdentifierBindings(
+			module.syntax,
+		);
+		const topLevel = topLevelBindings(module.syntax);
 		visitSyntax(module.syntax, (node) => {
 			if (
 				node.type !== "CallExpression" ||
@@ -441,26 +445,31 @@ export async function hasRuntimeImageCalls(
 				callee.type === "Identifier" &&
 				typeof callee.name === "string"
 			) {
+				const declaration = identifierBinding(callee);
 				imageCall ||=
-					bindings.has(callee.name) ||
-					(!imageExports.has(url) &&
-						imports.has(callee.name) &&
-						/^getImage(?:\$\d+)?$/.test(callee.name));
+					declaration !== undefined &&
+					(bindings.has(declaration) ||
+						(topLevel.has(declaration) &&
+							localNames.has(callee.name)) ||
+						(!imageExports.has(url) &&
+							imports.has(declaration) &&
+							/^getImage(?:\$\d+)?$/.test(callee.name)));
 			} else if (
 				callee.type === "MemberExpression" &&
-				!callee.computed &&
 				isSyntaxNode(callee.object) &&
 				callee.object.type === "Identifier" &&
 				typeof callee.object.name === "string" &&
-				isSyntaxNode(callee.property) &&
-				typeof callee.property.name === "string"
+				isSyntaxNode(callee.property)
 			) {
-				const declaration = identifierBinding?.(callee.object);
+				// Static bracket access names the same export; dynamic keys stay unclassified.
+				const property = callee.computed
+					? getStaticString(callee.property)
+					: callee.property.name;
+				const declaration = identifierBinding(callee.object);
 				imageCall ||=
+					typeof property === "string" &&
 					declaration !== undefined &&
-					namespaces
-						.get(declaration)
-						?.has(callee.property.name) === true;
+					namespaces.get(declaration)?.has(property) === true;
 			}
 		});
 		if (imageCall) return true;
@@ -471,4 +480,39 @@ export async function hasRuntimeImageCalls(
 		);
 	}
 	return false;
+}
+
+/** Reads the declaration nodes of a module's top-level bindings. */
+function topLevelBindings(program: SyntaxNode): Set<SyntaxNode> {
+	const declarations = new Set<SyntaxNode>();
+	// Identifiers in default values are references, which a lookup never returns.
+	const declare = (pattern: unknown) => {
+		if (isSyntaxNode(pattern))
+			visitSyntax(pattern, (node) => {
+				if (node.type === "Identifier") declarations.add(node);
+			});
+	};
+	for (const statement of Array.isArray(program.body)
+		? (program.body as unknown[])
+		: []) {
+		if (!isSyntaxNode(statement)) continue;
+		const declaration =
+			statement.type === "ExportNamedDeclaration" ||
+			statement.type === "ExportDefaultDeclaration"
+				? statement.declaration
+				: statement;
+		if (!isSyntaxNode(declaration)) continue;
+		if (
+			declaration.type === "FunctionDeclaration" ||
+			declaration.type === "ClassDeclaration"
+		)
+			declare(declaration.id);
+		if (
+			declaration.type === "VariableDeclaration" &&
+			Array.isArray(declaration.declarations)
+		)
+			for (const declarator of declaration.declarations as unknown[])
+				if (isSyntaxNode(declarator)) declare(declarator.id);
+	}
+	return declarations;
 }

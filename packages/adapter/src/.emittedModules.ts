@@ -274,42 +274,7 @@ function staticModuleReference(
 		return getStaticString(node.source);
 }
 
-function staticLocalAssetReference(
-	node: SyntaxNode,
-): string | undefined {
-	if (
-		node.type !== "NewExpression" ||
-		!isSyntaxNode(node.callee) ||
-		node.callee.type !== "Identifier" ||
-		node.callee.name !== "URL" ||
-		!Array.isArray(node.arguments)
-	)
-		return;
-	const [source, base] = node.arguments as unknown[];
-	const reference = getStaticString(source);
-	if (
-		reference &&
-		!/^[/\\]/.test(reference.trimStart()) &&
-		!URL.canParse(reference) &&
-		isSyntaxNode(base) &&
-		base.type === "MemberExpression" &&
-		isSyntaxNode(base.object) &&
-		base.object.type === "MetaProperty" &&
-		isSyntaxNode(base.object.meta) &&
-		base.object.meta.type === "Identifier" &&
-		base.object.meta.name === "import" &&
-		isSyntaxNode(base.object.property) &&
-		base.object.property.type === "Identifier" &&
-		base.object.property.name === "meta" &&
-		(base.computed
-			? getStaticString(base.property) === "url"
-			: isSyntaxNode(base.property) &&
-				base.property.name === "url")
-	)
-		return reference;
-}
-
-/** Collects the fixed local module and asset edges of Astro's emitted graph. */
+/** Collects the fixed local module edges of Astro's emitted graph; assets read by URL are not executed. */
 export function localModuleReferences(
 	source: string | SyntaxNode,
 ): string[] {
@@ -319,8 +284,6 @@ export function localModuleReferences(
 	visitSyntax(syntax, (node) => {
 		const module = staticModuleReference(node);
 		if (module?.startsWith(".")) references.add(module);
-		const asset = staticLocalAssetReference(node);
-		if (asset !== undefined) references.add(asset);
 	});
 	return [...references];
 }
