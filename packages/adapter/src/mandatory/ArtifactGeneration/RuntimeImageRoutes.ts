@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type { IntegrationResolvedRoute } from "astro";
@@ -37,20 +37,39 @@ export async function hasRuntimeImageCalls(
 	const modules = new Map<
 		string,
 		{
-			source: string;
 			syntax: SyntaxNode;
 			declarations: Map<string, SyntaxNode>;
 		}
 	>();
+	// Unrelated emitted files only fail the scan when it reaches them.
+	const failures = new Map<string, Error>();
+	const packageTypes = new Map<string, Promise<unknown>>();
 	for (const file of await glob(["**/*.js", "**/*.mjs"], {
 		cwd: fileURLToPath(directory),
 		onlyFiles: true,
 	})) {
-		const source = await readFile(
-			join(fileURLToPath(directory), file),
-			"utf8",
-		);
-		const syntax = parseModule(source);
+		const path = join(fileURLToPath(directory), file);
+		const url = pathToFileURL(path).href;
+		const source = await readFile(path, "utf8");
+		let syntax: SyntaxNode;
+		try {
+			syntax = parseEmittedModule(
+				source,
+				file.endsWith(".mjs")
+					? "module"
+					: await packageType(dirname(path), packageTypes),
+			);
+		} catch (cause) {
+			const failure = new Error(
+				`Could not parse emitted module ${file} for runtime image discovery: ${cause instanceof Error ? cause.message : String(cause)}`,
+				{ cause },
+			);
+			// Dispatch maps hold the scan's roots, so they cannot be skipped.
+			if (/\b(?:pageMap|serverIslandMap)\b/.test(source))
+				throw failure;
+			failures.set(url, failure);
+			continue;
+		}
 		const declarations = new Map<string, SyntaxNode>();
 		if (Array.isArray(syntax.body)) {
 			for (const statement of syntax.body as unknown[]) {
@@ -76,10 +95,7 @@ export async function hasRuntimeImageCalls(
 				}
 			}
 		}
-		modules.set(
-			pathToFileURL(join(fileURLToPath(directory), file)).href,
-			{ source, syntax, declarations },
-		);
+		modules.set(url, { syntax, declarations });
 	}
 
 	const mapModules = new Set<string>();
@@ -308,6 +324,40 @@ export async function hasRuntimeImageCalls(
 				? node.name
 				: getStaticString(node)
 			: undefined;
+	// A module's explicit exports take precedence over names from `export *`.
+	const explicitExports = new Map<string, Set<string>>();
+	for (const [url, { syntax }] of modules) {
+		const names = new Set<string>();
+		for (const node of Array.isArray(syntax.body)
+			? (syntax.body as unknown[])
+			: []) {
+			if (!isSyntaxNode(node)) continue;
+			if (node.type === "ExportDefaultDeclaration")
+				names.add("default");
+			if (node.type === "ExportAllDeclaration") {
+				const exported = nameOf(node.exported);
+				if (exported) names.add(exported);
+			}
+			if (node.type !== "ExportNamedDeclaration") continue;
+			const declaration = node.declaration;
+			if (isSyntaxNode(declaration)) {
+				if (Array.isArray(declaration.declarations))
+					for (const declarator of declaration.declarations as unknown[])
+						if (isSyntaxNode(declarator))
+							declarePatternNames(declarator.id, names);
+				declarePatternNames(declaration.id, names);
+			}
+			for (const specifier of Array.isArray(node.specifiers)
+				? (node.specifiers as unknown[])
+				: []) {
+				const exported = isSyntaxNode(specifier)
+					? nameOf(specifier.exported)
+					: undefined;
+				if (exported) names.add(exported);
+			}
+		}
+		explicitExports.set(url, names);
+	}
 	for (let changed = true; changed;) {
 		changed = false;
 		for (const [url, { syntax }] of modules) {
@@ -346,7 +396,11 @@ export async function hasRuntimeImageCalls(
 					!node.exported
 				)
 					for (const name of sourceExports(node) ?? [])
-						if (name !== "default") forwarded.add(name);
+						if (
+							name !== "default" &&
+							!explicitExports.get(url)?.has(name)
+						)
+							forwarded.add(name);
 				if (
 					node.type !== "ExportNamedDeclaration" ||
 					!Array.isArray(node.specifiers)
@@ -378,13 +432,14 @@ export async function hasRuntimeImageCalls(
 		if (visited.has(url) || mapModules.has(url)) continue;
 		visited.add(url);
 		const module = modules.get(url);
+		const failure = failures.get(url);
+		if (failure) throw failure;
 		if (!module) continue;
 		let imageCall = false;
 		// Calls are matched by declaration, so a shadowing local does not count.
 		const localNames =
 			localImageExports.get(url) ?? new Set<string>();
 		const bindings = new Set<SyntaxNode>();
-		const imports = new Set<SyntaxNode>();
 		const namespaces = new Map<
 			SyntaxNode,
 			ReadonlySet<string>
@@ -395,14 +450,6 @@ export async function hasRuntimeImageCalls(
 				!Array.isArray(node.specifiers)
 			)
 				return;
-			for (const specifier of node.specifiers as unknown[]) {
-				if (
-					isSyntaxNode(specifier) &&
-					isSyntaxNode(specifier.local) &&
-					typeof specifier.local.name === "string"
-				)
-					imports.add(specifier.local);
-			}
 			const reference = getStaticString(node.source);
 			const exported =
 				reference === "astro:assets"
@@ -445,15 +492,13 @@ export async function hasRuntimeImageCalls(
 				callee.type === "Identifier" &&
 				typeof callee.name === "string"
 			) {
+				// Only bindings linked to the recognized wrapper count; the name `getImage` is not evidence.
 				const declaration = identifierBinding(callee);
 				imageCall ||=
 					declaration !== undefined &&
 					(bindings.has(declaration) ||
 						(topLevel.has(declaration) &&
-							localNames.has(callee.name)) ||
-						(!imageExports.has(url) &&
-							imports.has(declaration) &&
-							/^getImage(?:\$\d+)?$/.test(callee.name)));
+							localNames.has(callee.name)));
 			} else if (
 				callee.type === "MemberExpression" &&
 				isSyntaxNode(callee.object) &&
@@ -474,12 +519,93 @@ export async function hasRuntimeImageCalls(
 		});
 		if (imageCall) return true;
 		pending.push(
-			...localModuleReferences(module.source).map(
+			...localModuleReferences(module.syntax).map(
 				(reference) => new URL(reference, url).href,
 			),
 		);
 	}
 	return false;
+}
+
+/** Parses a file in the format Node.js would load it with. */
+function parseEmittedModule(
+	source: string,
+	format: unknown,
+): SyntaxNode {
+	if (format === "module") return parseModule(source);
+	if (format === "commonjs")
+		return parseModule(source, "commonjs");
+	// Without a package type, Node.js 22 detects ESM syntax in a `.js` file.
+	try {
+		return parseModule(source, "commonjs");
+	} catch {
+		return parseModule(source);
+	}
+}
+
+/** Reads the nearest package.json `type`, as Node.js resolves a `.js` file's format. */
+function packageType(
+	directory: string,
+	cache: Map<string, Promise<unknown>>,
+): Promise<unknown> {
+	let type = cache.get(directory);
+	if (!type) {
+		type = readFile(
+			join(directory, "package.json"),
+			"utf8",
+		).then(
+			(contents) => {
+				try {
+					return (JSON.parse(contents) as { type?: unknown })
+						.type;
+				} catch {
+					return undefined;
+				}
+			},
+			() =>
+				dirname(directory) === directory ||
+				basename(directory) === "node_modules"
+					? undefined
+					: packageType(dirname(directory), cache),
+		);
+		cache.set(directory, type);
+	}
+	return type;
+}
+
+/** Adds the names a binding pattern declares, skipping default-value references. */
+function declarePatternNames(
+	pattern: unknown,
+	names: Set<string>,
+): void {
+	if (!isSyntaxNode(pattern)) return;
+	if (
+		pattern.type === "Identifier" &&
+		typeof pattern.name === "string"
+	)
+		names.add(pattern.name);
+	else if (pattern.type === "AssignmentPattern")
+		declarePatternNames(pattern.left, names);
+	else if (pattern.type === "RestElement")
+		declarePatternNames(pattern.argument, names);
+	else if (
+		pattern.type === "ArrayPattern" &&
+		Array.isArray(pattern.elements)
+	)
+		for (const element of pattern.elements as unknown[])
+			declarePatternNames(element, names);
+	else if (
+		pattern.type === "ObjectPattern" &&
+		Array.isArray(pattern.properties)
+	)
+		for (const property of pattern.properties as unknown[])
+			if (isSyntaxNode(property))
+				declarePatternNames(
+					property.type === "RestElement"
+						? property.argument
+						: property.value,
+					names,
+				);
 }
 
 /** Reads the declaration nodes of a module's top-level bindings. */

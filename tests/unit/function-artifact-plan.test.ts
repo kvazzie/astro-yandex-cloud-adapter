@@ -6130,6 +6130,26 @@ ${f.index}`,
 			body: "import './template.mjs';",
 			expected: true,
 		},
+		{
+			name: "getImage from an unrelated package",
+			body: "import { getImage } from 'cms-sdk'; export const image = getImage({});",
+			expected: false,
+		},
+		{
+			name: "getImage from an unrelated local module",
+			body: "import { getImage } from './cms.mjs'; export const image = getImage({});",
+			expected: false,
+		},
+		{
+			name: "getImage from astro:assets",
+			body: "import { getImage } from 'astro:assets'; export const image = getImage({});",
+			expected: true,
+		},
+		{
+			name: "minified getImage alias of the wrapper",
+			body: "import { renderImage as getImage$1 } from './assets.mjs'; export const image = getImage$1({});",
+			expected: true,
+		},
 	])(
 		"classifies runtime image calls by binding: $name",
 		async ({ body, expected }) => {
@@ -6138,6 +6158,10 @@ ${f.index}`,
 			await writeFile(
 				new URL("template.mjs", f.server),
 				"import { renderImage } from './assets.mjs'; export const image = renderImage({});",
+			);
+			await writeFile(
+				new URL("cms.mjs", f.server),
+				"export function getImage(options) { return options; }",
 			);
 			await writeFile(
 				new URL("assets.mjs", f.server),
@@ -6161,6 +6185,82 @@ ${f.index}`,
 			).toBe(expected);
 		},
 	);
+
+	it.each<{ name: string; files: Record<string, string> }>([
+		{
+			name: "a CommonJS file under a commonjs package scope",
+			files: {
+				"support/package.json": '{"type":"commonjs"}',
+				"support/tool.js":
+					"if (require.main !== module) return; module.exports = 1;",
+			},
+		},
+		{
+			name: "an unreachable file that is not valid ESM",
+			files: {
+				"support/tool.js": "return; module.exports = 1;",
+			},
+		},
+	])(
+		"ignores $name during runtime image discovery",
+		async ({ files }) => {
+			const f = await fixture();
+			for (const [file, contents] of Object.entries(files)) {
+				await mkdir(new URL(".", new URL(file, f.server)), {
+					recursive: true,
+				});
+				await writeFile(new URL(file, f.server), contents);
+			}
+			await writeFile(
+				new URL("foo.js", f.server),
+				"import * as images from './assets.mjs'; export const image = images.renderImage({});",
+			);
+			await writeFile(
+				new URL("assets.mjs", f.server),
+				'export const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function getImage(config){return service.getURL(config)} export {getImage as renderImage};',
+			);
+			await expect(
+				hasRuntimeImageCalls(
+					f.server,
+					[
+						{
+							entrypoint: "page:foo",
+							origin: "project",
+							pattern: "/foo",
+							isPrerendered: false,
+						} as Parameters<
+							typeof hasRuntimeImageCalls
+						>[1][number],
+					],
+					new Map(),
+				),
+			).resolves.toBe(true);
+		},
+	);
+
+	it("names a reachable emitted module that does not parse", async () => {
+		const f = await fixture();
+		await writeFile(
+			new URL("foo.js", f.server),
+			"export const broken = ;",
+		);
+		await expect(
+			hasRuntimeImageCalls(
+				f.server,
+				[
+					{
+						entrypoint: "page:foo",
+						origin: "project",
+						pattern: "/foo",
+						isPrerendered: false,
+					} as Parameters<
+						typeof hasRuntimeImageCalls
+					>[1][number],
+				],
+				new Map(),
+			),
+		).rejects.toThrow(/foo\.js/);
+	});
 
 	it.each([
 		{
@@ -6384,6 +6484,30 @@ ${f.index}`,
 			barrel: 'export function image() { return "plain"; }',
 			expected: false,
 		},
+		{
+			name: "explicit re-export over a star re-export",
+			barrel:
+				'export * from "./inner.mjs"; export { image } from "./helper.mjs";',
+			inner:
+				'export { renderImage as image } from "./assets.mjs";',
+			expected: false,
+		},
+		{
+			name: "local declaration over a star re-export",
+			barrel:
+				'export * from "./inner.mjs"; export function image() { return "plain"; }',
+			inner:
+				'export { renderImage as image } from "./assets.mjs";',
+			expected: false,
+		},
+		{
+			name: "local specifier export over a star re-export",
+			barrel:
+				'export * from "./inner.mjs"; const plain = () => "plain"; export { plain as image };',
+			inner:
+				'export { renderImage as image } from "./assets.mjs";',
+			expected: false,
+		},
 	])(
 		"recognizes Astro image calls through a forwarding module: $name",
 		async ({ barrel, inner, expected }) => {
@@ -6393,6 +6517,10 @@ ${f.index}`,
 				'import { image as a } from "./barrel.mjs"; export const value = a({});',
 			);
 			await writeFile(new URL("barrel.mjs", f.server), barrel);
+			await writeFile(
+				new URL("helper.mjs", f.server),
+				'export function image() { return "plain"; }',
+			);
 			if (inner)
 				await writeFile(new URL("inner.mjs", f.server), inner);
 			await writeFile(

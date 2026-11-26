@@ -21,9 +21,13 @@ function templateFor(
 	{
 		recursive404 = false,
 		staticKind = "page",
+		staticPattern = staticUrl,
+		trailingSlash = "ignore",
 	}: {
 		recursive404?: boolean;
 		staticKind?: "page" | "endpoint";
+		staticPattern?: string;
+		trailingSlash?: RoutePlan["trailingSlash"];
 	} = {},
 ) {
 	const manifest = defineDeploymentManifest({
@@ -113,12 +117,12 @@ function templateFor(
 		: [];
 	const routePlan: RoutePlan = {
 		base: "/",
-		trailingSlash: "ignore",
+		trailingSlash,
 		routes: [
 			{
 				kind: "prerendered",
 				routeKind: staticKind,
-				pattern: staticUrl,
+				pattern: staticPattern,
 				priority: staticPriority,
 				patternRegex: "^.*$",
 				paths: manifest.routes.prerendered
@@ -206,6 +210,32 @@ describe("API Gateway template route precedence", () => {
 						"x-yc-apigateway-integration"
 					],
 				).toMatchObject({ object: "page.html" });
+		},
+	);
+
+	it.each([
+		{
+			trailingSlash: "ignore",
+			url: "/api/report.xml",
+			paths: ["/api/report.xml", "/api/report.xml/"],
+		},
+		{
+			trailingSlash: "always",
+			url: "/api/report.xml/",
+			paths: ["/api/report.xml/"],
+		},
+	] as const)(
+		"derives Gateway aliases of a dotted parameter value from its route under $trailingSlash",
+		({ trailingSlash, url, paths }) => {
+			const template = templateFor(url, "/runtime/[id]", 1, 0, {
+				staticKind: "endpoint",
+				staticPattern: "/api/[slug]",
+				trailingSlash,
+			});
+			const literal = Object.keys(template.paths).filter(
+				(path) => !path.startsWith("/runtime"),
+			);
+			expect(literal.sort()).toEqual([...paths].sort());
 		},
 	);
 
@@ -301,6 +331,58 @@ describe("completed-build route requirements", () => {
 		},
 	);
 
+	const islandRoute = {
+		type: "page",
+		origin: "internal",
+		pattern: "/_server-islands/[name]",
+		isPrerendered: false,
+	} as IntegrationResolvedRoute;
+	it.each([
+		{
+			name: "page text",
+			html: "<p>Astro serves islands from /_server-islands/.</p>",
+			hasServerIslands: false,
+			required: false,
+		},
+		{
+			name: "escaped example code",
+			html: "<pre><code>fetch(&quot;/_server-islands/Card&quot;)</code></pre>",
+			hasServerIslands: false,
+			required: false,
+		},
+		{
+			name: "generated GET preload",
+			html: '<link rel="preload" as="fetch" href="/docs/_server-islands/Card?e=x&amp;p=&amp;s=" crossorigin="anonymous">',
+			hasServerIslands: false,
+			required: true,
+		},
+		{
+			name: "generated POST request",
+			html: '<script type="module" data-astro-rerun data-island-id="a1">let data = {}; let response = await fetch("/_server-islands/Card/", { method: \'POST\' });replaceServerIsland("a1", response);</script>',
+			hasServerIslands: false,
+			required: true,
+		},
+		{
+			name: "emitted island entries",
+			html: "",
+			hasServerIslands: true,
+			required: true,
+		},
+	])(
+		"requires the server-island endpoint only with island evidence: $name",
+		({ html, hasServerIslands, required }) => {
+			expect(
+				requiredOnDemandRoutes({
+					resolvedRoutes: [islandRoute],
+					clientHtml: html,
+					hasServerIslands,
+					hasRuntimeImages: false,
+					imageEndpoint: "/_image",
+				}),
+			).toEqual(required ? [islandRoute] : []);
+		},
+	);
+
 	it.each([
 		{
 			file: "api/status",
@@ -327,14 +409,33 @@ describe("completed-build route requirements", () => {
 			trailingSlash: "always",
 			url: "/.well-known/.env/",
 		},
+		{
+			file: "api/report.xml",
+			pattern: "/api/[slug]",
+			trailingSlash: "always",
+			url: "/api/report.xml/",
+		},
+		{
+			file: "api/report.xml",
+			pattern: "/api/[slug]",
+			trailingSlash: "ignore",
+			url: "/api/report.xml",
+		},
+		{
+			file: "feeds/main.xml",
+			pattern: "/feeds/[name].xml",
+			trailingSlash: "always",
+			url: "/feeds/main.xml",
+		},
 	] as const)(
 		"projects a prerendered endpoint $file under trailingSlash $trailingSlash",
-		({ file, trailingSlash, url }) => {
+		(entry) => {
+			const { file, trailingSlash, url } = entry;
 			const clientDirectory = new URL("file:///build/client/");
 			const route = {
 				type: "endpoint",
 				origin: "project",
-				pattern: `/${file}`,
+				pattern: "pattern" in entry ? entry.pattern : `/${file}`,
 				isPrerendered: true,
 				patternRegex: /^.*$/,
 			} as unknown as IntegrationResolvedRoute;

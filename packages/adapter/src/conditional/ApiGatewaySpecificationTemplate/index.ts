@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { DeploymentManifestV1 } from "../../mandatory/DeploymentManifest/Schema.ts";
 import {
-	hasFileExtension,
+	routeTrailingSlash,
 	type RoutePlan,
 } from "../../mandatory/ArtifactGeneration/RouteRequirements";
 
@@ -277,10 +277,10 @@ export function generateApiGatewaySpecificationTemplate(
 			({ scope }) => `${scope === "/" ? "" : scope}/{_+}`.length,
 		),
 	);
-	const plannedPriority = (
+	const plannedRoute = (
 		pattern: string,
 		url?: string,
-	): number => {
+	): RoutePlan["routes"][number] => {
 		const planned = routePlan.routes.find(
 			(candidate) =>
 				candidate.pattern === pattern ||
@@ -291,7 +291,7 @@ export function generateApiGatewaySpecificationTemplate(
 			throw new Error(
 				`API Gateway route ${url ?? pattern} has no completed-build route evidence.`,
 			);
-		return planned.priority;
+		return planned;
 	};
 	for (const route of manifest.routes.prerendered) {
 		const operation: GatewayOperation = {
@@ -313,21 +313,23 @@ export function generateApiGatewaySpecificationTemplate(
 			},
 		};
 		const path = literalGatewayPath(route.url);
+		const planned = plannedRoute("", route.url);
 		routes.push({
 			path,
 			source: route.url,
 			artifactId: `${route.artifactId}:${route.objectKey}`,
-			priority: plannedPriority("", route.url),
+			priority: planned.priority,
 			operation,
 			methods: ["get", "head"],
 		});
-		// Astro matches both spellings of pages and extensionless endpoints under "ignore".
+		// Astro matches both spellings when the route definition's effective policy is "ignore".
 		if (
-			(route.kind === "page" ||
-				(route.kind === "endpoint" &&
-					!hasFileExtension(route.url))) &&
 			route.url !== "/" &&
-			(routePlan.trailingSlash === "ignore" ||
+			(routeTrailingSlash(
+				route.kind,
+				planned.pattern,
+				routePlan.trailingSlash,
+			) === "ignore" ||
 				operation.responses["200"]?.["x-yc-status-mapping"] ===
 					404)
 		) {
@@ -338,7 +340,7 @@ export function generateApiGatewaySpecificationTemplate(
 				path: alias,
 				source: route.url,
 				artifactId: `${route.artifactId}:${route.objectKey}`,
-				priority: plannedPriority("", route.url),
+				priority: planned.priority,
 				operation,
 				methods: ["get", "head"],
 			});
@@ -384,7 +386,7 @@ export function generateApiGatewaySpecificationTemplate(
 				path,
 				source: route.pattern,
 				artifactId: route.artifactId,
-				priority: plannedPriority(route.pattern),
+				priority: plannedRoute(route.pattern).priority,
 				operation: {
 					responses: {
 						default: {

@@ -124,6 +124,13 @@ function requestsEndpoint(
 	).test(html);
 }
 
+/** Matches Astro's generated island preload link or fetch call, not page text. */
+function requestsServerIsland(html: string): boolean {
+	return /(?:<link\b[^>]*?\bhref="|\bfetch\(\s*")[^"]*?\/_server-islands\//i.test(
+		html,
+	);
+}
+
 function isActiveInternalRoute(
 	route: IntegrationResolvedRoute,
 	clientHtml: string,
@@ -134,10 +141,7 @@ function isActiveInternalRoute(
 	if (route.origin !== "internal") return true;
 	if (route.pattern.startsWith("/_actions/")) return true;
 	if (route.pattern.startsWith("/_server-islands/"))
-		return (
-			hasServerIslands ||
-			clientHtml.includes("/_server-islands/")
-		);
+		return hasServerIslands || requestsServerIsland(clientHtml);
 	if (route.pattern === imageEndpoint)
 		return (
 			hasRuntimeImages ||
@@ -271,11 +275,13 @@ export function reconcileRoutes(
 			const file = assetFile(asset);
 			if (!files.has(file)) continue;
 			const url = `/${file.split("/").map(encodeURIComponent).join("/")}`;
-			// Astro applies trailingSlash only to endpoints without a file extension.
 			addPrerendered(
 				route,
-				evidence.trailingSlash === "always" &&
-					!hasFileExtension(`/${file}`)
+				routeTrailingSlash(
+					"endpoint",
+					route.pattern,
+					evidence.trailingSlash,
+				) === "always"
 					? `${url}/`
 					: url,
 				file,
@@ -359,4 +365,18 @@ export function manifestRoutes(
 /** Astro 7's endpoint extension rule: a final segment ending in `.` and word characters. */
 export function hasFileExtension(pathname: string): boolean {
 	return /\/[^/]+\.\w+$/.test(pathname);
+}
+
+/**
+ * Astro 7 decides an endpoint's slash policy from its route definition, so a
+ * dotted value substituted for `[slug]` keeps the configured policy.
+ */
+export function routeTrailingSlash(
+	routeKind: "page" | "endpoint",
+	pattern: string,
+	trailingSlash: RoutePlan["trailingSlash"],
+): RoutePlan["trailingSlash"] {
+	return routeKind === "endpoint" && hasFileExtension(pattern)
+		? "never"
+		: trailingSlash;
 }
