@@ -27,6 +27,7 @@ import {
 } from "../../.emittedModules.ts";
 import { generateApiGatewaySpecificationTemplate } from "../../conditional/ApiGatewaySpecificationTemplate";
 import {
+	clientDocuments,
 	manifestRoutes,
 	reconcileRoutes,
 	registeredOnDemandRoutes,
@@ -163,15 +164,22 @@ async function inspectRoutes(
 		dot: true,
 		onlyFiles: true,
 	});
-	const clientHtml = (
+	const clientHtml = new Map(
 		await Promise.all(
 			clientFiles
 				.filter((file) => file.endsWith(".html"))
-				.map((file) =>
-					readFile(join(fileURLToPath(client), file), "utf8"),
+				.map(
+					async (file) =>
+						[
+							file,
+							await readFile(
+								join(fileURLToPath(client), file),
+								"utf8",
+							),
+						] as const,
 				),
-		)
-	).join("\n");
+		),
+	);
 	const evidence = {
 		base: normalizedBase(config.base),
 		site: config.site,
@@ -193,7 +201,12 @@ async function inspectRoutes(
 		),
 		imageEndpoint: config.image.endpoint.route,
 	};
-	if (requiredOnDemandRoutes(evidence).length)
+	if (
+		requiredOnDemandRoutes({
+			...evidence,
+			clientDocuments: clientDocuments(evidence),
+		}).length
+	)
 		requireEntrypoint();
 	return reconcileRoutes(evidence);
 }

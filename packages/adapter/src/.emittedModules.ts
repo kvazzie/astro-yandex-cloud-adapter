@@ -280,11 +280,13 @@ function staticModuleReference(
 /** Collects the fixed local module edges of Astro's emitted graph; assets read by URL are not executed. */
 export function localModuleReferences(
 	source: string | SyntaxNode,
+	excluded: ReadonlySet<SyntaxNode> = new Set(),
 ): string[] {
 	const references = new Set<string>();
 	const syntax =
 		typeof source === "string" ? parseModule(source) : source;
 	visitSyntax(syntax, (node) => {
+		if (excluded.has(node)) return;
 		const module = staticModuleReference(node);
 		if (module?.startsWith(".")) references.add(module);
 	});

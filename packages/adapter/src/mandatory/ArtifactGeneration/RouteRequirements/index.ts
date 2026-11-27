@@ -46,13 +46,21 @@ export interface RoutePlan {
 	trailingSlash: "always" | "never" | "ignore";
 }
 
+/** An emitted HTML file with the public URLs a browser can request it by. */
+export interface ClientDocument {
+	/** Relative references in the HTML resolve against each of these URLs. */
+	urls: readonly string[];
+	html: string;
+}
+
 interface RouteEvidence {
 	base: string;
 	/** Astro's `site`; absolute URLs on its origin are requests to the application. */
 	site?: string | undefined;
 	clientDirectory: URL;
 	clientFiles: readonly string[];
-	clientHtml: string;
+	/** The contents of each emitted HTML Client Artifact file, by file. */
+	clientHtml: ReadonlyMap<string, string>;
 	pages: readonly { pathname: string }[];
 	resolvedRoutes: readonly IntegrationResolvedRoute[];
 	emittedAssets: ReadonlyMap<string, readonly URL[]>;
@@ -88,12 +96,12 @@ function objectKey(base: string, path: string): string {
 /** Prefers page-owned output; other files remain candidates only for diagnostics. */
 function pageFile(
 	url: string,
-	files: Set<string>,
+	files: ReadonlySet<string>,
 	pageEmitters: ReadonlyMap<
 		string,
 		ReadonlySet<IntegrationResolvedRoute>
 	>,
-): string {
+): string | undefined {
 	const pathname = url.replace(/^\/+|\/+$/g, "");
 	const candidates =
 		url === "/"
@@ -104,53 +112,138 @@ function pageFile(
 	const existing = candidates.filter((candidate) =>
 		files.has(candidate),
 	);
-	const file =
+	return (
 		existing.find((candidate) => pageEmitters.has(candidate)) ??
-		existing[0];
-	if (!file)
-		throw new Error(
-			`Could not match the Prerendered Route ${url} to a Client Artifact file.`,
-		);
-	return file;
+		existing[0]
+	);
 }
+
+/** Indexes the prerendered page routes that emitted each Client Artifact file. */
+function pageEmitterIndex(
+	evidence: Pick<
+		RouteEvidence,
+		"clientDirectory" | "resolvedRoutes" | "emittedAssets"
+	>,
+): Map<string, Set<IntegrationResolvedRoute>> {
+	const clientPath = fileURLToPath(evidence.clientDirectory);
+	const pageEmitters = new Map<
+		string,
+		Set<IntegrationResolvedRoute>
+	>();
+	for (const route of evidence.resolvedRoutes) {
+		if (route.type !== "page" || !route.isPrerendered) continue;
+		for (const asset of evidence.emittedAssets.get(
+			route.pattern,
+		) ?? []) {
+			const file = relative(clientPath, fileURLToPath(asset))
+				.split(sep)
+				.join("/");
+			const emitters = pageEmitters.get(file) ?? new Set();
+			emitters.add(route);
+			pageEmitters.set(file, emitters);
+		}
+	}
+	return pageEmitters;
+}
+
+/** Astro's `pages` pathname as the public URL path of the prerendered page. */
+function pageUrl(pathname: string): string {
+	return pathname ? `/${pathname.replace(/^\/+/, "")}` : "/";
+}
+
+function publicPageUrl(
+	evidence: Pick<RouteEvidence, "base" | "trailingSlash">,
+	url: string,
+): string {
+	return url === "/" &&
+		evidence.base !== "/" &&
+		evidence.trailingSlash === "never"
+		? evidence.base
+		: withBase(evidence.base, url);
+}
+
+/**
+ * Pairs each emitted HTML file with the URLs it is served at: a page's public
+ * URL, plus the other slash spelling where the Gateway also serves it, or the
+ * object URL of any other HTML file.
+ */
+export function clientDocuments(
+	evidence: RouteEvidence,
+): ClientDocument[] {
+	const files = new Set(evidence.clientFiles);
+	const pageEmitters = pageEmitterIndex(evidence);
+	const urls = new Map<string, string[]>();
+	for (const { pathname } of evidence.pages) {
+		const url = pageUrl(pathname);
+		// An unmatched page fails route reconciliation with its own diagnostic.
+		const file = pageFile(url, files, pageEmitters);
+		if (!file) continue;
+		const publicUrl = publicPageUrl(evidence, url);
+		const fileUrls = urls.get(file) ?? [];
+		fileUrls.push(publicUrl);
+		if (
+			publicUrl !== "/" &&
+			(evidence.trailingSlash === "ignore" ||
+				/\/404\/?$/.test(publicUrl))
+		)
+			fileUrls.push(
+				publicUrl.endsWith("/")
+					? publicUrl.slice(0, -1)
+					: `${publicUrl}/`,
+			);
+		urls.set(file, fileUrls);
+	}
+	return [...evidence.clientHtml].map(([file, html]) => ({
+		urls: urls.get(file) ?? [
+			withBase(
+				evidence.base,
+				file.split("/").map(encodeURIComponent).join("/"),
+			),
+		],
+		html,
+	}));
+}
+
+// Without `site`, a reserved origin stands in for the application's origin.
+const unknownOrigin = "https://application.invalid";
 
 /**
  * Matches a request to the application's endpoint in a URL attribute or CSS
  * url(), not in escaped text or a URL on another origin such as a CDN.
+ * References resolve against the document URL as a browser resolves them.
  */
 function requestsEndpoint(
-	html: string,
+	documents: readonly ClientDocument[],
 	endpoint: string,
 	site: string | undefined,
 ): boolean {
-	const origin = site ? new URL(site).origin : undefined;
-	for (const match of html.matchAll(
-		/\b(?:src|srcset|href|poster|content|data-[\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))|url\(\s*["']?([^"')\s]*)/gi,
-	)) {
-		const value =
-			match[1] ?? match[2] ?? match[3] ?? match[4] ?? "";
-		// A srcset lists candidates separated by commas and descriptors.
-		for (const candidate of value.split(/[\s,]+/)) {
-			const query = candidate.indexOf("?");
-			if (query === -1) continue;
-			const location = candidate.slice(0, query);
-			// A protocol-relative URL needs the site as its base to name an origin.
-			const absolute = location.startsWith("//")
-				? site && URL.canParse(location, site)
-					? new URL(location, site)
-					: undefined
-				: URL.canParse(location)
-					? new URL(location)
-					: undefined;
-			const pathname =
-				location.startsWith("/") && !location.startsWith("//")
-					? location
-					: origin && absolute?.origin === origin
-						? absolute.pathname
+	const origin = site ? new URL(site).origin : unknownOrigin;
+	for (const { urls, html } of documents)
+		for (const match of html.matchAll(
+			/\b(?:src|srcset|href|poster|content|data-[\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))|url\(\s*["']?([^"')\s]*)/gi,
+		)) {
+			const value =
+				match[1] ?? match[2] ?? match[3] ?? match[4] ?? "";
+			// A srcset lists candidates separated by commas and descriptors.
+			for (const candidate of value.split(/[\s,]+/)) {
+				const query = candidate.indexOf("?");
+				if (query === -1) continue;
+				const location = candidate.slice(0, query);
+				// A `?` after `#` belongs to the fragment, so the request has no query.
+				if (location.includes("#")) continue;
+				for (const url of urls) {
+					const document = `${origin}${url}`;
+					const resolved = URL.canParse(location, document)
+						? new URL(location, document)
 						: undefined;
-			if (pathname === endpoint) return true;
+					if (
+						resolved?.origin === origin &&
+						resolved.pathname === endpoint
+					)
+						return true;
+				}
+			}
 		}
-	}
 	return false;
 }
 
@@ -166,29 +259,30 @@ type RequirementEvidence = Pick<
 	| "base"
 	| "site"
 	| "resolvedRoutes"
-	| "clientHtml"
 	| "hasServerIslands"
 	| "hasRuntimeImages"
 	| "imageEndpoint"
->;
+> & { clientDocuments: readonly ClientDocument[] };
 
 function isActiveInternalRoute(
 	route: IntegrationResolvedRoute,
 	evidence: RequirementEvidence,
 ): boolean {
-	const { clientHtml, imageEndpoint } = evidence;
+	const { clientDocuments, imageEndpoint } = evidence;
 	if (route.origin !== "internal") return true;
 	if (route.pattern.startsWith("/_actions/")) return true;
 	if (route.pattern.startsWith("/_server-islands/"))
 		return (
 			evidence.hasServerIslands ||
-			requestsServerIsland(clientHtml)
+			clientDocuments.some(({ html }) =>
+				requestsServerIsland(html),
+			)
 		);
 	if (route.pattern === imageEndpoint)
 		return (
 			evidence.hasRuntimeImages ||
 			requestsEndpoint(
-				clientHtml,
+				clientDocuments,
 				// Astro builds image URLs as `joinPaths(BASE_URL, endpoint.route)`.
 				withBase(evidence.base, imageEndpoint),
 				evidence.site,
@@ -236,12 +330,7 @@ export function reconcileRoutes(
 			throw new Error(
 				`Prerendered Route ${url} has no emitted Client Artifact file ${file}.`,
 			);
-		const publicUrl =
-			url === "/" &&
-			base !== "/" &&
-			evidence.trailingSlash === "never"
-				? base
-				: withBase(base, url);
+		const publicUrl = publicPageUrl(evidence, url);
 		if (seenUrls.has(publicUrl))
 			throw new Error(
 				`Ambiguous Prerendered Route ${publicUrl}.`,
@@ -271,25 +360,15 @@ export function reconcileRoutes(
 		relative(clientPath, fileURLToPath(asset))
 			.split(sep)
 			.join("/");
-	const pageEmitters = new Map<
-		string,
-		Set<IntegrationResolvedRoute>
-	>();
-	for (const route of resolvedRoutes) {
-		if (route.type !== "page" || !route.isPrerendered) continue;
-		for (const asset of emittedAssets.get(route.pattern) ?? []) {
-			const file = assetFile(asset);
-			const emitters = pageEmitters.get(file) ?? new Set();
-			emitters.add(route);
-			pageEmitters.set(file, emitters);
-		}
-	}
+	const pageEmitters = pageEmitterIndex(evidence);
 
 	for (const { pathname } of pages) {
-		const url = pathname
-			? `/${pathname.replace(/^\/+/, "")}`
-			: "/";
+		const url = pageUrl(pathname);
 		const file = pageFile(url, files, pageEmitters);
+		if (!file)
+			throw new Error(
+				`Could not match the Prerendered Route ${url} to a Client Artifact file.`,
+			);
 		const emitters = [...(pageEmitters.get(file) ?? [])];
 		const route =
 			emitters.length === 1 ? emitters[0] : undefined;
@@ -324,7 +403,10 @@ export function reconcileRoutes(
 	}
 
 	const onDemand: PlannedRoute[] = hasFunction
-		? requiredOnDemandRoutes(evidence).map((route) => ({
+		? requiredOnDemandRoutes({
+				...evidence,
+				clientDocuments: clientDocuments(evidence),
+			}).map((route) => ({
 				kind: "on-demand" as const,
 				routeKind: route.type as "page" | "endpoint",
 				pattern: withBase(base, route.pattern),

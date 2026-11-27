@@ -6400,6 +6400,11 @@ ${f.index}`,
 			body: 'const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function getImage(options){return service.getURL(options)} function other(){return 1} export const value = other();',
 			expected: false,
 		},
+		{
+			name: "exported wrapper declaration called in its own module",
+			body: 'const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; export function getImage(options){return service.getURL(options)} export const image = getImage({});',
+			expected: true,
+		},
 	])(
 		"classifies same-module image wrapper calls: $name",
 		async ({ body, expected }) => {
@@ -6602,7 +6607,13 @@ ${f.index}`,
 		).rejects.toThrow(/foo\.js/);
 	});
 
-	it.each([
+	it.each<{
+		name: string;
+		index: string;
+		page: string;
+		files?: Record<string, string>;
+		expected: boolean;
+	}>([
 		{
 			name: "renamed manifest bindings",
 			index:
@@ -6646,6 +6657,33 @@ ${f.index}`,
 			files: {
 				"other.js":
 					"export const app={actions:()=>import('./mw.js'),middleware:()=>import('./mw.js')};",
+			},
+			expected: false,
+		},
+		{
+			// Mirrors a manualChunks build that groups the island manifest with its island.
+			name: "image call in a selected chunk that also holds a dispatch map",
+			index:
+				"const a=()=>import('./foo.js');const b=new Map([['page:foo',a]]);export const m={pageMap:b};",
+			page: "import { render } from './islands.js'; export const page = render;",
+			files: {
+				"islands.js":
+					"import * as images from './assets.mjs'; const serverIslandMap=new Map([['Island',()=>import('./island.js')]]); export const render = async () => images.renderImage({}); export {serverIslandMap};",
+				"island.js":
+					"import { render } from './islands.js'; export default render;",
+			},
+			expected: true,
+		},
+		{
+			name: "unselected loader in a selected dispatch chunk",
+			index:
+				"const a=()=>import('./foo.js');const b=new Map([['page:foo',a]]);export const m={pageMap:b};",
+			page: "import './shared.js'; export const page = true;",
+			files: {
+				"shared.js":
+					"const pageMap=new Map([['page:bar',()=>import('./bar.js')]]); export {pageMap};",
+				"bar.js":
+					"import * as images from './assets.mjs'; export const image = images.renderImage({});",
 			},
 			expected: false,
 		},
@@ -6894,6 +6932,57 @@ ${f.index}`,
 				new URL("assets.mjs", f.server),
 				'export const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function getImage(config){return service.getURL(config)} export {getImage as renderImage};',
 			);
+			expect(
+				await hasRuntimeImageCalls(
+					f.server,
+					[
+						{
+							entrypoint: "page:foo",
+							origin: "project",
+							pattern: "/foo",
+							isPrerendered: false,
+						} as Parameters<
+							typeof hasRuntimeImageCalls
+						>[1][number],
+					],
+					new Map(),
+				),
+			).toBe(expected);
+		},
+	);
+
+	const imageConfig =
+		'export const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}};';
+	it.each([
+		{
+			name: "export function",
+			assets: `${imageConfig} export function renderImage(options){return service.getURL(options)}`,
+			expected: true,
+		},
+		{
+			name: "export const function value",
+			assets: `${imageConfig} function core(options){return service.getURL(options)} export const renderImage = (options) => core(options);`,
+			expected: true,
+		},
+		{
+			name: "declaration exported by a specifier",
+			assets: `${imageConfig} function getImage(options){return service.getURL(options)} export {getImage as renderImage};`,
+			expected: true,
+		},
+		{
+			name: "exported declaration that is not a wrapper",
+			assets: `${imageConfig} export function renderImage(){return "plain"}`,
+			expected: false,
+		},
+	])(
+		"links an exported image wrapper declaration to its importer: $name",
+		async ({ assets, expected }) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("foo.js", f.server),
+				"import { renderImage } from './assets.mjs'; export const image = renderImage({});",
+			);
+			await writeFile(new URL("assets.mjs", f.server), assets);
 			expect(
 				await hasRuntimeImageCalls(
 					f.server,

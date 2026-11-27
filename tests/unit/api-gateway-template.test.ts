@@ -338,6 +338,8 @@ describe("completed-build route requirements", () => {
 		required: boolean;
 		base?: string;
 		site?: string;
+		/** The public URL the document is served at. */
+		url?: string;
 	}>([
 		{
 			html: '<img src="/_image?href=%2Fa.png&w=1">',
@@ -405,15 +407,54 @@ describe("completed-build route requirements", () => {
 			site: "https://example.com/docs/",
 			required: false,
 		},
+		{
+			html: '<img src="_image?href=x">',
+			required: true,
+		},
+		{
+			html: '<img src="./_image?href=x">',
+			url: "/blog/",
+			required: false,
+		},
+		{
+			html: '<img src="../_image?href=x">',
+			url: "/blog/",
+			required: true,
+		},
+		{
+			html: '<img src="_image?href=x">',
+			url: "/blog",
+			required: true,
+		},
+		{
+			html: "<img srcset='a.png 1x, _image?href=b 2x'>",
+			base: "/docs",
+			required: true,
+		},
+		{
+			html: '<img src="_image?href=x">',
+			base: "/docs",
+			url: "/docs/guide/",
+			required: false,
+		},
+		{
+			html: '<img src="_image#top?href=x">',
+			required: false,
+		},
 	])(
-		"requires the image endpoint only for an actual image request: $html",
-		({ html, required, base = "/", site }) => {
+		"requires the image endpoint only for an actual image request: $html at $url",
+		({ html, required, base = "/", site, url }) => {
 			expect(
 				requiredOnDemandRoutes({
 					base,
 					site,
 					resolvedRoutes: [imageRoute],
-					clientHtml: html,
+					clientDocuments: [
+						{
+							urls: [url ?? (base === "/" ? "/" : `${base}/`)],
+							html,
+						},
+					],
 					hasServerIslands: false,
 					hasRuntimeImages: false,
 					imageEndpoint: "/_image",
@@ -466,7 +507,7 @@ describe("completed-build route requirements", () => {
 				requiredOnDemandRoutes({
 					base: "/",
 					resolvedRoutes: [islandRoute],
-					clientHtml: html,
+					clientDocuments: [{ urls: ["/"], html }],
 					hasServerIslands,
 					hasRuntimeImages: false,
 					imageEndpoint: "/_image",
@@ -535,7 +576,7 @@ describe("completed-build route requirements", () => {
 				base: "/",
 				clientDirectory,
 				clientFiles: [file],
-				clientHtml: "",
+				clientHtml: new Map(),
 				pages: [],
 				resolvedRoutes: [route],
 				emittedAssets: new Map([
@@ -551,6 +592,89 @@ describe("completed-build route requirements", () => {
 				kind: "prerendered",
 				paths: [{ url, objectKey: file }],
 			});
+		},
+	);
+
+	it.each<{
+		name: string;
+		file: string;
+		html: string;
+		/** Astro's page pathname; absent for a public HTML file. */
+		pathname?: string;
+		trailingSlash: RoutePlan["trailingSlash"];
+		required: boolean;
+	}>([
+		{
+			name: "a directory page under trailingSlash never",
+			file: "about/index.html",
+			html: '<img src="_image?href=x">',
+			pathname: "about",
+			trailingSlash: "never",
+			required: true,
+		},
+		{
+			name: "a directory page under trailingSlash always",
+			file: "about/index.html",
+			html: '<img src="_image?href=x">',
+			pathname: "about/",
+			trailingSlash: "always",
+			required: false,
+		},
+		{
+			name: "the slashless alias of a page under trailingSlash ignore",
+			file: "about/index.html",
+			html: '<img src="_image?href=x">',
+			pathname: "about/",
+			trailingSlash: "ignore",
+			required: true,
+		},
+		{
+			name: "a public HTML file",
+			file: "embed/widget.html",
+			html: '<img src="../_image?href=x">',
+			trailingSlash: "always",
+			required: true,
+		},
+	])(
+		"resolves a relative image request against $name",
+		({ file, html, pathname, trailingSlash, required }) => {
+			const clientDirectory = new URL("file:///build/client/");
+			const page = {
+				type: "page",
+				origin: "project",
+				pattern: "/about",
+				isPrerendered: true,
+				patternRegex: /^\/about\/?$/,
+			} as unknown as IntegrationResolvedRoute;
+			const image = {
+				...imageRoute,
+				patternRegex: /^\/_image\/?$/,
+			} as IntegrationResolvedRoute;
+			const plan = reconcileRoutes({
+				base: "/",
+				clientDirectory,
+				clientFiles: [file],
+				clientHtml: new Map([[file, html]]),
+				pages: pathname === undefined ? [] : [{ pathname }],
+				resolvedRoutes: [page, image],
+				emittedAssets: new Map(
+					pathname === undefined
+						? []
+						: [[page.pattern, [new URL(file, clientDirectory)]]],
+				),
+				hasFunction: true,
+				trailingSlash,
+				hasServerIslands: false,
+				hasRuntimeImages: false,
+				imageEndpoint: "/_image",
+			});
+			expect(
+				plan.routes.some(
+					(route) =>
+						route.kind === "on-demand" &&
+						route.pattern === "/_image",
+				),
+			).toBe(required);
 		},
 	);
 });

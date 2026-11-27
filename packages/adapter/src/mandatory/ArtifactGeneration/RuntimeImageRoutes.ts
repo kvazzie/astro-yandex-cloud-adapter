@@ -98,7 +98,8 @@ export async function hasRuntimeImageCalls(
 		modules.set(url, { syntax, declarations });
 	}
 
-	const mapModules = new Set<string>();
+	// Dispatch edges are followed only for selected routes, not when their module is scanned.
+	const dispatchLoaders = new Set<SyntaxNode>();
 	const pending: string[] = [];
 	const runtimeLoaderModules: string[] = [];
 	for (const [url, { declarations, syntax }] of modules) {
@@ -197,7 +198,7 @@ export async function hasRuntimeImageCalls(
 						node.type === "ImportExpression" &&
 						getStaticString(node.source)?.startsWith(".")
 					) {
-						mapModules.add(url);
+						dispatchLoaders.add(node);
 						if (
 							kind === "page" &&
 							!components.has(getStaticString(component) ?? "")
@@ -263,7 +264,12 @@ export async function hasRuntimeImageCalls(
 		});
 		if (!astroAssets || !Array.isArray(syntax.body)) continue;
 		const functions = new Set<string>();
-		for (const node of syntax.body as unknown[]) {
+		for (const statement of syntax.body as unknown[]) {
+			const node =
+				isSyntaxNode(statement) &&
+				statement.type === "ExportNamedDeclaration"
+					? statement.declaration
+					: statement;
 			if (
 				!isSyntaxNode(node) ||
 				node.type !== "FunctionDeclaration" ||
@@ -309,10 +315,21 @@ export async function hasRuntimeImageCalls(
 			if (
 				!isSyntaxNode(node) ||
 				node.type !== "ExportNamedDeclaration" ||
-				node.source ||
-				!Array.isArray(node.specifiers)
+				node.source
 			)
 				continue;
+			const declared = new Set<string>();
+			if (isSyntaxNode(node.declaration)) {
+				declarePatternNames(node.declaration.id, declared);
+				if (Array.isArray(node.declaration.declarations))
+					for (const declarator of node.declaration
+						.declarations as unknown[])
+						if (isSyntaxNode(declarator))
+							declarePatternNames(declarator.id, declared);
+			}
+			for (const name of declared)
+				if (functions.has(name)) exported.add(name);
+			if (!Array.isArray(node.specifiers)) continue;
 			for (const specifier of node.specifiers as unknown[]) {
 				if (
 					!isSyntaxNode(specifier) ||
@@ -446,7 +463,7 @@ export async function hasRuntimeImageCalls(
 	const visited = new Set<string>();
 	while (pending.length) {
 		const url = pending.pop()!;
-		if (visited.has(url) || mapModules.has(url)) continue;
+		if (visited.has(url)) continue;
 		visited.add(url);
 		const module = modules.get(url);
 		const failure = failures.get(url);
@@ -567,9 +584,10 @@ export async function hasRuntimeImageCalls(
 		});
 		if (imageCall) return true;
 		pending.push(
-			...localModuleReferences(module.syntax).map((reference) =>
-				moduleFile(reference, url),
-			),
+			...localModuleReferences(
+				module.syntax,
+				dispatchLoaders,
+			).map((reference) => moduleFile(reference, url)),
 		);
 	}
 	return false;
