@@ -82,7 +82,8 @@ export function completeBuild<E>(
 		});
 		const hasFunction = entrypoint.ok;
 		const routePlan = yield* Effect.tryPromise({
-			try: () => inspectRoutes(build, entrypoint),
+			try: () =>
+				inspectRoutes(build, entrypoint, policy.recursive404),
 			catch: (cause) =>
 				new FunctionArtifact.Errors.InvalidArtifact({
 					message:
@@ -148,6 +149,7 @@ async function inspectRoutes(
 	entrypoint: Awaited<
 		ReturnType<typeof validateFunctionEntrypoint>
 	>,
+	recursive404: boolean,
 ): Promise<RoutePlan> {
 	const { config } = build;
 	const requireEntrypoint = () => {
@@ -191,6 +193,8 @@ async function inspectRoutes(
 		emittedAssets: build.emittedAssets,
 		hasFunction: entrypoint.ok,
 		trailingSlash: config.trailingSlash,
+		// Image evidence scans a 404 page at both slash spellings only where the Manifest maps it.
+		recursive404,
 		hasServerIslands: await hasServerIslandEntries(
 			config.build.server,
 		),
