@@ -134,13 +134,19 @@ function requestsEndpoint(
 			const query = candidate.indexOf("?");
 			if (query === -1) continue;
 			const location = candidate.slice(0, query);
+			// A protocol-relative URL needs the site as its base to name an origin.
+			const absolute = location.startsWith("//")
+				? site && URL.canParse(location, site)
+					? new URL(location, site)
+					: undefined
+				: URL.canParse(location)
+					? new URL(location)
+					: undefined;
 			const pathname =
 				location.startsWith("/") && !location.startsWith("//")
 					? location
-					: origin &&
-						  URL.canParse(location) &&
-						  new URL(location).origin === origin
-						? new URL(location).pathname
+					: origin && absolute?.origin === origin
+						? absolute.pathname
 						: undefined;
 			if (pathname === endpoint) return true;
 		}

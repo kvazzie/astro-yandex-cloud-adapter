@@ -388,6 +388,18 @@ describe("completed-build route requirements", () => {
 			required: true,
 		},
 		{
+			html: '<img src="//example.com/docs/_image?href=x">',
+			base: "/docs",
+			site: "https://example.com/docs/",
+			required: true,
+		},
+		{
+			html: '<img src="//cdn.example/docs/_image?href=x">',
+			base: "/docs",
+			site: "https://example.com/docs/",
+			required: false,
+		},
+		{
 			html: '<meta property="og:image" content="https://cdn.example/docs/_image?href=x">',
 			base: "/docs",
 			site: "https://example.com/docs/",
