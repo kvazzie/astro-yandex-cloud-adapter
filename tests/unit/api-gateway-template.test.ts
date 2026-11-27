@@ -239,6 +239,44 @@ describe("API Gateway template route precedence", () => {
 		},
 	);
 
+	// Astro ranks /en/[name] ahead of /[lang]/feed.xml because its first
+	// segment is static, while Gateway prefers the literal /en/feed.xml.
+	it.each([
+		{ trailingSlash: "always", conflict: false },
+		{ trailingSlash: "ignore", conflict: true },
+		{ trailingSlash: "never", conflict: true },
+	] as const)(
+		"compares an on-demand page with a prerendered endpoint only at spellings Astro matches under $trailingSlash",
+		({ trailingSlash, conflict }) => {
+			const generate = () =>
+				templateFor("/en/feed.xml", "/en/[name]", 1, 0, {
+					staticKind: "endpoint",
+					staticPattern: "/[lang]/feed.xml",
+					trailingSlash,
+				});
+			if (conflict) {
+				expect(generate).toThrow(
+					/cannot preserve Astro route priority/,
+				);
+				return;
+			}
+			const template = generate();
+			expect(
+				template.paths["/en/feed.xml"]?.get?.[
+					"x-yc-apigateway-integration"
+				],
+			).toMatchObject({ type: "object_storage" });
+			// The slashless spelling still reaches Astro, which redirects it.
+			for (const path of ["/en/{name}/", "/en/{name}"])
+				expect(
+					template.paths[path]?.["x-yc-apigateway-any-method"]?.[
+						"x-yc-apigateway-integration"
+					],
+					path,
+				).toMatchObject({ type: "cloud_functions" });
+		},
+	);
+
 	it("encodes literal braces in a prerendered Gateway path", () => {
 		const template = templateFor(
 			"/docs/{example}",

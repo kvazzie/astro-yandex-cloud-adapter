@@ -7,6 +7,7 @@ import {
 	sep,
 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { Comment } from "acorn";
 import { glob } from "tinyglobby";
 import type { RoutePlan } from "../../mandatory/ArtifactGeneration/RouteRequirements";
 import type {
@@ -131,13 +132,21 @@ export function wrapFunctionPolicy(
 	/** The artifact root relative to the wrapped module, ending in `/`. */
 	artifactDirectory = "./",
 ): string {
-	// A prepared entrypoint carries the marker; a binding name alone proves nothing.
-	if (source.includes(wrapperMarker))
+	const comments: Comment[] = [];
+	const program = parseModule(source, "module", comments);
+	// A prepared entrypoint carries the marker comment; a binding name or the
+	// same text inside a string literal proves nothing.
+	if (
+		comments.some(
+			(comment) =>
+				comment.type === "Block" &&
+				`/*${comment.value}*/` === wrapperMarker,
+		)
+	)
 		throw new Error(
 			"The emitted handler export is missing or already wrapped.",
 		);
 	let handlerName: string | undefined;
-	const program = parseModule(source);
 	// Identifiers may use escapes, so compare decoded names as well as source text.
 	const identifiers = new Set<string>();
 	visitSyntax(program, (node) => {

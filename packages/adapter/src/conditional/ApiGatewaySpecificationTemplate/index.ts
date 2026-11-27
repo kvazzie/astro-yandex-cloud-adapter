@@ -32,6 +32,8 @@ interface GatewayRoute {
 	priority: number;
 	operation: GatewayOperation;
 	methods: readonly string[];
+	/** False for a spelling Astro only redirects, so it never competes for a request. */
+	matchedByAstro: boolean;
 }
 
 type Segment = {
@@ -158,6 +160,7 @@ function validatePriorities(routes: GatewayRoute[]): void {
 			const a = routes[i]!;
 			const b = routes[j]!;
 			if (a.artifactId === b.artifactId) continue;
+			if (!a.matchedByAstro || !b.matchedByAstro) continue;
 			if (
 				!a.path.includes("{") &&
 				!b.path.includes("{") &&
@@ -196,6 +199,26 @@ function emptyRestPattern(path: string): string | undefined {
 	return (
 		parts.filter((part) => part !== rests[0]).join("/") || "/"
 	);
+}
+
+/**
+ * Tells whether Astro can match a Gateway spelling of an on-demand route.
+ * Under "always", every route pattern ends in a slash, so a slashless
+ * spelling only reaches the trailing-slash redirect. Under "never", a pattern
+ * forbids the slash unless a spread captures it, which an internal `/_` path
+ * can reach because Astro does not redirect it.
+ */
+function matchesTrailingSlash(
+	path: string,
+	pattern: string,
+	policy: RoutePlan["trailingSlash"],
+): boolean {
+	if (policy === "ignore" || path === "/") return true;
+	const greedy = (value: string) =>
+		segments(value).some(({ kind }) => kind === "rest");
+	return policy === "always"
+		? path.endsWith("/") || greedy(path)
+		: !path.endsWith("/") || greedy(pattern);
 }
 
 /** Keeps literal braces in a concrete URL from reading as Gateway path parameters. */
@@ -321,6 +344,7 @@ export function generateApiGatewaySpecificationTemplate(
 			priority: planned.priority,
 			operation,
 			methods: ["get", "head"],
+			matchedByAstro: true,
 		});
 		// Astro matches both spellings when the route definition's effective policy is "ignore".
 		if (
@@ -343,6 +367,7 @@ export function generateApiGatewaySpecificationTemplate(
 				priority: planned.priority,
 				operation,
 				methods: ["get", "head"],
+				matchedByAstro: true,
 			});
 		}
 	}
@@ -365,6 +390,11 @@ export function generateApiGatewaySpecificationTemplate(
 				},
 			);
 		}
+		const policy = routeTrailingSlash(
+			route.kind,
+			route.pattern,
+			routePlan.trailingSlash,
+		);
 		const empty = emptyRestPattern(pattern);
 		const paths = new Set([pattern, ...(empty ? [empty] : [])]);
 		for (const path of [...paths]) {
@@ -402,6 +432,11 @@ export function generateApiGatewaySpecificationTemplate(
 					},
 				},
 				methods: ["x-yc-apigateway-any-method"],
+				matchedByAstro: matchesTrailingSlash(
+					path,
+					pattern,
+					policy,
+				),
 			});
 		}
 	}

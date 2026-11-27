@@ -7255,6 +7255,15 @@ ${f.index}`,
 					"const __yandexArtifactHandler = handler; export { __yandexArtifactHandler as handler };",
 				),
 		},
+		{
+			name: "binding next to a string spelling the wrapper marker",
+			replace: (index: string) =>
+				index.replace(
+					"export { handler };",
+					'export const kept = "/* @astro-yandex-cloud/adapter: 404 policy wrapper */".length - 52; export { handler };',
+				),
+			kept: true,
+		},
 	])(
 		"wraps a handler exported as an $name",
 		async ({ replace, ...row }) => {

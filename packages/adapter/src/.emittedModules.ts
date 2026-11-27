@@ -1,4 +1,4 @@
-import { parse } from "acorn";
+import { parse, type Comment } from "acorn";
 
 export interface SyntaxNode {
 	type: string;
@@ -11,11 +11,14 @@ export interface SyntaxNode {
 export function parseModule(
 	source: string,
 	sourceType: "module" | "commonjs" = "module",
+	/** Receives the comments, which the syntax tree omits. */
+	comments?: Comment[],
 ): SyntaxNode {
 	return parse(source, {
 		allowHashBang: true,
 		ecmaVersion: "latest",
 		sourceType,
+		...(comments ? { onComment: comments } : {}),
 	}) as unknown as SyntaxNode;
 }
 
