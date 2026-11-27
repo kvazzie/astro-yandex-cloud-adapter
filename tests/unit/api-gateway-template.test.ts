@@ -609,6 +609,18 @@ describe("completed-build route requirements", () => {
 			required: true,
 		},
 		{
+			html: '<base href="/_image?href=x"><p>Text</p>',
+			required: false,
+		},
+		{
+			html: '<base href="data:text/plain,test"><img src="_image?href=x">',
+			required: true,
+		},
+		{
+			html: '<base href="javascript:void(0)"><img src="_image?href=x">',
+			required: true,
+		},
+		{
 			html: '<template><style-card></style-card></template><base href="/"><img src="_image?href=x">',
 			url: "/guide/",
 			required: true,
@@ -785,6 +797,13 @@ describe("completed-build route requirements", () => {
 			pattern: "/feeds/[name].xml",
 			trailingSlash: "always",
 			url: "/feeds/main.xml",
+		},
+		// An Astro 7.1.6 probe build renders this endpoint's request URL as `/guide.html/`.
+		{
+			file: "guide.html",
+			pattern: "/[page]",
+			trailingSlash: "always",
+			url: "/guide.html/",
 		},
 	] as const)(
 		"projects a prerendered endpoint $file under trailingSlash $trailingSlash",
@@ -1157,4 +1176,141 @@ describe("completed-build route requirements", () => {
 			]?.["x-yc-apigateway-integration"],
 		).toMatchObject({ type: "cloud_functions" });
 	});
+
+	it("parses a document again after its HTML changes", () => {
+		const document = { urls: ["/"], html: "<p>No images</p>" };
+		const required = () =>
+			requiredOnDemandRoutes({
+				base: "/",
+				resolvedRoutes: [imageRoute],
+				clientDocuments: [document],
+				hasServerIslands: false,
+				hasRuntimeImages: false,
+				imageEndpoint: "/_image",
+			}).length > 0;
+		expect(required()).toBe(false);
+		document.html = '<img src="/_image?href=x">';
+		expect(required()).toBe(true);
+	});
+
+	it.each([
+		{
+			name: "a normal page at the base",
+			pattern: "/",
+			url: "/docs/404/",
+			scopes: [],
+		},
+		{
+			name: "a 404 page below the base",
+			pattern: "/404",
+			url: "/docs/404/404/",
+			scopes: ["/docs/404"],
+		},
+	])(
+		"classifies 404 pages below a base ending in /404: $name",
+		({ pattern, url, scopes }) => {
+			const plan: RoutePlan = {
+				base: "/docs/404",
+				trailingSlash: "always",
+				routes: [
+					{
+						kind: "prerendered",
+						routeKind: "page",
+						pattern: `/docs/404${pattern === "/" ? "/" : pattern}`,
+						priority: 0,
+						patternRegex: "^.*$",
+						paths: [
+							{
+								url,
+								objectKey: "docs/404/index.html",
+								artifactId: "client:primary" as Extract<
+									RoutePlan["routes"][number],
+									{ kind: "prerendered" }
+								>["paths"][number]["artifactId"],
+							},
+						],
+					},
+				],
+			};
+			expect(
+				manifestRoutes(plan, true).notFound.map(
+					({ scope }) => scope,
+				),
+			).toEqual(scopes);
+		},
+	);
+
+	it("rejects an oversized template without comparing every pair of stored paths", () => {
+		const count = 40_000;
+		const artifactId = "client:primary" as Extract<
+			RoutePlan["routes"][number],
+			{ kind: "prerendered" }
+		>["paths"][number]["artifactId"];
+		const paths = Array.from({ length: count }, (_, index) => ({
+			url: `/p/${index}`,
+			objectKey: `p/${index}/index.html`,
+			artifactId,
+		}));
+		const manifest = defineDeploymentManifest({
+			schemaVersion: 1,
+			adapter: { version: "0.1.0-beta.0" },
+			target: Targets.ObjectStorageCloudFunctionsTarget,
+			modifiers: { apiGateway: true },
+			gatewayTemplate: { path: "api-gateway.yaml" },
+			base: "/",
+			artifacts: {
+				client: { id: "client:primary", path: "client" },
+				functions: [
+					{
+						id: "function:shared",
+						path: "function",
+						runtime: "nodejs22",
+						entrypoint: "index.handler",
+					},
+				],
+			},
+			routes: {
+				prerendered: paths.map((path) => ({
+					kind: "page",
+					...path,
+				})),
+				onDemand: [
+					{
+						kind: "endpoint",
+						pattern: "/api/[id]",
+						artifactId: "function:shared",
+					},
+				],
+				notFound: [],
+			},
+		});
+		expect(() =>
+			generateApiGatewaySpecificationTemplate(manifest, {
+				base: "/",
+				trailingSlash: "ignore",
+				routes: [
+					{
+						kind: "prerendered",
+						routeKind: "page",
+						pattern: "/p/[id]",
+						priority: 1,
+						patternRegex: "^.*$",
+						paths,
+					},
+					{
+						kind: "on-demand",
+						routeKind: "endpoint",
+						pattern: "/api/[id]",
+						priority: 0,
+						patternRegex: "^.*$",
+						origin: "project",
+						artifactId: "function:shared" as Extract<
+							RoutePlan["routes"][number],
+							{ kind: "on-demand" }
+						>["artifactId"],
+					},
+				],
+			}),
+		).toThrow(/exceeding the 3.5 MB limit/);
+	}, 5_000);
 });

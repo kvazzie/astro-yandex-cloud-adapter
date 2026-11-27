@@ -196,7 +196,12 @@ function clientFile(clientDirectory: URL, asset: URL): string {
 		.join("/");
 }
 
-/** The URL a prerendered endpoint serves an emitted file at, before `base`. */
+/**
+ * The URL a prerendered endpoint serves an emitted file at, before `base`.
+ * Astro 7.1.6 applies the slash policy of the route definition: a probe build
+ * with `base: "/docs"` and `trailingSlash: "always"` renders `/[page]` with
+ * `page: "guide.html"` at `/docs/guide.html/`, while `/feed.xml` stays slashless.
+ */
 function endpointUrl(
 	route: IntegrationResolvedRoute,
 	file: string,
@@ -331,9 +336,10 @@ function textContent(
 		.join("");
 }
 
+// Keyed by document; the HTML is stored too, so a changed document is parsed again.
 const parsedDocuments = new WeakMap<
 	ClientDocument,
-	DocumentReferences
+	{ html: string; references: DocumentReferences }
 >();
 
 /**
@@ -345,7 +351,7 @@ function documentReferences(
 	document: ClientDocument,
 ): DocumentReferences {
 	const cached = parsedDocuments.get(document);
-	if (cached) return cached;
+	if (cached?.html === document.html) return cached.references;
 	const references: DocumentReferences = {
 		baseHref: undefined,
 		urls: [],
@@ -358,8 +364,16 @@ function documentReferences(
 	].reverse();
 	for (let node = pending.pop(); node; node = pending.pop()) {
 		if (!("tagName" in node)) continue;
+		const isBase =
+			node.tagName === "base" &&
+			node.namespaceURI === html.NS.HTML;
 		for (const { name, value } of node.attrs) {
-			if (urlAttribute.test(name)) references.urls.push(value);
+			// A base URL only resolves other references; it is not itself a request.
+			if (
+				urlAttribute.test(name) &&
+				!(isBase && name === "href")
+			)
+				references.urls.push(value);
 			if (name === "style")
 				for (const [, url = ""] of value.matchAll(cssUrl))
 					references.urls.push(url);
@@ -397,13 +411,17 @@ function documentReferences(
 		)
 			pending.push(node.childNodes[index]!);
 	}
-	parsedDocuments.set(document, references);
+	parsedDocuments.set(document, {
+		html: document.html,
+		references,
+	});
 	return references;
 }
 
 /**
  * The URLs that relative references in a document resolve against: each public
  * document URL, or the first `<base href>` resolved against it, as in a browser.
+ * The browser falls back to the document URL for a `data:` or `javascript:` base.
  */
 function documentBases(
 	urls: readonly string[],
@@ -412,8 +430,14 @@ function documentBases(
 ): string[] {
 	return urls.map((url) => {
 		const document = `${origin}${url}`;
-		return href !== undefined && URL.canParse(href, document)
-			? new URL(href, document).href
+		const base =
+			href !== undefined && URL.canParse(href, document)
+				? new URL(href, document)
+				: undefined;
+		return base &&
+			base.protocol !== "data:" &&
+			base.protocol !== "javascript:"
+			? base.href
 			: document;
 	});
 }
@@ -679,7 +703,10 @@ export function manifestRoutes(
 					if (
 						isNotFoundPage(
 							{ base: plan.base, recursive404 },
-							route.pattern,
+							// Classify the route below the base; a base ending in `/404` is not a 404 page.
+							plan.base === "/"
+								? route.pattern
+								: route.pattern.slice(plan.base.length) || "/",
 							path.url,
 						)
 					)
