@@ -12,6 +12,7 @@ import {
 	type RoutePlan,
 } from "../../packages/adapter/src/mandatory/ArtifactGeneration/RouteRequirements";
 import type { IntegrationResolvedRoute } from "astro";
+import { pathToFileURL } from "node:url";
 
 function templateFor(
 	staticUrl: string,
@@ -23,13 +24,21 @@ function templateFor(
 		staticKind = "page",
 		staticPattern = staticUrl,
 		trailingSlash = "ignore",
+		staticRegex = "^.*$",
+		runtimeRegex = "^.*$",
+		notFoundScope = "/",
 	}: {
 		recursive404?: boolean;
 		staticKind?: "page" | "endpoint";
 		staticPattern?: string;
 		trailingSlash?: RoutePlan["trailingSlash"];
+		/** Astro's regex for each route; the default matches every URL. */
+		staticRegex?: string;
+		runtimeRegex?: string;
+		notFoundScope?: string;
 	} = {},
 ) {
+	const notFoundUrl = `${notFoundScope === "/" ? "" : notFoundScope}/404`;
 	const manifest = defineDeploymentManifest({
 		schemaVersion: 1,
 		adapter: { version: "0.1.0-beta.0" },
@@ -64,7 +73,7 @@ function templateFor(
 					? [
 							{
 								kind: "page" as const,
-								url: "/404",
+								url: notFoundUrl,
 								objectKey: "404.html",
 								artifactId: "client:primary",
 							},
@@ -83,8 +92,8 @@ function templateFor(
 			notFound: recursive404
 				? [
 						{
-							scope: "/",
-							url: "/404",
+							scope: notFoundScope,
+							url: notFoundUrl,
 							objectKey: "404.html",
 							artifactId: "client:primary",
 						},
@@ -98,12 +107,12 @@ function templateFor(
 				{
 					kind: "prerendered",
 					routeKind: "page",
-					pattern: "/404",
+					pattern: notFoundUrl,
 					priority: -1,
 					patternRegex: "^/404/?$",
 					paths: [
 						{
-							url: "/404",
+							url: notFoundUrl,
 							objectKey: "404.html",
 							artifactId: manifest.artifacts.client
 								.id as Extract<
@@ -124,7 +133,7 @@ function templateFor(
 				routeKind: staticKind,
 				pattern: staticPattern,
 				priority: staticPriority,
-				patternRegex: "^.*$",
+				patternRegex: staticRegex,
 				paths: manifest.routes.prerendered
 					.filter(({ url }) => url === staticUrl)
 					.map(({ url, objectKey, artifactId }) => ({
@@ -142,7 +151,7 @@ function templateFor(
 				routeKind: "page",
 				pattern: runtimePattern,
 				priority: runtimePriority,
-				patternRegex: "^.*$",
+				patternRegex: runtimeRegex,
 				origin: "project",
 				artifactId: manifest.artifacts.functions[0]!
 					.id as Extract<
@@ -152,8 +161,10 @@ function templateFor(
 			},
 		],
 	};
-	// The production writer validates the Manifest before Gateway generation.
-	if (recursive404) encodeDeploymentManifest(manifest);
+	// The production writer validates the Manifest before Gateway generation;
+	// a scope with literal braces exercises the generator on its own.
+	if (recursive404 && notFoundScope === "/")
+		encodeDeploymentManifest(manifest);
 	return generateApiGatewaySpecificationTemplate(
 		manifest,
 		routePlan,
@@ -301,6 +312,77 @@ describe("API Gateway template route precedence", () => {
 		);
 	});
 
+	it("encodes literal braces in a recursive 404 scope", () => {
+		const template = templateFor("/", "/api/[id]", 1, 0, {
+			recursive404: true,
+			notFoundScope: "/docs/{example}",
+		});
+		for (const path of [
+			"/docs/%7Bexample%7D/{_+}",
+			"/docs/%7Bexample%7D",
+			"/docs/%7Bexample%7D/",
+		])
+			expect(
+				template.paths[path]?.["x-yc-apigateway-any-method"]?.[
+					"x-yc-apigateway-integration"
+				],
+				path,
+			).toMatchObject({
+				type: "object_storage",
+				object: "404.html",
+			});
+		expect(
+			Object.keys(template.paths).filter((path) =>
+				path.includes("{example}"),
+			),
+		).toEqual([]);
+	});
+
+	// Astro 7.1.6 regexes for these routes under each trailingSlash policy.
+	const catchAllPage = {
+		always: String.raw`^\/en(?:\/(.*?))?\/$`,
+		ignore: String.raw`^\/en(?:\/(.*?))?\/?$`,
+	};
+	const feedEndpoint = String.raw`^\/([^/]+?)\/feed\.xml$`;
+
+	it("accepts a literal endpoint that a slash-bound catch-all page cannot match", () => {
+		const template = templateFor(
+			"/en/feed.xml",
+			"/en/[...name]",
+			1,
+			0,
+			{
+				staticKind: "endpoint",
+				staticPattern: "/[lang]/feed.xml",
+				trailingSlash: "always",
+				staticRegex: feedEndpoint,
+				runtimeRegex: catchAllPage.always,
+			},
+		);
+		expect(
+			template.paths["/en/feed.xml"]?.get?.[
+				"x-yc-apigateway-integration"
+			],
+		).toMatchObject({ type: "object_storage" });
+		expect(
+			template.paths["/en/{name+}"]?.[
+				"x-yc-apigateway-any-method"
+			]?.["x-yc-apigateway-integration"],
+		).toMatchObject({ type: "cloud_functions" });
+	});
+
+	it("rejects the same overlap when Astro matches the URL with both routes", () => {
+		expect(() =>
+			templateFor("/en/feed.xml", "/en/[...name]", 1, 0, {
+				staticKind: "endpoint",
+				staticPattern: "/[lang]/feed.xml",
+				trailingSlash: "ignore",
+				staticRegex: feedEndpoint,
+				runtimeRegex: catchAllPage.ignore,
+			}),
+		).toThrow(/cannot preserve Astro route priority/);
+	});
+
 	it("keeps a padded greedy parameter distinct from a fixed capture", () => {
 		const template = templateFor(
 			"/",
@@ -441,6 +523,36 @@ describe("completed-build route requirements", () => {
 			html: '<img src="_image#top?href=x">',
 			required: false,
 		},
+		{
+			html: '<!-- <img src="/_image?href=x"> -->',
+			required: false,
+		},
+		{
+			html: '<!-- an image follows --><img src="/_image?href=x">',
+			required: true,
+		},
+		{
+			html: '<img alt="<!--" src="/_image?href=x">',
+			required: true,
+		},
+		{
+			html: '<script>if (a <!--b) {}</script><img src="/_image?href=x">',
+			required: true,
+		},
+		{
+			html: '<base href="/docs/"><img src="_image?href=x">',
+			base: "/docs",
+			url: "/docs/guide/",
+			required: true,
+		},
+		{
+			html: '<base href="https://cdn.example/"><img src="_image?href=x">',
+			required: false,
+		},
+		{
+			html: '<!-- <base href="https://cdn.example/"> --><img src="_image?href=x">',
+			required: true,
+		},
 	])(
 		"requires the image endpoint only for an actual image request: $html at $url",
 		({ html, required, base = "/", site, url }) => {
@@ -485,8 +597,41 @@ describe("completed-build route requirements", () => {
 		{
 			name: "generated GET preload",
 			html: '<link rel="preload" as="fetch" href="/docs/_server-islands/Card?e=x&amp;p=&amp;s=" crossorigin="anonymous">',
+			base: "/docs",
 			hasServerIslands: false,
 			required: true,
+		},
+		{
+			name: "a preload outside the base",
+			html: '<link rel="preload" as="fetch" href="/_server-islands/Card" crossorigin="anonymous">',
+			base: "/docs",
+			hasServerIslands: false,
+			required: false,
+		},
+		{
+			name: "a preload on another origin",
+			html: '<link rel="preload" as="fetch" href="https://cdn.example/_server-islands/Card" crossorigin="anonymous">',
+			hasServerIslands: false,
+			required: false,
+		},
+		{
+			name: "a preload on the site origin",
+			html: '<link rel="preload" as="fetch" href="https://example.com/_server-islands/Card" crossorigin="anonymous">',
+			site: "https://example.com/",
+			hasServerIslands: false,
+			required: true,
+		},
+		{
+			name: "a request to another origin",
+			html: '<script type="module">let response = await fetch("https://cdn.example/_server-islands/Card/", { method: \'POST\' });</script>',
+			hasServerIslands: false,
+			required: false,
+		},
+		{
+			name: "a commented-out preload",
+			html: '<!-- <link rel="preload" as="fetch" href="/_server-islands/Card"> -->',
+			hasServerIslands: false,
+			required: false,
 		},
 		{
 			name: "generated POST request",
@@ -500,14 +645,24 @@ describe("completed-build route requirements", () => {
 			hasServerIslands: true,
 			required: true,
 		},
-	])(
+	] as Array<{
+		name: string;
+		html: string;
+		base?: string;
+		site?: string;
+		hasServerIslands: boolean;
+		required: boolean;
+	}>)(
 		"requires the server-island endpoint only with island evidence: $name",
-		({ html, hasServerIslands, required }) => {
+		({ html, base = "/", site, hasServerIslands, required }) => {
 			expect(
 				requiredOnDemandRoutes({
-					base: "/",
+					base,
+					site,
 					resolvedRoutes: [islandRoute],
-					clientDocuments: [{ urls: ["/"], html }],
+					clientDocuments: [
+						{ urls: [base === "/" ? "/" : `${base}/`], html },
+					],
 					hasServerIslands,
 					hasRuntimeImages: false,
 					imageEndpoint: "/_image",
@@ -584,6 +739,60 @@ describe("completed-build route requirements", () => {
 				]),
 				hasFunction: false,
 				trailingSlash,
+				hasServerIslands: false,
+				hasRuntimeImages: false,
+				imageEndpoint: "/_image",
+			});
+			expect(plan.routes[0]).toMatchObject({
+				kind: "prerendered",
+				paths: [{ url, objectKey: file }],
+			});
+		},
+	);
+
+	it.each([
+		{
+			pathname: "docs/café/",
+			file: "docs/café/index.html",
+			url: "/docs/caf%C3%A9/",
+		},
+		// Astro escapes `#` in a parameter; the escape is kept, not doubled.
+		{
+			pathname: "docs/a%23b/",
+			file: "docs/a%23b/index.html",
+			url: "/docs/a%23b/",
+		},
+		{
+			pathname: "docs/100%/",
+			file: "docs/100%/index.html",
+			url: "/docs/100%25/",
+		},
+	])(
+		"publishes the canonical URL of the prerendered page $pathname",
+		({ pathname, file, url }) => {
+			const clientDirectory = new URL("file:///build/client/");
+			const page = {
+				type: "page",
+				origin: "project",
+				pattern: "/docs/[slug]",
+				isPrerendered: true,
+				patternRegex: /^\/docs\/([^/]+?)\/$/,
+			} as unknown as IntegrationResolvedRoute;
+			const plan = reconcileRoutes({
+				base: "/",
+				clientDirectory,
+				clientFiles: [file],
+				clientHtml: new Map(),
+				pages: [{ pathname }],
+				resolvedRoutes: [page],
+				emittedAssets: new Map([
+					[
+						page.pattern,
+						[pathToFileURL(`/build/client/${file}`)],
+					],
+				]),
+				hasFunction: false,
+				trailingSlash: "always",
 				hasServerIslands: false,
 				hasRuntimeImages: false,
 				imageEndpoint: "/_image",
