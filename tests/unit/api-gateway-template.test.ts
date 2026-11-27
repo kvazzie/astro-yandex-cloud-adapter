@@ -553,6 +553,22 @@ describe("completed-build route requirements", () => {
 			html: '<!-- <base href="https://cdn.example/"> --><img src="_image?href=x">',
 			required: true,
 		},
+		{
+			html: '<textarea><base href="https://cdn.example/"></textarea><img src="_image?href=x">',
+			required: true,
+		},
+		{
+			html: '<img alt=\'<base href="https://cdn.example/">\' src="_image?href=x">',
+			required: true,
+		},
+		{
+			html: '<base data-note=" href=https://cdn.example/" href="/"><img src="_image?href=x">',
+			required: true,
+		},
+		{
+			html: '<BASE HREF="https://cdn.example/"><img src="_image?href=x">',
+			required: false,
+		},
 	])(
 		"requires the image endpoint only for an actual image request: $html at $url",
 		({ html, required, base = "/", site, url }) => {
