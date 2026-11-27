@@ -486,14 +486,34 @@ export async function hasRuntimeImageCalls(
 		);
 		const topLevel = topLevelBindings(module.syntax);
 		// A call inside a wrapper's own declaration runs only when that wrapper is called.
+		// Declarations are compared by node, so a nested binding that shadows a wrapper
+		// name is not mistaken for the wrapper.
+		const wrapperDeclarations = new Set<SyntaxNode>();
+		for (const statement of Array.isArray(module.syntax.body)
+			? (module.syntax.body as unknown[])
+			: []) {
+			const declaration =
+				isSyntaxNode(statement) &&
+				(statement.type === "ExportNamedDeclaration" ||
+					statement.type === "ExportDefaultDeclaration")
+					? statement.declaration
+					: statement;
+			if (
+				isSyntaxNode(declaration) &&
+				declaration.type === "FunctionDeclaration" &&
+				isSyntaxNode(declaration.id) &&
+				typeof declaration.id.name === "string" &&
+				localNames.has(declaration.id.name)
+			)
+				wrapperDeclarations.add(declaration);
+		}
+		for (const name of localNames) {
+			const declarator = module.declarations.get(name);
+			if (declarator) wrapperDeclarations.add(declarator);
+		}
 		const insideWrapper = (ancestors: SyntaxNode[]) =>
-			ancestors.some(
-				(ancestor) =>
-					(ancestor.type === "FunctionDeclaration" ||
-						ancestor.type === "VariableDeclarator") &&
-					isSyntaxNode(ancestor.id) &&
-					typeof ancestor.id.name === "string" &&
-					localNames.has(ancestor.id.name),
+			ancestors.some((ancestor) =>
+				wrapperDeclarations.has(ancestor),
 			);
 		visitSyntax(module.syntax, (node, ancestors) => {
 			if (

@@ -6122,6 +6122,11 @@ ${f.index}`,
 			expected: true,
 		},
 		{
+			name: "runtime call in a declaration that shadows a wrapper name",
+			body: 'const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function coreImage(options){return service.getURL(options)} const getImage = (options) => coreImage(options); export async function page(){ const coreImage = await getImage({}); return coreImage; }',
+			expected: true,
+		},
+		{
 			name: "unexported wrapper that is never called",
 			body: 'const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function getImage(options){return service.getURL(options)} function other(){return 1} export const value = other();',
 			expected: false,
