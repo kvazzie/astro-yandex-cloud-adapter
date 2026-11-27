@@ -151,6 +151,25 @@ function pageUrl(pathname: string): string {
 	return pathname ? `/${pathname.replace(/^\/+/, "")}` : "/";
 }
 
+// Without `site`, a reserved origin stands in for the application's origin.
+const unknownOrigin = "https://application.invalid";
+
+/**
+ * Spells a decoded page path as its canonical URL path, as the Manifest
+ * requires. Astro already escapes `#` and `?` in page parameters, so an
+ * existing `%XX` escape stays as it is and only a bare `%` is encoded.
+ */
+function canonicalUrlPath(path: string): string {
+	return new URL(
+		path
+			.replace(/%(?![0-9A-Fa-f]{2})/g, "%25")
+			.replaceAll("\\", "%5C")
+			.replaceAll("?", "%3F")
+			.replaceAll("#", "%23"),
+		unknownOrigin,
+	).pathname;
+}
+
 function publicPageUrl(
 	evidence: Pick<RouteEvidence, "base" | "trailingSlash">,
 	url: string,
@@ -159,7 +178,7 @@ function publicPageUrl(
 		evidence.base !== "/" &&
 		evidence.trailingSlash === "never"
 		? evidence.base
-		: withBase(evidence.base, url);
+		: canonicalUrlPath(withBase(evidence.base, url));
 }
 
 /**
@@ -204,13 +223,46 @@ export function clientDocuments(
 	}));
 }
 
-// Without `site`, a reserved origin stands in for the application's origin.
-const unknownOrigin = "https://application.invalid";
+/**
+ * Removes HTML comments. Raw-text element contents and quoted attribute values
+ * are kept whole, because `<!--` inside them is literal text.
+ */
+function withoutComments(html: string): string {
+	return html.replace(
+		/<!--(?:-?>|[\s\S]*?(?:--!?>|$))|(<(script|style|textarea|title)\b(?:"[^"]*"|'[^']*'|[^"'>])*>[\s\S]*?(?:<\/\2\s*>|$))|(<[A-Za-z!?/](?:"[^"]*"|'[^']*'|[^"'>])*>)/gi,
+		(_match, raw?: string, _name?: string, tag?: string) =>
+			raw ?? tag ?? " ",
+	);
+}
+
+/**
+ * The URLs that relative references in a document resolve against: each public
+ * document URL, or the first `<base href>` resolved against it, as in a browser.
+ */
+function documentBases(
+	urls: readonly string[],
+	html: string,
+	origin: string,
+): string[] {
+	const base =
+		/<base\b(?:"[^"]*"|'[^']*'|[^"'>])*?\shref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i.exec(
+			html,
+		);
+	const href = base
+		? (base[1] ?? base[2] ?? base[3] ?? "")
+		: undefined;
+	return urls.map((url) => {
+		const document = `${origin}${url}`;
+		return href !== undefined && URL.canParse(href, document)
+			? new URL(href, document).href
+			: document;
+	});
+}
 
 /**
  * Matches a request to the application's endpoint in a URL attribute or CSS
- * url(), not in escaped text or a URL on another origin such as a CDN.
- * References resolve against the document URL as a browser resolves them.
+ * url(), not in escaped text, a comment or a URL on another origin such as a
+ * CDN. References resolve against the document base as a browser resolves them.
  */
 function requestsEndpoint(
 	documents: readonly ClientDocument[],
@@ -218,7 +270,9 @@ function requestsEndpoint(
 	site: string | undefined,
 ): boolean {
 	const origin = site ? new URL(site).origin : unknownOrigin;
-	for (const { urls, html } of documents)
+	for (const document of documents) {
+		const html = withoutComments(document.html);
+		const bases = documentBases(document.urls, html, origin);
 		for (const match of html.matchAll(
 			/\b(?:src|srcset|href|poster|content|data-[\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))|url\(\s*["']?([^"')\s]*)/gi,
 		)) {
@@ -231,10 +285,9 @@ function requestsEndpoint(
 				const location = candidate.slice(0, query);
 				// A `?` after `#` belongs to the fragment, so the request has no query.
 				if (location.includes("#")) continue;
-				for (const url of urls) {
-					const document = `${origin}${url}`;
-					const resolved = URL.canParse(location, document)
-						? new URL(location, document)
+				for (const base of bases) {
+					const resolved = URL.canParse(location, base)
+						? new URL(location, base)
 						: undefined;
 					if (
 						resolved?.origin === origin &&
@@ -244,14 +297,48 @@ function requestsEndpoint(
 				}
 			}
 		}
+	}
 	return false;
 }
 
-/** Matches Astro's generated island preload link or fetch call, not page text. */
-function requestsServerIsland(html: string): boolean {
-	return /(?:<link\b[^>]*?\bhref="|\bfetch\(\s*")[^"]*?\/_server-islands\//i.test(
-		html,
-	);
+/**
+ * Matches Astro's generated island preload link or fetch call to the
+ * application's island endpoint, not page text, a comment or another origin.
+ */
+function requestsServerIsland(
+	documents: readonly ClientDocument[],
+	base: string,
+	site: string | undefined,
+): boolean {
+	const origin = site ? new URL(site).origin : unknownOrigin;
+	const prefix = withBase(base, "/_server-islands/");
+	for (const document of documents) {
+		const html = withoutComments(document.html);
+		const bases = documentBases(document.urls, html, origin);
+		for (const match of html.matchAll(
+			/<link\b[^>]*?\bhref="([^"]*)"|\bfetch\(\s*"((?:[^"\\]|\\.)*)"/gi,
+		)) {
+			let target = match[1] ?? "";
+			if (match[2] !== undefined)
+				try {
+					// Astro writes the fetch URL as a JSON string.
+					target = JSON.parse(`"${match[2]}"`) as string;
+				} catch {
+					continue;
+				}
+			for (const documentBase of bases) {
+				const resolved = URL.canParse(target, documentBase)
+					? new URL(target, documentBase)
+					: undefined;
+				if (
+					resolved?.origin === origin &&
+					resolved.pathname.startsWith(prefix)
+				)
+					return true;
+			}
+		}
+	}
+	return false;
 }
 
 type RequirementEvidence = Pick<
@@ -274,8 +361,10 @@ function isActiveInternalRoute(
 	if (route.pattern.startsWith("/_server-islands/"))
 		return (
 			evidence.hasServerIslands ||
-			clientDocuments.some(({ html }) =>
-				requestsServerIsland(html),
+			requestsServerIsland(
+				clientDocuments,
+				evidence.base,
+				evidence.site,
 			)
 		);
 	if (route.pattern === imageEndpoint)
