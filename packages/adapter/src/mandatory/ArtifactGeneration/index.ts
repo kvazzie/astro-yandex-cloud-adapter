@@ -174,6 +174,7 @@ async function inspectRoutes(
 	).join("\n");
 	const evidence = {
 		base: normalizedBase(config.base),
+		site: config.site,
 		clientDirectory: client,
 		clientFiles,
 		clientHtml,

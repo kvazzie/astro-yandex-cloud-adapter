@@ -6207,6 +6207,21 @@ ${f.index}`,
 			body: "import { renderImage as getImage$1 } from './assets.mjs'; export const image = getImage$1({});",
 			expected: true,
 		},
+		{
+			name: "re-export that shares a local wrapper's name",
+			body: "import { lookup } from './assets.mjs'; export const image = lookup({});",
+			expected: false,
+		},
+		{
+			name: "named import with a query",
+			body: "import { renderImage } from './assets.mjs?variant=ssr'; export const image = renderImage({});",
+			expected: true,
+		},
+		{
+			name: "module import with a query and fragment",
+			body: "import './template.mjs?variant=ssr#top';",
+			expected: true,
+		},
 	])(
 		"classifies runtime image calls by binding: $name",
 		async ({ body, expected }) => {
@@ -6222,7 +6237,7 @@ ${f.index}`,
 			);
 			await writeFile(
 				new URL("assets.mjs", f.server),
-				'export const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function getImage(config){return service.getURL(config)} export {getImage as renderImage};',
+				'export const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function getImage(config){return service.getURL(config)} export {getImage as renderImage}; export {getImage as lookup} from "./cms.mjs";',
 			);
 			expect(
 				await hasRuntimeImageCalls(
@@ -6341,10 +6356,37 @@ ${f.index}`,
 			page: "export const page = true;",
 			expected: false,
 		},
+		{
+			name: "Astro manifest with a shorthand pageMap",
+			index:
+				"const a=()=>import('./foo.js');var pageMap=new Map([['page:foo',a]]);var manifest=Object.assign(_manifest,{actions:()=>import('./noop.js'),middleware:()=>import('./mw.js'),pageMap});",
+			page: "export const page = true;",
+			expected: true,
+		},
+		{
+			name: "same-named loader outside the manifest",
+			index:
+				"const a=()=>import('./foo.js');const b=new Map([['page:foo',a]]);export const m={pageMap:b};export const app={actions:()=>import('./mw.js')};",
+			page: "export const page = true;",
+			expected: false,
+		},
+		{
+			name: "same-named loader in an unrelated module",
+			index:
+				"const a=()=>import('./foo.js');const b=new Map([['page:foo',a]]);export const m={pageMap:b};",
+			page: "export const page = true;",
+			files: {
+				"other.js":
+					"export const app={actions:()=>import('./mw.js'),middleware:()=>import('./mw.js')};",
+			},
+			expected: false,
+		},
 	])(
 		"finds runtime image calls from manifest roots: $name",
-		async ({ index, page, expected }) => {
+		async ({ index, page, files, expected }) => {
 			const f = await fixture();
+			for (const [file, contents] of Object.entries(files ?? {}))
+				await writeFile(new URL(file, f.server), contents);
 			await writeFile(
 				new URL("index.js", f.server),
 				`${index}\nfunction h(e,x,p,q){return q}export{h as handler};`,

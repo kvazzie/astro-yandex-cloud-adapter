@@ -333,7 +333,12 @@ describe("completed-build route requirements", () => {
 		pattern: "/_image",
 		isPrerendered: false,
 	} as IntegrationResolvedRoute;
-	it.each([
+	it.each<{
+		html: string;
+		required: boolean;
+		base?: string;
+		site?: string;
+	}>([
 		{
 			html: '<img src="/_image?href=%2Fa.png&w=1">',
 			required: true,
@@ -354,11 +359,47 @@ describe("completed-build route requirements", () => {
 			html: "<pre><code>&lt;img src=&quot;/_image?href=x&quot;&gt;</code></pre>",
 			required: false,
 		},
+		{
+			html: '<img src="https://cdn.example/_image?w=320">',
+			required: false,
+		},
+		{
+			html: '<img src="//cdn.example/_image?w=320">',
+			required: false,
+		},
+		{
+			html: '<img src="/blog/_image?w=320">',
+			required: false,
+		},
+		{
+			html: '<img srcset="/a.png 1x, /docs/_image?href=b 2x">',
+			base: "/docs",
+			required: true,
+		},
+		{
+			html: '<img src="/_image?href=x">',
+			base: "/docs",
+			required: false,
+		},
+		{
+			html: '<meta property="og:image" content="https://example.com/docs/_image?href=x">',
+			base: "/docs",
+			site: "https://example.com/docs/",
+			required: true,
+		},
+		{
+			html: '<meta property="og:image" content="https://cdn.example/docs/_image?href=x">',
+			base: "/docs",
+			site: "https://example.com/docs/",
+			required: false,
+		},
 	])(
 		"requires the image endpoint only for an actual image request: $html",
-		({ html, required }) => {
+		({ html, required, base = "/", site }) => {
 			expect(
 				requiredOnDemandRoutes({
+					base,
+					site,
 					resolvedRoutes: [imageRoute],
 					clientHtml: html,
 					hasServerIslands: false,
@@ -411,6 +452,7 @@ describe("completed-build route requirements", () => {
 		({ html, hasServerIslands, required }) => {
 			expect(
 				requiredOnDemandRoutes({
+					base: "/",
 					resolvedRoutes: [islandRoute],
 					clientHtml: html,
 					hasServerIslands,

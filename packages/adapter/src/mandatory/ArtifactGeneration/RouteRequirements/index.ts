@@ -48,6 +48,8 @@ export interface RoutePlan {
 
 interface RouteEvidence {
 	base: string;
+	/** Astro's `site`; absolute URLs on its origin are requests to the application. */
+	site?: string | undefined;
 	clientDirectory: URL;
 	clientFiles: readonly string[];
 	clientHtml: string;
@@ -112,16 +114,38 @@ function pageFile(
 	return file;
 }
 
-/** Matches the endpoint in a URL attribute or CSS url(), not in escaped text. */
+/**
+ * Matches a request to the application's endpoint in a URL attribute or CSS
+ * url(), not in escaped text or a URL on another origin such as a CDN.
+ */
 function requestsEndpoint(
 	html: string,
 	endpoint: string,
+	site: string | undefined,
 ): boolean {
-	const path = endpoint.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	return new RegExp(
-		String.raw`(?:\b(?:src|srcset|href|poster|content|data-[\w-]+)\s*=\s*(?:"[^"]*?|'[^']*?|)|url\(\s*["']?)${path}\?`,
-		"i",
-	).test(html);
+	const origin = site ? new URL(site).origin : undefined;
+	for (const match of html.matchAll(
+		/\b(?:src|srcset|href|poster|content|data-[\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))|url\(\s*["']?([^"')\s]*)/gi,
+	)) {
+		const value =
+			match[1] ?? match[2] ?? match[3] ?? match[4] ?? "";
+		// A srcset lists candidates separated by commas and descriptors.
+		for (const candidate of value.split(/[\s,]+/)) {
+			const query = candidate.indexOf("?");
+			if (query === -1) continue;
+			const location = candidate.slice(0, query);
+			const pathname =
+				location.startsWith("/") && !location.startsWith("//")
+					? location
+					: origin &&
+						  URL.canParse(location) &&
+						  new URL(location).origin === origin
+						? new URL(location).pathname
+						: undefined;
+			if (pathname === endpoint) return true;
+		}
+	}
+	return false;
 }
 
 /** Matches Astro's generated island preload link or fetch call, not page text. */
@@ -131,47 +155,51 @@ function requestsServerIsland(html: string): boolean {
 	);
 }
 
+type RequirementEvidence = Pick<
+	RouteEvidence,
+	| "base"
+	| "site"
+	| "resolvedRoutes"
+	| "clientHtml"
+	| "hasServerIslands"
+	| "hasRuntimeImages"
+	| "imageEndpoint"
+>;
+
 function isActiveInternalRoute(
 	route: IntegrationResolvedRoute,
-	clientHtml: string,
-	hasServerIslands: boolean,
-	hasRuntimeImages: boolean,
-	imageEndpoint: string,
+	evidence: RequirementEvidence,
 ): boolean {
+	const { clientHtml, imageEndpoint } = evidence;
 	if (route.origin !== "internal") return true;
 	if (route.pattern.startsWith("/_actions/")) return true;
 	if (route.pattern.startsWith("/_server-islands/"))
-		return hasServerIslands || requestsServerIsland(clientHtml);
+		return (
+			evidence.hasServerIslands ||
+			requestsServerIsland(clientHtml)
+		);
 	if (route.pattern === imageEndpoint)
 		return (
-			hasRuntimeImages ||
-			requestsEndpoint(clientHtml, imageEndpoint)
+			evidence.hasRuntimeImages ||
+			requestsEndpoint(
+				clientHtml,
+				// Astro builds image URLs as `joinPaths(BASE_URL, endpoint.route)`.
+				withBase(evidence.base, imageEndpoint),
+				evidence.site,
+			)
 		);
 	return false;
 }
 
 /** Runtime requirements are independent of whether Astro emitted a valid handler. */
 export function requiredOnDemandRoutes(
-	evidence: Pick<
-		RouteEvidence,
-		| "resolvedRoutes"
-		| "clientHtml"
-		| "hasServerIslands"
-		| "hasRuntimeImages"
-		| "imageEndpoint"
-	>,
+	evidence: RequirementEvidence,
 ): IntegrationResolvedRoute[] {
 	return evidence.resolvedRoutes.filter(
 		(route) =>
 			(route.type === "page" || route.type === "endpoint") &&
 			!route.isPrerendered &&
-			isActiveInternalRoute(
-				route,
-				evidence.clientHtml,
-				evidence.hasServerIslands,
-				evidence.hasRuntimeImages,
-				evidence.imageEndpoint,
-			),
+			isActiveInternalRoute(route, evidence),
 	);
 }
 

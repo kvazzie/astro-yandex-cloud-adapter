@@ -104,13 +104,24 @@ export async function hasRuntimeImageCalls(
 	for (const [url, { declarations, syntax }] of modules) {
 		const dispatchNames = new Map<string, "page" | "island">();
 		// Manifest property names survive identifier minification.
-		visitSyntax(syntax, (node) => {
+		visitSyntax(syntax, (node, ancestors) => {
 			if (node.type !== "Property" || !isSyntaxNode(node.key))
 				return;
-			const key = node.computed
-				? node.key.value
-				: (node.key.name ?? node.key.value);
-			if (key === "middleware" || key === "actions") {
+			const key = propertyKey(node);
+			// Astro assigns its runtime loaders in the object that carries `pageMap`;
+			// the same names elsewhere do not root the scan.
+			const owner = ancestors.at(-1);
+			if (
+				(key === "middleware" || key === "actions") &&
+				owner?.type === "ObjectExpression" &&
+				Array.isArray(owner.properties) &&
+				owner.properties.some(
+					(property: unknown) =>
+						isSyntaxNode(property) &&
+						property.type === "Property" &&
+						propertyKey(property) === "pageMap",
+				)
+			) {
 				const loader =
 					isSyntaxNode(node.value) &&
 					node.value.type === "Identifier" &&
@@ -125,7 +136,7 @@ export async function hasRuntimeImageCalls(
 								: undefined;
 						if (reference?.startsWith("."))
 							runtimeLoaderModules.push(
-								new URL(reference, url).href,
+								moduleFile(reference, url),
 							);
 					});
 			}
@@ -193,7 +204,7 @@ export async function hasRuntimeImageCalls(
 						)
 							return;
 						pending.push(
-							new URL(getStaticString(node.source)!, url).href,
+							moduleFile(getStaticString(node.source)!, url),
 						);
 					}
 				});
@@ -294,9 +305,11 @@ export async function hasRuntimeImageCalls(
 		}
 		const exported = new Set<string>();
 		for (const node of syntax.body as unknown[]) {
+			// `export { a as b } from "./x"` names x's `a`; the forwarding pass classifies it.
 			if (
 				!isSyntaxNode(node) ||
 				node.type !== "ExportNamedDeclaration" ||
+				node.source ||
 				!Array.isArray(node.specifiers)
 			)
 				continue;
@@ -371,7 +384,7 @@ export async function hasRuntimeImageCalls(
 				return reference === "astro:assets"
 					? new Set(["getImage"])
 					: reference?.startsWith(".")
-						? imageExports.get(new URL(reference, url).href)
+						? imageExports.get(moduleFile(reference, url))
 						: undefined;
 			};
 			const imported = new Set<string>();
@@ -459,7 +472,7 @@ export async function hasRuntimeImageCalls(
 				reference === "astro:assets"
 					? new Set(["getImage"])
 					: reference?.startsWith(".")
-						? imageExports.get(new URL(reference, url).href)
+						? imageExports.get(moduleFile(reference, url))
 						: undefined;
 			if (!exported) return;
 			for (const specifier of node.specifiers as unknown[]) {
@@ -554,12 +567,30 @@ export async function hasRuntimeImageCalls(
 		});
 		if (imageCall) return true;
 		pending.push(
-			...localModuleReferences(module.syntax).map(
-				(reference) => new URL(reference, url).href,
+			...localModuleReferences(module.syntax).map((reference) =>
+				moduleFile(reference, url),
 			),
 		);
 	}
 	return false;
+}
+
+/** Reads a property key as written in the source. */
+function propertyKey(property: SyntaxNode): unknown {
+	const key = property.key;
+	if (!isSyntaxNode(key)) return undefined;
+	return property.computed ? key.value : (key.name ?? key.value);
+}
+
+/**
+ * Node.js loads `./a.mjs?x#y` from the file `a.mjs`, so the scan keys modules
+ * by file. Encoded filename characters such as `%3F` stay in the path.
+ */
+function moduleFile(reference: string, parent: string): string {
+	const url = new URL(reference, parent);
+	url.search = "";
+	url.hash = "";
+	return url.href;
 }
 
 /** Parses a file in the format Node.js would load it with. */
