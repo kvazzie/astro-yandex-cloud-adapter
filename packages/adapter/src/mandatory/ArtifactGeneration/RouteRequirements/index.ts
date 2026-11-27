@@ -224,15 +224,35 @@ export function clientDocuments(
 }
 
 /**
- * Removes HTML comments. Raw-text element contents and quoted attribute values
- * are kept whole, because `<!--` inside them is literal text.
+ * Splits HTML into comments, raw-text elements with their contents, tags with
+ * their quoted attribute values, and text. `<!--` and `<base` inside raw text
+ * or a quoted value are literal text, not markup.
  */
+const htmlToken =
+	/<!--(?:-?>|[\s\S]*?(?:--!?>|$))|(<(script|style|textarea|title)\b(?:"[^"]*"|'[^']*'|[^"'>])*>[\s\S]*?(?:<\/\2\s*>|$))|(<[A-Za-z!?/](?:"[^"]*"|'[^']*'|[^"'>])*>)/gi;
+
+/** Removes HTML comments and keeps every other token. */
 function withoutComments(html: string): string {
 	return html.replace(
-		/<!--(?:-?>|[\s\S]*?(?:--!?>|$))|(<(script|style|textarea|title)\b(?:"[^"]*"|'[^']*'|[^"'>])*>[\s\S]*?(?:<\/\2\s*>|$))|(<[A-Za-z!?/](?:"[^"]*"|'[^']*'|[^"'>])*>)/gi,
+		htmlToken,
 		(_match, raw?: string, _name?: string, tag?: string) =>
 			raw ?? tag ?? " ",
 	);
+}
+
+/** The `href` of the first real `<base>` start tag, outside raw text and attribute values. */
+function baseHref(html: string): string | undefined {
+	for (const [, , , tag] of html.matchAll(htmlToken)) {
+		if (!tag || !/^<base[\s/>]/i.test(tag)) continue;
+		for (const [, name, ...values] of tag
+			.slice("<base".length)
+			.matchAll(
+				/([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g,
+			))
+			if (name?.toLowerCase() === "href")
+				return values.find((value) => value !== undefined) ?? "";
+	}
+	return undefined;
 }
 
 /**
@@ -244,13 +264,7 @@ function documentBases(
 	html: string,
 	origin: string,
 ): string[] {
-	const base =
-		/<base\b(?:"[^"]*"|'[^']*'|[^"'>])*?\shref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i.exec(
-			html,
-		);
-	const href = base
-		? (base[1] ?? base[2] ?? base[3] ?? "")
-		: undefined;
+	const href = baseHref(html);
 	return urls.map((url) => {
 		const document = `${origin}${url}`;
 		return href !== undefined && URL.canParse(href, document)
