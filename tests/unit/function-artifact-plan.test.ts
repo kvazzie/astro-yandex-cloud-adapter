@@ -6107,6 +6107,41 @@ ${f.index}`,
 
 	it.each([
 		{
+			name: "unexported wrapper called in its own module",
+			body: 'const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function getImage(options){return service.getURL(options)} export const image = getImage({});',
+			expected: true,
+		},
+		{
+			name: "unexported wrapper that is never called",
+			body: 'const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function getImage(options){return service.getURL(options)} function other(){return 1} export const value = other();',
+			expected: false,
+		},
+	])(
+		"classifies same-module image wrapper calls: $name",
+		async ({ body, expected }) => {
+			const f = await fixture();
+			await writeFile(new URL("foo.js", f.server), body);
+			expect(
+				await hasRuntimeImageCalls(
+					f.server,
+					[
+						{
+							entrypoint: "page:foo",
+							origin: "project",
+							pattern: "/foo",
+							isPrerendered: false,
+						} as Parameters<
+							typeof hasRuntimeImageCalls
+						>[1][number],
+					],
+					new Map(),
+				),
+			).toBe(expected);
+		},
+	);
+
+	it.each([
+		{
 			name: "named import alias",
 			body: "import { renderImage as renderAsset } from './assets.mjs'; export function run() { return renderAsset({}); }",
 			expected: true,
@@ -7552,9 +7587,19 @@ console.log(JSON.stringify({ type: globalThis.handlerType, ${expression} }));`,
 		});
 	});
 
-	it.each(["bundle", "install"] as const)(
-		"keeps the package self-reference an emitted imports map uses: %s",
-		async (dependencyStrategy) => {
+	it.each(
+		(["bundle", "install"] as const).flatMap(
+			(dependencyStrategy) =>
+				(["#helper", "server-app/helper"] as const).map(
+					(specifier) => ({
+						dependencyStrategy,
+						specifier,
+					}),
+				),
+		),
+	)(
+		"keeps the package self-reference an emitted module uses: $specifier ($dependencyStrategy)",
+		async ({ dependencyStrategy, specifier }) => {
 			const f = await fixture();
 			await writeFile(
 				new URL("package.json", f.server),
@@ -7571,7 +7616,7 @@ console.log(JSON.stringify({ type: globalThis.handlerType, ${expression} }));`,
 			);
 			await writeFile(
 				new URL("index.js", f.server),
-				`export { helped } from "#helper";\n${f.index}`,
+				`export { helped } from ${JSON.stringify(specifier)};\n${f.index}`,
 			);
 			const plan = await Effect.runPromise(
 				FunctionArtifact.planPreparation(
@@ -7596,6 +7641,46 @@ console.log(JSON.stringify(m.helped));`,
 			expect(JSON.parse(stdout)).toBe(true);
 		},
 	);
+
+	it("writes the wrapped entrypoint only after every other mutation", async () => {
+		const f = await fixture();
+		const source = new URL(
+			"404.html",
+			f.build.config.build.client,
+		);
+		const page = await readFile(source);
+		const plan = await Effect.runPromise(
+			FunctionArtifact.planPreparation(
+				f.build,
+				f.routePlan,
+				settings,
+			),
+		);
+		const writes = plan.mutations.flatMap((m) =>
+			m.kind === "writeFile" ? [m.path.href] : [],
+		);
+		expect(writes.at(-1)).toBe(
+			new URL("index.js", f.server).href,
+		);
+		// A 404 copy fails, so application stops before the wrapper is written.
+		await rm(source);
+		await expect(
+			Effect.runPromise(FunctionArtifact.applyPreparation(plan)),
+		).rejects.toThrow();
+		expect(
+			await readFile(new URL("index.js", f.server), "utf8"),
+		).toBe(f.index);
+		await writeFile(source, page);
+		await expect(
+			Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					settings,
+				),
+			),
+		).resolves.toBeDefined();
+	});
 
 	it("replaces a linked output file instead of writing through it", async () => {
 		const f = await fixture();

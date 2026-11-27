@@ -122,6 +122,8 @@ export function planPreparation(
 				functions,
 				settings.recursive404,
 			);
+			// Artifact files follow the 404 copies; see the wrapper ordering below.
+			const pendingWrites: Mutation[] = [];
 			for (const prepared of output ? [output] : []) {
 				const { artifact } = prepared;
 				// npm ci reads npm-shrinkwrap.json before package-lock.json, so an emitted
@@ -163,6 +165,7 @@ export function planPreparation(
 					]),
 				);
 				const policy = notFound.policies.get(artifact.id)!;
+				let wrapped: string | undefined;
 				if (Object.keys(policy).length) {
 					// Node loads a linked entrypoint from its target, so wrap the target there.
 					const server = await realpath(
@@ -192,6 +195,7 @@ export function planPreparation(
 						throw new Error(
 							"The emitted handler export is missing or already wrapped.",
 						);
+					wrapped = path;
 					files.set(path, {
 						path,
 						contents: wrapFunctionPolicy(
@@ -201,7 +205,15 @@ export function planPreparation(
 						),
 					});
 				}
-				for (const file of files.values()) {
+				// The marked wrapper is written last, so a failed application leaves the
+				// emitted entrypoint unwrapped and a later preparation can run again.
+				const ordered = [...files.values()].sort(
+					(a, b) =>
+						Number(a.path === wrapped) -
+						Number(b.path === wrapped),
+				);
+				const writes: Mutation[] = [];
+				for (const file of ordered) {
 					const destination = pathToFileURL(
 						join(fileURLToPath(artifact.directory), file.path),
 					);
@@ -210,31 +222,33 @@ export function planPreparation(
 						dirname(fileURLToPath(destination)) + "/",
 					);
 					const root = artifact.directory;
-					mutations.push({ kind: "mkdir", root, path: parent });
+					writes.push({ kind: "mkdir", root, path: parent });
 					if (file.binaryContents !== undefined)
-						mutations.push({
+						writes.push({
 							kind: "writeBinaryFile",
 							root,
 							path: destination,
 							contents: file.binaryContents,
 						});
 					else if (file.contents !== undefined)
-						mutations.push({
+						writes.push({
 							kind: "writeFile",
 							root,
 							path: destination,
 							contents: file.contents,
 						});
 					else
-						mutations.push({
+						writes.push({
 							kind: "copyFile",
 							root,
 							from: file.from,
 							to: destination,
 						});
 				}
+				pendingWrites.push(...writes);
 			}
 			mutations.push(...notFound.mutations);
+			mutations.push(...pendingWrites);
 			return {
 				mutations,
 				plannedOutput: {

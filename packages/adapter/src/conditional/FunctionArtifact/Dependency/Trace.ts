@@ -109,8 +109,18 @@ export async function traceRuntimeDependencies(
     },
     resolve: async (specifier, parent, job, cjsResolve) => {
       const name = barePackageName(specifier);
-      if (name && inServer(parent)) imports.push({ name, parent });
-      const resolved = await resolve(specifier, parent, job, cjsResolve);
+      const record = name !== undefined && inServer(parent);
+      let resolved: Awaited<ReturnType<typeof resolve>>;
+      try {
+        resolved = await resolve(specifier, parent, job, cjsResolve);
+      } catch (cause) {
+        // An import nft cannot resolve still names a package the artifact needs.
+        if (record && name) imports.push({ name, parent });
+        throw cause;
+      }
+      // A package self-reference that resolves to emitted files names no dependency.
+      if (record && name && ![resolved].flat().every(inServer))
+        imports.push({ name, parent });
       // Publish the parent's edge set before any await, so sibling resolutions
       // of the same parent add to it instead of replacing it.
       let targets = moduleEdges.get(parent);

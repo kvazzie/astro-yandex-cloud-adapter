@@ -286,7 +286,6 @@ export async function hasRuntimeImageCalls(
 			});
 		}
 		const exported = new Set<string>();
-		const local = new Set<string>();
 		for (const node of syntax.body as unknown[]) {
 			if (
 				!isSyntaxNode(node) ||
@@ -308,14 +307,12 @@ export async function hasRuntimeImageCalls(
 					getStaticString(specifier.exported);
 				if (typeof name === "string") {
 					exported.add(name);
-					local.add(specifier.local.name);
 				}
 			}
 		}
-		if (exported.size) {
-			imageExports.set(url, exported);
-			localImageExports.set(url, local);
-		}
+		if (exported.size) imageExports.set(url, exported);
+		// Same-module calls reach a wrapper whether or not the module exports it.
+		if (functions.size) localImageExports.set(url, functions);
 	}
 	// Forwarding modules keep the wrapper's identity under their own export names.
 	const nameOf = (node: unknown): string | undefined =>
