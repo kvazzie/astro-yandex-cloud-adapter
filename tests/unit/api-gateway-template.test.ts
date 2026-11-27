@@ -7,6 +7,8 @@ import {
 	encodeDeploymentManifest,
 } from "../../packages/adapter/src/mandatory/DeploymentManifest";
 import {
+	clientDocuments,
+	manifestRoutes,
 	reconcileRoutes,
 	requiredOnDemandRoutes,
 	type RoutePlan,
@@ -383,6 +385,31 @@ describe("API Gateway template route precedence", () => {
 		).toThrow(/cannot preserve Astro route priority/);
 	});
 
+	it("lets a stored endpoint keep a path that a slash-bound empty-rest alias shares", () => {
+		const template = templateFor(
+			"/en/feed.xml",
+			"/en/feed.xml/[...tail]",
+			1,
+			0,
+			{
+				staticKind: "endpoint",
+				trailingSlash: "always",
+				staticRegex: String.raw`^\/en\/feed\.xml$`,
+				runtimeRegex: String.raw`^\/en\/feed\.xml(?:\/(.*?))?\/$`,
+			},
+		);
+		expect(
+			template.paths["/en/feed.xml"]?.get?.[
+				"x-yc-apigateway-integration"
+			],
+		).toMatchObject({ type: "object_storage" });
+		expect(
+			template.paths["/en/feed.xml/"]?.[
+				"x-yc-apigateway-any-method"
+			]?.["x-yc-apigateway-integration"],
+		).toMatchObject({ type: "cloud_functions" });
+	});
+
 	it("keeps a padded greedy parameter distinct from a fixed capture", () => {
 		const template = templateFor(
 			"/",
@@ -568,6 +595,18 @@ describe("completed-build route requirements", () => {
 		{
 			html: '<BASE HREF="https://cdn.example/"><img src="_image?href=x">',
 			required: false,
+		},
+		{
+			html: '<template><base href="https://cdn.example/"></template><img src="/_image?href=x">',
+			required: true,
+		},
+		{
+			html: '<img src="/_image&#63;href=x">',
+			required: true,
+		},
+		{
+			html: '<noscript><img src="/_image?href=x"></noscript>',
+			required: true,
 		},
 		{
 			html: '<template><style-card></style-card></template><base href="/"><img src="_image?href=x">',
@@ -918,4 +957,204 @@ describe("completed-build route requirements", () => {
 			).toBe(required);
 		},
 	);
+
+	const scanEvidence = ({
+		pattern,
+		type = "page",
+		file,
+		pathname,
+		html,
+		base = "/",
+		trailingSlash = "always",
+		recursive404 = false,
+	}: {
+		pattern: string;
+		type?: "page" | "endpoint";
+		file: string;
+		pathname?: string;
+		html: string;
+		base?: string;
+		trailingSlash?: RoutePlan["trailingSlash"];
+		recursive404?: boolean;
+	}) => {
+		const clientDirectory = new URL("file:///build/client/");
+		const route = {
+			type,
+			origin: "project",
+			pattern,
+			isPrerendered: true,
+			patternRegex: /^.*$/,
+		} as unknown as IntegrationResolvedRoute;
+		const evidence = {
+			base,
+			clientDirectory,
+			clientFiles: [file],
+			clientHtml: new Map([[file, html]]),
+			pages: pathname === undefined ? [] : [{ pathname }],
+			resolvedRoutes: [route, imageRoute],
+			emittedAssets: new Map([
+				[pattern, [new URL(file, clientDirectory)]],
+			]),
+			hasFunction: true,
+			trailingSlash,
+			recursive404,
+			hasServerIslands: false,
+			hasRuntimeImages: false,
+			imageEndpoint: "/_image",
+		};
+		return requiredOnDemandRoutes({
+			...evidence,
+			clientDocuments: clientDocuments(evidence),
+		}).includes(imageRoute);
+	};
+
+	it.each([
+		{
+			name: "a catch-all page emitted at a 404 path",
+			pattern: "/[...slug]",
+			recursive404: false,
+			required: false,
+		},
+		{
+			name: "a nested 404 page without recursive 404 scopes",
+			pattern: "/help/404",
+			recursive404: false,
+			required: false,
+		},
+		{
+			name: "a nested 404 page with recursive 404 scopes",
+			pattern: "/help/404",
+			recursive404: true,
+			required: true,
+		},
+	])(
+		"scans the slashless 404 spelling only where the Gateway serves it: $name",
+		({ pattern, recursive404, required }) => {
+			expect(
+				scanEvidence({
+					pattern,
+					file: "help/404/index.html",
+					pathname: "help/404/",
+					html: '<img src="../_image?href=x">',
+					recursive404,
+				}),
+			).toBe(required);
+		},
+	);
+
+	it("resolves prerendered endpoint HTML against the URL its route serves", () => {
+		expect(
+			scanEvidence({
+				pattern: "/[page]",
+				type: "endpoint",
+				file: "guide.html",
+				html: '<img src="../_image?href=x">',
+				base: "/docs",
+			}),
+		).toBe(true);
+	});
+
+	it("appends every path of a large prerendered route to the Manifest projection", () => {
+		const count = 500_000;
+		const plan: RoutePlan = {
+			base: "/",
+			trailingSlash: "ignore",
+			routes: [
+				{
+					kind: "prerendered",
+					routeKind: "page",
+					pattern: "/[id]",
+					priority: 0,
+					patternRegex: "^.*$",
+					paths: Array.from({ length: count }, (_, index) => ({
+						url: `/${index}`,
+						objectKey: `${index}/index.html`,
+						artifactId: "client:primary" as Extract<
+							RoutePlan["routes"][number],
+							{ kind: "prerendered" }
+						>["paths"][number]["artifactId"],
+					})),
+				},
+			],
+		};
+		expect(manifestRoutes(plan).prerendered).toHaveLength(count);
+	});
+
+	it("serves a reconciled plan under a base through the Manifest and Gateway template", () => {
+		const clientDirectory = new URL("file:///build/client/");
+		const page = {
+			type: "page",
+			origin: "project",
+			pattern: "/about",
+			isPrerendered: true,
+			patternRegex: /^\/about\/$/,
+		} as unknown as IntegrationResolvedRoute;
+		const api = {
+			type: "endpoint",
+			origin: "project",
+			pattern: "/api/[id]",
+			isPrerendered: false,
+			patternRegex: /^\/api\/([^/]+?)\/$/,
+		} as unknown as IntegrationResolvedRoute;
+		const plan = reconcileRoutes({
+			base: "/docs",
+			clientDirectory,
+			clientFiles: ["about/index.html"],
+			clientHtml: new Map([
+				["about/index.html", "<p>About</p>"],
+			]),
+			pages: [{ pathname: "about/" }],
+			resolvedRoutes: [page, api],
+			emittedAssets: new Map([
+				[
+					page.pattern,
+					[new URL("about/index.html", clientDirectory)],
+				],
+			]),
+			hasFunction: true,
+			trailingSlash: "always",
+			hasServerIslands: false,
+			hasRuntimeImages: false,
+			imageEndpoint: "/_image",
+		});
+		const routes = manifestRoutes(plan);
+		const manifest = defineDeploymentManifest({
+			schemaVersion: 1,
+			adapter: { version: "0.1.0-beta.0" },
+			target: Targets.ObjectStorageCloudFunctionsTarget,
+			modifiers: { apiGateway: true },
+			gatewayTemplate: { path: "api-gateway.yaml" },
+			base: "/docs",
+			artifacts: {
+				client: { id: "client:primary", path: "client" },
+				functions: [
+					{
+						id: "function:shared",
+						path: "function",
+						runtime: "nodejs22",
+						entrypoint: "index.handler",
+					},
+				],
+			},
+			routes,
+		});
+		encodeDeploymentManifest(manifest);
+		const template = generateApiGatewaySpecificationTemplate(
+			manifest,
+			plan,
+		);
+		expect(
+			template.paths["/docs/about/"]?.get?.[
+				"x-yc-apigateway-integration"
+			],
+		).toMatchObject({
+			type: "object_storage",
+			object: "docs/about/index.html",
+		});
+		expect(
+			template.paths["/docs/api/{id}/"]?.[
+				"x-yc-apigateway-any-method"
+			]?.["x-yc-apigateway-integration"],
+		).toMatchObject({ type: "cloud_functions" });
+	});
 });
