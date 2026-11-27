@@ -688,6 +688,177 @@ describe("runtime dependency regressions", () => {
 		},
 	);
 
+	it.each([
+		{ installation: "pnpm isolated", local: false },
+		{ installation: "pnpm hoisted", local: false },
+		{ installation: "npm", local: true },
+	])(
+		"classifies a locked file: source by the active installation: %j",
+		async ({ installation, local }) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-stale-npm-lock-"),
+			);
+			try {
+				const manifest = { name: "leaf", version: "1.0.0" };
+				await writeFile(
+					join(root, "package.json"),
+					JSON.stringify({
+						name: "app",
+						dependencies: { leaf: "1.0.0" },
+					}),
+				);
+				// npm wrote this lock for a file: install before the switch to pnpm.
+				await writeFile(
+					join(root, "package-lock.json"),
+					JSON.stringify({
+						lockfileVersion: 3,
+						packages: {
+							"": {
+								dependencies: { leaf: "file:leaf-1.0.0.tgz" },
+							},
+							"node_modules/leaf": {
+								...manifest,
+								resolved: "file:leaf-1.0.0.tgz",
+							},
+						},
+					}),
+				);
+				const installed =
+					installation === "pnpm isolated"
+						? join(
+								root,
+								"node_modules/.pnpm/leaf@1.0.0/node_modules/leaf",
+							)
+						: join(root, "node_modules/leaf");
+				await mkdir(installed, { recursive: true });
+				await writeFile(
+					join(installed, "package.json"),
+					JSON.stringify(manifest),
+				);
+				if (installation === "pnpm isolated")
+					await symlink(
+						installed,
+						join(root, "node_modules/leaf"),
+						"dir",
+					);
+				await writeFile(
+					join(
+						root,
+						"node_modules",
+						installation === "npm"
+							? ".package-lock.json"
+							: ".modules.yaml",
+					),
+					installation === "npm"
+						? JSON.stringify({
+								lockfileVersion: 3,
+								packages: {
+									"node_modules/leaf": {
+										...manifest,
+										resolved: "file:leaf-1.0.0.tgz",
+									},
+								},
+							})
+						: "layoutVersion: 5\n",
+				);
+				const graph = resolvePinnedRuntimeDependencies(
+					pathToFileURL(`${root}/`),
+					new Set(["leaf"]),
+					{
+						resolve: (name, version) =>
+							Promise.resolve({
+								name,
+								version,
+								resolved: `https://registry.example.test/${name}-${version}.tgz`,
+							}),
+					},
+				);
+				if (local)
+					await expect(graph).rejects.toThrow(
+						/local runtime package "leaf"/i,
+					);
+				else
+					expect(await graph).toEqual([
+						expect.objectContaining({
+							name: "leaf",
+							version: "1.0.0",
+							location: "node_modules/leaf",
+							resolved:
+								"https://registry.example.test/leaf-1.0.0.tgz",
+						}),
+					]);
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
+	it.each([
+		{ rootLeaf: true, local: false },
+		{ rootLeaf: false, local: true },
+	])(
+		"ignores an omitted optional local edge that reaches a registry slot: %j",
+		async ({ rootLeaf, local }) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-omitted-local-edge-"),
+			);
+			try {
+				for (const [directory, manifest] of [
+					[
+						"",
+						{
+							name: "app",
+							dependencies: rootLeaf ? { leaf: "1.0.0" } : {},
+							devDependencies: { tool: "1.0.0" },
+						},
+					],
+					// The installation omitted the tool's optional fork of leaf.
+					[
+						"node_modules/tool",
+						{
+							name: "tool",
+							version: "1.0.0",
+							optionalDependencies: {
+								leaf: "file:../vendor/leaf-2.0.0.tgz",
+							},
+						},
+					],
+					[
+						"node_modules/leaf",
+						{ name: "leaf", version: "1.0.0" },
+					],
+				] as const) {
+					await mkdir(join(root, directory), {
+						recursive: true,
+					});
+					await writeFile(
+						join(root, directory, "package.json"),
+						JSON.stringify(manifest),
+					);
+				}
+				const graph = resolvePinnedRuntimeDependencies(
+					pathToFileURL(`${root}/`),
+					new Set(["leaf"]),
+					{
+						resolve: (name, version) =>
+							Promise.resolve({ name, version }),
+					},
+				);
+				if (local)
+					await expect(graph).rejects.toThrow(/includeLocal/);
+				else
+					expect(await graph).toEqual([
+						expect.objectContaining({
+							name: "leaf",
+							version: "1.0.0",
+						}),
+					]);
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
 	it("lets an ordinary dependency take precedence over a peer of the same name", async () => {
 		const root = await mkdtemp(
 			join(tmpdir(), "yandex-ordinary-over-peer-"),

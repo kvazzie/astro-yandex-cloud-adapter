@@ -403,6 +403,43 @@ describe("Function Artifact mutation plans", () => {
 			owned: true,
 			registryRange: true,
 		},
+		// npm matches a Git request by repository, not by its requested ref.
+		{
+			resolved:
+				"git+ssh://git@github.com/example/child.git#0123456789abcdef0123456789abcdef01234567",
+			owned: true,
+			git: "github:example/child#v1",
+		},
+		{
+			resolved:
+				"git+ssh://git@github.com/example/child.git#0123456789abcdef0123456789abcdef01234567",
+			owned: true,
+			git: "git+https://github.com/example/child.git",
+		},
+		{
+			resolved:
+				"git+ssh://git@github.com/example/child.git#0123456789abcdef0123456789abcdef01234567",
+			owned: true,
+			git: "github:example/child#semver:^1",
+		},
+		{
+			resolved:
+				"git+ssh://git@github.com/example/child.git#0123456789abcdef0123456789abcdef01234567",
+			owned: false,
+			git: "github:example/child#semver:^2",
+		},
+		{
+			resolved:
+				"git+ssh://git@github.com/example/child.git#0123456789abcdef0123456789abcdef01234567",
+			owned: false,
+			git: "github:example/other#v1",
+		},
+		{
+			resolved:
+				"git+ssh://git@github.com/example/child.git#0123456789abcdef0123456789abcdef01234567",
+			owned: false,
+			git: "github:example/child#fedcba9876543210fedcba9876543210fedcba98",
+		},
 	])(
 		"packs local tarballs only with matching installed source evidence: %j",
 		async ({
@@ -415,6 +452,7 @@ describe("Function Artifact mutation plans", () => {
 			registryRange,
 			includeLocal = true,
 			missing,
+			git,
 		}) => {
 			const f = await fixture();
 			const plugin = {
@@ -427,11 +465,12 @@ describe("Function Artifact mutation plans", () => {
 				version: "1.0.0",
 				dependencies: {
 					child:
-						replacement || registryRange
+						git ??
+						(replacement || registryRange
 							? "^1"
 							: wildcardOverride
 								? "file:./fork.tgz"
-								: "file:../fork.tgz",
+								: "file:../fork.tgz"),
 				},
 			};
 			const pluginPath = new URL("node_modules/plugin/", f.root);
@@ -3842,6 +3881,169 @@ describe("Function Artifact mutation plans", () => {
 		},
 	);
 
+	it("places one shared leaf when a lock-only helper reaches it before its installed user", async () => {
+		const f = await fixture();
+		const archives = new URL("archives/", f.root);
+		await mkdir(archives, { recursive: true });
+		// Breadth-first discovery reaches leaf from the absent helper before mid.
+		const manifests = [
+			{
+				name: "carrier",
+				version: "1.0.0",
+				optionalDependencies: { helper: "1.0.0" },
+			},
+			{
+				name: "helper",
+				version: "1.0.0",
+				dependencies: { leaf: "1.0.0" },
+			},
+			{
+				name: "user",
+				version: "1.0.0",
+				dependencies: { mid: "1.0.0" },
+			},
+			{
+				name: "mid",
+				version: "1.0.0",
+				dependencies: { leaf: "1.0.0" },
+			},
+			{ name: "leaf", version: "1.0.0" },
+		];
+		const serveTarball = await serveFixtureTarballs();
+		const packages: Record<
+			string,
+			{ resolved: string; integrity: string }
+		> = {};
+		for (const manifest of manifests) {
+			const location = `node_modules/${manifest.name}`;
+			const source = new URL(
+				manifest.name === "helper"
+					? "archive-sources/helper/"
+					: location + "/",
+				f.root,
+			);
+			await mkdir(source, { recursive: true });
+			await writeFile(
+				new URL("package.json", source),
+				JSON.stringify({
+					...manifest,
+					type: "module",
+					main: "index.js",
+				}),
+			);
+			const dependency = Object.keys({
+				...manifest.dependencies,
+				...manifest.optionalDependencies,
+			})[0];
+			await writeFile(
+				new URL("index.js", source),
+				dependency
+					? `export {default} from ${JSON.stringify(dependency)};`
+					: 'export default {value:"installed leaf"};',
+			);
+			await npmCli(
+				[
+					"pack",
+					"--ignore-scripts",
+					"--pack-destination",
+					fileURLToPath(archives),
+					"--json",
+				],
+				{ cwd: source },
+			);
+			const filename = `${manifest.name}-${manifest.version}.tgz`;
+			packages[location] = {
+				...manifest,
+				...serveTarball(
+					filename,
+					await readFile(new URL(filename, archives)),
+				),
+			};
+		}
+		await writeFile(
+			new URL("package-lock.json", f.root),
+			JSON.stringify({ lockfileVersion: 3, packages }),
+		);
+		await writeFile(
+			new URL("package.json", f.root),
+			JSON.stringify({
+				name: "app",
+				dependencies: { carrier: "1.0.0", user: "1.0.0" },
+			}),
+		);
+		await writeFile(
+			new URL("index.js", f.server),
+			`import carrier from 'carrier';import user from 'user';${f.index.replace("return policy;", "return String(carrier===user)+':'+user.value;")}`,
+		);
+		const resolve = vi.fn(() =>
+			Promise.reject(
+				new Error("All sources must retain their lock pins"),
+			),
+		);
+		const plan = await Effect.runPromise(
+			FunctionArtifact.planPreparation(
+				f.build,
+				f.routePlan,
+				{ ...settings, dependencyStrategy: "install" },
+				{ resolve },
+			),
+		);
+		expect(resolve).not.toHaveBeenCalled();
+		await Effect.runPromise(
+			FunctionArtifact.applyPreparation(plan),
+		);
+		const isolated = await mkdtemp(
+			join(tmpdir(), "runtime-lock-first-install-"),
+		);
+		directories.push(isolated);
+		await cp(f.server, isolated, { recursive: true });
+		const lock = await readFile(
+			join(isolated, "package-lock.json"),
+			"utf8",
+		);
+		expect(
+			Object.keys(
+				(
+					JSON.parse(lock) as {
+						packages: Record<string, unknown>;
+					}
+				).packages,
+			).filter((path) => path.endsWith("node_modules/leaf")),
+		).toEqual(["node_modules/leaf"]);
+		const cache = await seedFixtureTarballCache(
+			f.directory,
+			Object.values(packages),
+		);
+		await npmCli(
+			[
+				"ci",
+				"--include=optional",
+				"--offline",
+				"--no-audit",
+				"--no-fund",
+				"--cache",
+				cache,
+			],
+			{ cwd: isolated },
+		);
+		const { stdout } = await promisify(execFile)(
+			process.execPath,
+			[
+				"--input-type=module",
+				"--eval",
+				"import {handler} from './index.js';process.stdout.write(await handler());",
+			],
+			{ cwd: isolated },
+		);
+		expect(stdout).toBe("true:installed leaf");
+		expect(
+			await readFile(
+				join(isolated, "package-lock.json"),
+				"utf8",
+			),
+		).toBe(lock);
+	});
+
 	it.each(["hoistable", "blocked", "distinct"])(
 		"preserves installed module identity or rejects sibling splitting (%s)",
 		async (layout) => {
@@ -4166,6 +4368,15 @@ describe("Function Artifact mutation plans", () => {
 	it.each([
 		{ overrides: { leaf: { ".": "2.0.0" } }, allowed: true },
 		{ overrides: { leaf: "$selected" }, allowed: true },
+		// npm skips an empty reference value and reads the next field.
+		{
+			overrides: { leaf: "$selected" },
+			references: {
+				devDependencies: { selected: "" },
+				dependencies: { carrier: "1.0.0", selected: "^3" },
+			},
+			allowed: false,
+		},
 		{
 			overrides: { "parent@^1": { leaf: "2.0.0" } },
 			allowed: true,
@@ -4186,7 +4397,7 @@ describe("Function Artifact mutation plans", () => {
 		},
 	])(
 		"applies only matching root override rules in the dependency ancestry: %j",
-		async ({ overrides, allowed }) => {
+		async ({ overrides, references, allowed }) => {
 			const f = await fixture();
 			for (const [name, manifest] of Object.entries({
 				carrier: {
@@ -4212,6 +4423,7 @@ describe("Function Artifact mutation plans", () => {
 				JSON.stringify({
 					name: "app",
 					dependencies: { carrier: "1.0.0", selected: "2.0.0" },
+					...references,
 					overrides,
 				}),
 			);

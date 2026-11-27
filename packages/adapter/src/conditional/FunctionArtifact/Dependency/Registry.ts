@@ -380,26 +380,28 @@ async function selectRegistryVersion(
 	// npm view name@* returns only the configured tag; npm install falls back to the
 	// other stable versions when that tag is deprecated or unusable.
 	if (requirement === "*") {
-		const stable = await read(">=0.0.0").catch(() => undefined);
+		const head = versions.find((entry) => entry["dist-tags"])?.[
+			"dist-tags"
+		]?.[tag];
+		// npm view omits prereleases from >=0.0.0, so a prerelease tag target is
+		// requested beside the stable rows; semver collapses ">=0.0.0 || x" to "*".
+		const stable = await read(
+			head && semver.prerelease(head)
+				? `>=0.0.0-0 || ${head}`
+				: ">=0.0.0",
+		).catch(() => undefined);
 		if (stable) {
-			// Tags and manifests come from one read; only a prerelease tag target,
-			// which that read omits, comes from the first, and only if both agree.
+			// Tags and manifests come from this read alone, never merged with the first.
 			const tagged = stable.find(
 				(entry) => entry["dist-tags"],
 			)?.["dist-tags"]?.[tag];
 			if (
 				tagged !== undefined &&
 				!stable.some((entry) => entry.version === tagged)
-			) {
-				const head = versions.find(
-					(entry) => entry.version === tagged,
+			)
+				throw new Error(
+					`The npm registry changed while the "install" dependency strategy resolved ${packageName}@*. Run the build again.`,
 				);
-				if (!head)
-					throw new Error(
-						`The npm registry changed while the "install" dependency strategy resolved ${packageName}@*. Run the build again.`,
-					);
-				stable.push(head);
-			}
 			versions = stable;
 		} else if (viewFailure) throw viewFailure;
 	}

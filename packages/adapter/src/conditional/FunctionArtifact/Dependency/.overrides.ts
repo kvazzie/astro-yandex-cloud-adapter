@@ -19,6 +19,23 @@ export function applicationDependencyRequirement(
 	);
 }
 
+/** npm's Edge.spec reads a `$` reference from the first non-empty field, development first. */
+function overrideReference(
+	application: PackageJson,
+	name: string,
+): string | undefined {
+	for (const field of [
+		"devDependencies",
+		"optionalDependencies",
+		"dependencies",
+		"peerDependencies",
+	] as const) {
+		const value = application[field]?.[name];
+		if (value) return value;
+	}
+	return undefined;
+}
+
 /** The root application's npm override rules, inherited along dependency edges. */
 export class ApplicationOverrides {
 	private readonly application: PackageJson;
@@ -126,11 +143,11 @@ export class ApplicationOverrides {
 		let spec = replacement ?? requested;
 		if (spec.startsWith("$")) {
 			const reference = spec.slice(1);
-			const value = applicationDependencyRequirement(
+			const value = overrideReference(
 				this.application,
 				reference,
 			);
-			if (typeof value !== "string")
+			if (value === undefined)
 				throw new Error(
 					`Unable to resolve application override reference ${spec}.`,
 				);

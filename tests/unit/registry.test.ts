@@ -311,6 +311,14 @@ describe("install registry metadata", () => {
 				"dist-tags": tags,
 			},
 			">=0.0.0": [{ version: "1.0.0", "dist-tags": tags }],
+			">=0.0.0-0 || 2.0.0-beta.1": [
+				{ version: "1.0.0", "dist-tags": tags },
+				{
+					version: "2.0.0-beta.1",
+					deprecated: "use 1.0.0",
+					"dist-tags": tags,
+				},
+			],
 		});
 		expect(
 			await npmRegistry.resolve("child", "*"),
@@ -325,6 +333,10 @@ describe("install registry metadata", () => {
 			{
 				"*": { version: "2.0.0-beta.1", "dist-tags": tags },
 				">=0.0.0": [{ version: "1.0.0", "dist-tags": tags }],
+				">=0.0.0-0 || 2.0.0-beta.1": [
+					{ version: "1.0.0", "dist-tags": tags },
+					{ version: "2.0.0-beta.1", "dist-tags": tags },
+				],
 			},
 			"next",
 		);
@@ -444,6 +456,48 @@ describe("install registry metadata", () => {
 		).toMatchObject({
 			version: "1.1.0",
 		});
+	});
+
+	it("selects a prerelease wildcard tag from the snapshot that lists it", async () => {
+		const tags = { latest: "2.0.0-beta.1" };
+		const stable = [
+			{ version: "1.0.0", "dist-tags": tags },
+			{ version: "1.1.0", "dist-tags": tags },
+		];
+		// The tag target's deprecation was cleared and 1.1.0 published between the reads.
+		views({
+			"*": {
+				version: "2.0.0-beta.1",
+				deprecated: "use 1.0.0",
+				"dist-tags": tags,
+			},
+			">=0.0.0": stable,
+			">=0.0.0-0 || 2.0.0-beta.1": [
+				...stable,
+				{ version: "2.0.0-beta.1", "dist-tags": tags },
+			],
+		});
+		expect(
+			await npmRegistry.resolve("child", "*"),
+		).toMatchObject({ version: "2.0.0-beta.1" });
+	});
+
+	it("rejects a wildcard when the prerelease tag moved between reads", async () => {
+		const moved = { latest: "2.0.0-beta.2" };
+		views({
+			"*": {
+				version: "2.0.0-beta.1",
+				"dist-tags": { latest: "2.0.0-beta.1" },
+			},
+			">=0.0.0": [{ version: "1.0.0", "dist-tags": moved }],
+			">=0.0.0-0 || 2.0.0-beta.1": [
+				{ version: "1.0.0", "dist-tags": moved },
+				{ version: "2.0.0-beta.1", "dist-tags": moved },
+			],
+		});
+		await expect(
+			npmRegistry.resolve("child", "*"),
+		).rejects.toThrow(/registry changed/);
 	});
 
 	it("launches the npm CLI with Node and separate arguments on Windows", async () => {

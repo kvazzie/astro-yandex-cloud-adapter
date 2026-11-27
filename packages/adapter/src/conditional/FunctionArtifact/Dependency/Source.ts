@@ -185,22 +185,24 @@ export async function readInstalledBindingPath(
 	return undefined;
 }
 
-/** Prefer the nearest installation's metadata over the manifest's package manager hint. */
-export async function readRootRequirementPrecedence(
+/** Reads which package manager wrote the node_modules directory holding an installation. */
+export async function readInstallationManagers(
 	appManifestPath: string,
-): Promise<(installedLocation: string) => boolean> {
-	const inherited = new Map<string, boolean>();
+): Promise<
+	(installedLocation: string) => "npm" | "pnpm" | undefined
+> {
+	const inherited = new Map<string, "npm" | "pnpm">();
 	for (const modules of createRequire(
 		appManifestPath,
 	).resolve.paths("package.json") ?? []) {
-		for (const [marker, developmentFirst] of [
-			[".modules.yaml", false],
-			[".package-lock.json", true],
+		for (const [marker, manager] of [
+			[".modules.yaml", "pnpm"],
+			[".package-lock.json", "npm"],
 		] as const) {
 			try {
 				if (!(await stat(join(modules, marker))).isFile())
 					continue;
-				inherited.set(modules, developmentFirst);
+				inherited.set(modules, manager);
 				break;
 			} catch (cause) {
 				if (
@@ -213,7 +215,7 @@ export async function readRootRequirementPrecedence(
 		}
 	}
 	return (installedLocation) => {
-		for (const [modules, developmentFirst] of inherited) {
+		for (const [modules, manager] of inherited) {
 			const path = relative(modules, installedLocation);
 			if (
 				path &&
@@ -222,9 +224,9 @@ export async function readRootRequirementPrecedence(
 				!path.startsWith("..\\") &&
 				!isAbsolute(path)
 			)
-				return developmentFirst;
+				return manager;
 		}
-		return true;
+		return undefined;
 	};
 }
 
@@ -289,6 +291,10 @@ export async function readInstalledProvenance(
 ): Promise<ReadonlyMap<string, BindingProvenance>> {
 	const applicationDirectory = fileURLToPath(applicationRoot);
 	const bindings = new Map<string, BindingProvenance>();
+	// A local edge that reaches an ancestor's slot may be an omitted optional edge;
+	// the slot owner's registry edge then supplied that installation.
+	const registryOwned = new Set<string>();
+	const inheritedLocal = new Set<string>();
 	const visited = new Set<string>();
 	const manifests = new Map<
 		string,
@@ -393,10 +399,16 @@ export async function readInstalledProvenance(
 						string
 					>,
 				};
-				provenance.local ||= parseRuntimeRequirement(
+				const local = parseRuntimeRequirement(
 					name,
 					requirement,
 				).local;
+				const owned =
+					installed.location ===
+					join(directory, "node_modules", name);
+				if (local && !owned) inheritedLocal.add(selected);
+				else if (local) provenance.local = true;
+				else if (owned) registryOwned.add(selected);
 				if (root)
 					provenance.rootRequirements[name] = requirement;
 				bindings.set(selected, provenance);
@@ -416,6 +428,9 @@ export async function readInstalledProvenance(
 		undefined,
 		true,
 	);
+	for (const selected of inheritedLocal)
+		if (!registryOwned.has(selected))
+			bindings.get(selected)!.local = true;
 	return bindings;
 }
 

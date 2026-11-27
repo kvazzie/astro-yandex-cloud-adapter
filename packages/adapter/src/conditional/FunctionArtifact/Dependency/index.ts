@@ -18,7 +18,7 @@ import { externalBundledPeers } from "./Archive.ts";
 import {
 	readInstalledSource,
 	readInstalledProvenance,
-	readRootRequirementPrecedence,
+	readInstallationManagers,
 	inspectInstalledSource,
 	readInstalledBindingPath,
 	resolvePnpmCatalogs,
@@ -86,8 +86,11 @@ export async function resolvePinnedRuntimeDependencies(
 	);
 	const overrideDirectory =
 		overrideOwner?.directory ?? appDirectory;
-	const developmentFirst =
-		await readRootRequirementPrecedence(appManifestPath);
+	const installationManager =
+		await readInstallationManagers(appManifestPath);
+	// Prefer the nearest installation's metadata over the manifest's package manager hint.
+	const developmentFirst = (location: string) =>
+		installationManager(location) !== "pnpm";
 	const shrinkwraps = new Map<string, Promise<boolean>>();
 	// npm's Node.inShrinkwrap: a tree parent owns or is inside a published shrinkwrap.
 	const inPublishedShrinkwrap = async (
@@ -113,6 +116,11 @@ export async function resolvePinnedRuntimeDependencies(
 		}
 		return result;
 	};
+	// pnpm never reads package-lock.json, so an npm lock beside its installation is stale.
+	const activeLockEntry = (location: string) =>
+		lock && installationManager(location) !== "pnpm"
+			? lock.packages?.[lockKey(lock, location)]
+			: undefined;
 	const provenance = await readInstalledProvenance(
 		appRoot,
 		developmentFirst,
@@ -135,8 +143,7 @@ export async function resolvePinnedRuntimeDependencies(
 			compatible,
 		);
 		if (!installed || installed.local || !lock) return installed;
-		const entry =
-			lock.packages?.[lockKey(lock, installed.location)];
+		const entry = activeLockEntry(installed.location);
 		if (
 			!entry ||
 			!hasLocalLockOrigin(entry) ||
@@ -195,6 +202,23 @@ export async function resolvePinnedRuntimeDependencies(
 			if (!installed) throw localRuntimeSourceRequired(name);
 			return installed;
 		}
+		// An installed lock slot is one binding, whichever edge discovers it first.
+		const installed = await inspectInstalledSource(
+			childBase,
+			name,
+			undefined,
+			provenance,
+			appRoot,
+		);
+		if (
+			installed?.version &&
+			!installed.local &&
+			installed.location === location &&
+			installed.version === metadata.version &&
+			(installed.registryName ?? name) ===
+				(metadata.name ?? name)
+		)
+			return { ...installed, version: installed.version };
 		return {
 			version: metadata.version,
 			...(metadata.name && metadata.name !== name
@@ -279,14 +303,9 @@ export async function resolvePinnedRuntimeDependencies(
 							join(source.directory, "package.json"),
 						)
 					: undefined;
-				const entry =
-					source.directory && lock
-						? lock.packages?.[
-								relative(lock.directory, source.directory)
-									.split("\\")
-									.join("/")
-							]
-						: undefined;
+				const entry = source.directory
+					? activeLockEntry(source.directory)
+					: undefined;
 				const selected =
 					(source.local || source.inBundle
 						? (local as RegistryVersionMetadata)
@@ -1293,9 +1312,66 @@ async function ownsLockOnlyLocalChild(
 			localRequestPath(name, entry.resolved, lock.directory)
 				?.path
 		);
+	const git = gitRequest(name, requirement);
+	if (git)
+		return satisfiesGitRequest(
+			git,
+			entry.resolved,
+			installed.version,
+		);
 	return (
 		!/^(file|link|workspace):/.test(requirement) &&
 		entry.resolved === requirement
+	);
+}
+
+function gitRequest(
+	name: string,
+	spec: string,
+): npa.Result | undefined {
+	try {
+		const request = npa.resolve(name, spec);
+		return request.type === "git" ? request : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+// @types/npm-package-arg omits hosted-git-info's URL builders.
+type HostedRepository = {
+	ssh(options: { noCommittish: boolean }): string | undefined;
+};
+
+/** npm's dep-valid Git check: one repository, the requested commit if exact, and its semver range. */
+function satisfiesGitRequest(
+	request: npa.Result,
+	resolved: string,
+	version: string,
+): boolean {
+	let locked: npa.Result;
+	try {
+		locked = npa(resolved);
+	} catch {
+		return false;
+	}
+	const options = {
+		noCommittish: !/^[a-fA-F0-9]{40}$/.test(
+			request.gitCommittish ?? "",
+		),
+	};
+	const lockedHost = locked.hosted as
+		HostedRepository | undefined;
+	const requestedHost = request.hosted as
+		HostedRepository | undefined;
+	const sameRepository = lockedHost
+		? requestedHost?.ssh(options) === lockedHost.ssh(options)
+		: locked.fetchSpec === request.fetchSpec;
+	return (
+		sameRepository &&
+		(!request.gitRange ||
+			semver.satisfies(version, request.gitRange, {
+				loose: true,
+			}))
 	);
 }
 
