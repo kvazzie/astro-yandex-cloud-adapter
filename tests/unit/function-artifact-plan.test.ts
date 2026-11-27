@@ -6112,6 +6112,16 @@ ${f.index}`,
 			expected: true,
 		},
 		{
+			name: "helper called only from an uncalled wrapper's body",
+			body: 'const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function coreImage(options){return service.getURL(options)} const getImage = (options) => coreImage(options); export function other(){return 1}',
+			expected: false,
+		},
+		{
+			name: "wrapper chain called by runtime code",
+			body: 'const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function coreImage(options){return service.getURL(options)} const getImage = (options) => coreImage(options); export const image = getImage({});',
+			expected: true,
+		},
+		{
 			name: "unexported wrapper that is never called",
 			body: 'const config={endpoint:{route:"/_image"}, service:{entrypoint:"astro/service"}}; function getImage(options){return service.getURL(options)} function other(){return 1} export const value = other();',
 			expected: false,
@@ -7641,6 +7651,42 @@ console.log(JSON.stringify(m.helped));`,
 			expect(JSON.parse(stdout)).toBe(true);
 		},
 	);
+
+	it("keeps an external binding whose package links into the server output", async () => {
+		const f = await fixture();
+		const vendored = new URL("vendor/ext/", f.server);
+		await mkdir(vendored, { recursive: true });
+		await writeFile(
+			new URL("package.json", vendored),
+			'{"name":"ext","version":"1.0.0","type":"module","main":"index.js"}',
+		);
+		await writeFile(
+			new URL("index.js", vendored),
+			"export {};\n",
+		);
+		await mkdir(new URL("node_modules/", f.root), {
+			recursive: true,
+		});
+		await symlink(
+			fileURLToPath(vendored),
+			new URL("node_modules/ext", f.root),
+			"dir",
+		);
+		await writeFile(
+			new URL("index.js", f.server),
+			`import "ext";\n${f.index}`,
+		);
+		const trace = await traceRuntimeDependencies(
+			[
+				{
+					path: "index.js",
+					from: new URL("index.js", f.server),
+				},
+			],
+			f.server,
+		);
+		expect([...trace.packages]).toEqual(["ext"]);
+	});
 
 	it("writes the wrapped entrypoint only after every other mutation", async () => {
 		const f = await fixture();

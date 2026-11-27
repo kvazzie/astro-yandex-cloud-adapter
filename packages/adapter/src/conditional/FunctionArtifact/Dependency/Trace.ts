@@ -84,6 +84,18 @@ export async function traceRuntimeDependencies(
       !isAbsolute(local)
     );
   };
+  const emittedName = (() => {
+    const contents = planned.get(join(server, "package.json"))?.contents;
+    if (contents === undefined) return undefined;
+    try {
+      const { name } = JSON.parse(contents.replace(/^\uFEFF/, "")) as {
+        name?: unknown;
+      };
+      return typeof name === "string" ? name : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
   // Emitted imports name the packages, as aliases and symlinks hide them in paths.
   // An import nft cannot resolve still names a package the artifact needs.
   const imports: { name: string; parent: string }[] = [];
@@ -118,8 +130,13 @@ export async function traceRuntimeDependencies(
         if (record && name) imports.push({ name, parent });
         throw cause;
       }
-      // A package self-reference that resolves to emitted files names no dependency.
-      if (record && name && ![resolved].flat().every(inServer))
+      // Only a self-reference of the emitted package, which keeps its name and exports,
+      // names no dependency; a linked external package can also resolve inside.
+      if (
+        record &&
+        name &&
+        !(name === emittedName && [resolved].flat().every(inServer))
+      )
         imports.push({ name, parent });
       // Publish the parent's edge set before any await, so sibling resolutions
       // of the same parent add to it instead of replacing it.

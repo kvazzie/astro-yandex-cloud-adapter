@@ -274,7 +274,14 @@ export async function hasRuntimeImageCalls(
 			});
 		}
 		for (const [name, declaration] of declarations) {
-			if (!isSyntaxNode(declaration.init)) continue;
+			// A function value that calls a wrapper is a wrapper; a call evaluated at
+			// module load, such as `const image = getImage({})`, is a runtime call.
+			if (
+				!isSyntaxNode(declaration.init) ||
+				(declaration.init.type !== "ArrowFunctionExpression" &&
+					declaration.init.type !== "FunctionExpression")
+			)
+				continue;
 			visitSyntax(declaration.init, (child) => {
 				if (
 					child.type === "CallExpression" &&
@@ -478,10 +485,21 @@ export async function hasRuntimeImageCalls(
 			module.syntax,
 		);
 		const topLevel = topLevelBindings(module.syntax);
-		visitSyntax(module.syntax, (node) => {
+		// A call inside a wrapper's own declaration runs only when that wrapper is called.
+		const insideWrapper = (ancestors: SyntaxNode[]) =>
+			ancestors.some(
+				(ancestor) =>
+					(ancestor.type === "FunctionDeclaration" ||
+						ancestor.type === "VariableDeclarator") &&
+					isSyntaxNode(ancestor.id) &&
+					typeof ancestor.id.name === "string" &&
+					localNames.has(ancestor.id.name),
+			);
+		visitSyntax(module.syntax, (node, ancestors) => {
 			if (
 				node.type !== "CallExpression" ||
-				!isSyntaxNode(node.callee)
+				!isSyntaxNode(node.callee) ||
+				insideWrapper(ancestors)
 			)
 				return;
 			const callee = node.callee;
