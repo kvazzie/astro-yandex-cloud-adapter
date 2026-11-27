@@ -2,9 +2,11 @@
 "@astro-yandex-cloud/adapter": patch
 ---
 
-Discover Function Artifact runtime dependencies with `@vercel/nft`,
-as Astro's Vercel and Netlify adapters do, instead of a custom
-loader analysis. Loads that static tracing cannot follow are not
-discovered and fail at runtime. The `includeDependencies` option
-that pins such packages for `dependencyStrategy: "install"` is
-staged and not yet accepted by the adapter options. See ADR 0011.
+Stage Function Artifact runtime dependency discovery with
+`@vercel/nft`, as Astro's Vercel and Netlify adapters do, instead of
+a custom loader analysis. The public adapter keeps its current
+import scanner until the native modules are activated in #113.
+Once active, loads that static tracing cannot follow are not
+discovered and fail at runtime, and the staged
+`includeDependencies` option pins such packages for
+`dependencyStrategy: "install"`. See ADR 0011.
