@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import {
 	access,
+	chmod,
 	cp,
 	lstat,
 	mkdir,
@@ -6939,6 +6940,27 @@ ${f.index}`,
 			clientFileLink: true,
 			overlaps: true,
 		},
+		{
+			server: "function/",
+			linkedDirectoryFileLink: true,
+			overlaps: true,
+		},
+		{
+			server: "function/",
+			linkedDirectoryCycle: true,
+			overlaps: false,
+		},
+		// Permission bits do not restrict root or Windows.
+		...(process.platform === "win32" || process.getuid?.() === 0
+			? []
+			: [
+					{
+						server: "function/",
+						unreadableClientDirectory: true,
+						overlaps: true,
+						error: /could not be scanned/,
+					},
+				]),
 		// "\\" is an ordinary filename character outside Windows.
 		...(process.platform === "win32"
 			? []
@@ -6960,9 +6982,60 @@ ${f.index}`,
 			dotDotLink,
 			backslashLink,
 			clientFileLink,
+			linkedDirectoryFileLink,
+			linkedDirectoryCycle,
+			unreadableClientDirectory,
+			error,
 		}) => {
 			const f = await fixture();
 			let client = f.build.config.build.client;
+			const locked = new URL(
+				"client/locked/",
+				f.build.config.outDir,
+			);
+			if (unreadableClientDirectory) {
+				// A readable client file depends on the server output, and a sibling
+				// directory cannot be listed.
+				const outDir = f.build.config.outDir;
+				await writeFile(
+					new URL("function/logo.svg", outDir),
+					"<svg/>",
+				);
+				await symlink(
+					"../function/logo.svg",
+					fileURLToPath(new URL("client/logo.svg", outDir)),
+					"file",
+				);
+				await mkdir(locked);
+			}
+			if (linkedDirectoryFileLink || linkedDirectoryCycle) {
+				// dist/client/images -> dist/shared, outside both outputs.
+				const outDir = f.build.config.outDir;
+				await mkdir(new URL("shared/", outDir));
+				await symlink(
+					"../shared",
+					fileURLToPath(new URL("client/images", outDir)),
+					"dir",
+				);
+				if (linkedDirectoryFileLink) {
+					// A file reached only through the linked directory enters the server.
+					await writeFile(
+						new URL("function/logo.svg", outDir),
+						"<svg/>",
+					);
+					await symlink(
+						"../function/logo.svg",
+						fileURLToPath(new URL("shared/logo.svg", outDir)),
+						"file",
+					);
+				} else
+					// The linked directory links back to the client output.
+					await symlink(
+						"../client",
+						fileURLToPath(new URL("shared/back", outDir)),
+						"dir",
+					);
+			}
 			if (clientFileLink) {
 				// A client file links to a file in the server output.
 				const outDir = f.build.config.outDir;
@@ -7112,24 +7185,31 @@ ${f.index}`,
 				),
 			};
 			const before = await snapshot(f.directory);
-			const planning = Effect.runPromise(
-				FunctionArtifact.planPreparation(
-					build,
-					routePlan,
-					settings,
-				),
-			);
-			if (overlaps)
-				await expect(planning).rejects.toThrow(
-					/overlaps the client output/,
+			if (unreadableClientDirectory) await chmod(locked, 0);
+			try {
+				const planning = Effect.runPromise(
+					FunctionArtifact.planPreparation(
+						build,
+						routePlan,
+						settings,
+					),
 				);
-			else
-				expect((await planning).mutations).toEqual([
-					{
-						kind: "removeDirectory",
-						path: build.config.build.server,
-					},
-				]);
+				if (overlaps)
+					await expect(planning).rejects.toThrow(
+						error ?? /overlaps the client output/,
+					);
+				else
+					expect((await planning).mutations).toEqual([
+						{
+							kind: "removeDirectory",
+							path: build.config.build.server,
+						},
+					]);
+			} finally {
+				// Restore access so the snapshot and cleanup can read the fixture.
+				if (unreadableClientDirectory)
+					await chmod(locked, 0o755);
+			}
 			expect(await snapshot(f.directory)).toEqual(before);
 		},
 	);

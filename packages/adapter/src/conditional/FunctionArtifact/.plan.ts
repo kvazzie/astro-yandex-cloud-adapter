@@ -1,4 +1,10 @@
-import { readdir, readlink, realpath } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import {
+	readdir,
+	readlink,
+	realpath,
+	stat,
+} from "node:fs/promises";
 import {
 	dirname,
 	isAbsolute,
@@ -80,16 +86,18 @@ export function planPreparation(
 				// Removing a link that the client lookup passes through also breaks the client,
 				// and so does removing the target of a link inside the client output.
 				const clientLookup = await lookupPaths(client);
-				for (const entry of await readdir(client, {
-					recursive: true,
-					withFileTypes: true,
-				}).catch(() => []))
-					if (entry.isSymbolicLink())
-						clientLookup.push(
-							...(await lookupPaths(
-								join(entry.parentPath, entry.name),
-							)),
-						);
+				let links: string[];
+				try {
+					links = await clientLinks(client);
+				} catch (cause) {
+					// A partial scan could miss a client file that depends on the server output.
+					throw new Errors.InvalidArtifact({
+						message: `The client output ${client} could not be scanned, so the server output ${server} cannot be safely removed when the build has no Function Artifact: ${cause instanceof Error ? cause.message : String(cause)}`,
+						cause,
+					});
+				}
+				for (const link of links)
+					clientLookup.push(...(await lookupPaths(link)));
 				if (
 					within(server, client) ||
 					within(client, server) ||
@@ -269,6 +277,60 @@ export function planPreparation(
 						cause,
 					}),
 	});
+}
+
+/** Lists every symbolic link in the client output, including links below linked directories. */
+async function clientLinks(client: string): Promise<string[]> {
+	const links: string[] = [];
+	// Real directories already listed; a link back to one of them is a cycle.
+	const listed = new Set<string>();
+	const visit = async (directory: string, root: boolean) => {
+		let entries: Dirent[];
+		try {
+			listed.add(await realpath(directory));
+			entries = await readdir(directory, {
+				withFileTypes: true,
+			});
+		} catch (cause) {
+			// A missing client output holds no files to protect.
+			if (
+				root &&
+				["ENOENT", "ENOTDIR"].includes(
+					(cause as NodeJS.ErrnoException).code ?? "",
+				)
+			)
+				return;
+			throw cause;
+		}
+		for (const entry of entries) {
+			const path = join(directory, entry.name);
+			if (entry.isDirectory()) await visit(path, false);
+			else if (entry.isSymbolicLink()) {
+				links.push(path);
+				let target: string;
+				try {
+					target = await realpath(path);
+				} catch (cause) {
+					// lookupPaths reports a dangling link's path and rejects a loop.
+					if (
+						["ENOENT", "ELOOP"].includes(
+							(cause as NodeJS.ErrnoException).code ?? "",
+						)
+					)
+						continue;
+					throw cause;
+				}
+				// Recursive readdir lists a directory link without descending into it.
+				if (
+					!listed.has(target) &&
+					(await stat(target)).isDirectory()
+				)
+					await visit(path, false);
+			}
+		}
+	};
+	await visit(client, true);
+	return links;
 }
 
 /** Lists every path that resolving `path` visits, including each intermediate link. */
