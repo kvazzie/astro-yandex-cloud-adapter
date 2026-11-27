@@ -569,6 +569,16 @@ describe("completed-build route requirements", () => {
 			html: '<BASE HREF="https://cdn.example/"><img src="_image?href=x">',
 			required: false,
 		},
+		{
+			html: '<template><style-card></style-card></template><base href="/"><img src="_image?href=x">',
+			url: "/guide/",
+			required: true,
+		},
+		{
+			html: '<style>a{}</style ><base href="/"><img src="_image?href=x">',
+			url: "/guide/",
+			required: true,
+		},
 	])(
 		"requires the image endpoint only for an actual image request: $html at $url",
 		({ html, required, base = "/", site, url }) => {
@@ -640,6 +650,12 @@ describe("completed-build route requirements", () => {
 		{
 			name: "a request to another origin",
 			html: '<script type="module">let response = await fetch("https://cdn.example/_server-islands/Card/", { method: \'POST\' });</script>',
+			hasServerIslands: false,
+			required: false,
+		},
+		{
+			name: "a custom element named like a link",
+			html: '<link-card href="/_server-islands/Card"></link-card>',
 			hasServerIslands: false,
 			required: false,
 		},
