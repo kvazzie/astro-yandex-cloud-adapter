@@ -11,7 +11,7 @@ import {
   relative,
   sep,
 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { nodeFileTrace, resolve } from "@vercel/nft";
 
 import type { PlannedFile } from "../.types.ts";
@@ -126,7 +126,13 @@ export async function traceRuntimeDependencies(
       const record = name !== undefined && inServer(parent);
       let resolved: Awaited<ReturnType<typeof resolve>>;
       try {
-        resolved = await resolve(specifier, parent, job, cjsResolve);
+        // Node resolves a relative ES module specifier as a URL, so its query and
+        // fragment name the module instance, not the file; nft reads them as path.
+        const lookup =
+          !cjsResolve && /^\.{0,2}\//.test(specifier) && /[?#]/.test(specifier)
+            ? fileURLToPath(new URL(specifier, pathToFileURL(parent)))
+            : specifier;
+        resolved = await resolve(lookup, parent, job, cjsResolve);
       } catch (cause) {
         // An import nft cannot resolve still names a package the artifact needs.
         if (record && name) imports.push({ name, parent });

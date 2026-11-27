@@ -82,8 +82,9 @@ function packedFiles(bytes: Buffer): Map<string, Buffer> {
 				.filter(Boolean)
 				.join("/");
 		nextPath = undefined;
+		// npm extracts regular ("0", NUL) and contiguous ("7") files; links are not contents.
 		if (
-			(type === 48 || type === 0) &&
+			(type === 48 || type === 0 || type === 55) &&
 			name.startsWith("package/")
 		)
 			files.set(name.slice("package/".length), contents);

@@ -1014,9 +1014,14 @@ describe("Function Artifact mutation plans", () => {
 	it.each(
 		(["bundle", "install"] as const).flatMap(
 			(dependencyStrategy) =>
-				(["import", "dynamic import"] as const).map(
-					(loader) => ({ dependencyStrategy, loader }),
-				),
+				(
+					[
+						"import",
+						"dynamic import",
+						"query import",
+						"fragment import",
+					] as const
+				).map((loader) => ({ dependencyStrategy, loader })),
 		),
 	)(
 		"accounts for extensionless emitted ES modules ($loader, $dependencyStrategy)",
@@ -1035,6 +1040,9 @@ describe("Function Artifact mutation plans", () => {
 				{
 					import: "import './runtime-helper';",
 					"dynamic import": "await import('./runtime-helper');",
+					// Node opens the file without the URL query or fragment.
+					"query import": "import './runtime-helper?mode=one';",
+					"fragment import": "import './runtime-helper#one';",
 				}[loader] + f.index,
 			);
 			await mkdir(new URL("node_modules/example/", f.root), {
@@ -1079,6 +1087,52 @@ describe("Function Artifact mutation plans", () => {
 					},
 				});
 			}
+		},
+	);
+
+	it.each([
+		{
+			loader: "a traced native addon",
+			source:
+				"const load = createRequire(import.meta.url); load('../addon.node');",
+			accepted: false,
+		},
+		{
+			loader: "only builtins",
+			source:
+				"const load = createRequire(import.meta.url); load('node:fs');",
+			accepted: true,
+		},
+	])(
+		"checks bundle loads outside the server output ($loader)",
+		async ({ source, accepted }) => {
+			const f = await fixture();
+			// The addon sits beside the server output, which the artifact does not ship.
+			await writeFile(
+				new URL("addon.node", new URL("../", f.server)),
+				Buffer.from([0x7f, 0x45, 0x4c, 0x46]),
+			);
+			await writeFile(
+				new URL("index.js", f.server),
+				`import { createRequire } from "node:module"; ${source}${f.index}`,
+			);
+			const result = await Effect.runPromise(
+				Effect.either(
+					FunctionArtifact.planPreparation(
+						f.build,
+						f.routePlan,
+						settings,
+						{
+							resolve: () => Promise.reject(new Error("unused")),
+						},
+					),
+				),
+			);
+			expect(result._tag).toBe(accepted ? "Right" : "Left");
+			if (result._tag === "Left")
+				expect(result.left.message).toMatch(
+					/native runtime module.*addon\.node.*dependencyStrategy: "install"/s,
+				);
 		},
 	);
 
@@ -3757,6 +3811,8 @@ describe("Function Artifact mutation plans", () => {
 					"--offline",
 					"--no-audit",
 					"--no-fund",
+					// carrier loads its optional helper without a fallback.
+					"--include=optional",
 					"--cache",
 					cache,
 				],
@@ -6938,6 +6994,36 @@ ${f.index}`,
 			{ child: "node_modules/child", name: "host", range: "^1" },
 		]);
 	});
+
+	// npm 10.9's tar extracts a contiguous file (type 7) as a regular file.
+	it.each(["0", "7"])(
+		"reads a bundled manifest stored as tar type %s",
+		(type) => {
+			const manifest = Buffer.from(
+				JSON.stringify({
+					name: "child",
+					version: "1.0.0",
+					peerDependencies: { host: "^1" },
+				}),
+			);
+			const tar = Buffer.concat([
+				ustarHeader(
+					"package/node_modules/child/package.json",
+					manifest.length,
+					type,
+				),
+				ustarPadded(manifest),
+				Buffer.alloc(1024),
+			]);
+			expect(externalBundledPeers(gzipSync(tar))).toEqual([
+				{
+					child: "node_modules/child",
+					name: "host",
+					range: "^1",
+				},
+			]);
+		},
+	);
 
 	it.each([
 		{ kind: "file", ok: true },

@@ -81,6 +81,14 @@ export async function planPackageFiles(
 		throw new Error(
 			`The "bundle" dependency strategy left unresolved runtime package imports in the Function Artifact: ${Array.from(dependencyNames).sort().join(", ")}. Bundle these packages with Astro/Vite or select dependencyStrategy: "install".`,
 		);
+	// A bundle ships only the server output, so a traced addon outside it is missing at runtime.
+	const nativeFiles = [...trace.files]
+		.filter((file) => file.endsWith(".node"))
+		.sort();
+	if (nativeFiles.length)
+		throw new Error(
+			`The Function Artifact loads the native runtime module ${nativeFiles.join(", ")}, which cannot use the "bundle" dependency strategy. It requires dependencyStrategy: "install" with the module delivered by a runtime package.`,
+		);
 	const packageJson: PackageJson = {
 		private: true,
 		type: "module",
