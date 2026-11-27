@@ -1,6 +1,12 @@
 import { relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+	html,
+	parse,
+	type DefaultTreeAdapterTypes,
+} from "parse5";
+
 import type { IntegrationResolvedRoute } from "astro";
 import type * as Brand from "effect/Brand";
 
@@ -66,6 +72,8 @@ interface RouteEvidence {
 	emittedAssets: ReadonlyMap<string, readonly URL[]>;
 	hasFunction: boolean;
 	trailingSlash: "always" | "never" | "ignore";
+	/** Whether the Manifest maps 404 pages below the base scope too. */
+	recursive404?: boolean | undefined;
 	hasServerIslands: boolean;
 	hasRuntimeImages: boolean;
 	imageEndpoint: string;
@@ -125,7 +133,6 @@ function pageEmitterIndex(
 		"clientDirectory" | "resolvedRoutes" | "emittedAssets"
 	>,
 ): Map<string, Set<IntegrationResolvedRoute>> {
-	const clientPath = fileURLToPath(evidence.clientDirectory);
 	const pageEmitters = new Map<
 		string,
 		Set<IntegrationResolvedRoute>
@@ -135,9 +142,7 @@ function pageEmitterIndex(
 		for (const asset of evidence.emittedAssets.get(
 			route.pattern,
 		) ?? []) {
-			const file = relative(clientPath, fileURLToPath(asset))
-				.split(sep)
-				.join("/");
+			const file = clientFile(evidence.clientDirectory, asset);
 			const emitters = pageEmitters.get(file) ?? new Set();
 			emitters.add(route);
 			pageEmitters.set(file, emitters);
@@ -181,10 +186,55 @@ function publicPageUrl(
 		: canonicalUrlPath(withBase(evidence.base, url));
 }
 
+/** A Client Artifact file's path relative to the client directory, with forward slashes. */
+function clientFile(clientDirectory: URL, asset: URL): string {
+	return relative(
+		fileURLToPath(clientDirectory),
+		fileURLToPath(asset),
+	)
+		.split(sep)
+		.join("/");
+}
+
+/** The URL a prerendered endpoint serves an emitted file at, before `base`. */
+function endpointUrl(
+	route: IntegrationResolvedRoute,
+	file: string,
+	trailingSlash: RoutePlan["trailingSlash"],
+): string {
+	const url = `/${file.split("/").map(encodeURIComponent).join("/")}`;
+	return routeTrailingSlash(
+		"endpoint",
+		route.pattern,
+		trailingSlash,
+	) === "always"
+		? `${url}/`
+		: url;
+}
+
+/** The scope of a 404 page at `url`: the path above its final `404` segment. */
+function notFoundScope(url: string): string {
+	return url.replace(/\/404\/?$/, "") || "/";
+}
+
+/** Whether the Manifest maps a page of this route at `url` as a 404 page. */
+function isNotFoundPage(
+	evidence: Pick<RouteEvidence, "base" | "recursive404">,
+	pattern: string,
+	url: string,
+): boolean {
+	return (
+		/\/404\/?$/.test(pattern) &&
+		(evidence.recursive404 === true ||
+			notFoundScope(url) === evidence.base)
+	);
+}
+
 /**
- * Pairs each emitted HTML file with the URLs it is served at: a page's public
- * URL, plus the other slash spelling where the Gateway also serves it, or the
- * object URL of any other HTML file.
+ * Pairs each emitted HTML file with the URLs it is served at, as the Gateway
+ * template serves them: a prerendered page's or endpoint's public URL, plus the
+ * other slash spelling where its route accepts both or it is a Manifest 404
+ * page, or the object URL of any other HTML file.
  */
 export function clientDocuments(
 	evidence: RouteEvidence,
@@ -192,25 +242,61 @@ export function clientDocuments(
 	const files = new Set(evidence.clientFiles);
 	const pageEmitters = pageEmitterIndex(evidence);
 	const urls = new Map<string, string[]>();
-	for (const { pathname } of evidence.pages) {
-		const url = pageUrl(pathname);
-		// An unmatched page fails route reconciliation with its own diagnostic.
-		const file = pageFile(url, files, pageEmitters);
-		if (!file) continue;
-		const publicUrl = publicPageUrl(evidence, url);
+	const add = (
+		file: string,
+		publicUrl: string,
+		alias: boolean,
+	) => {
 		const fileUrls = urls.get(file) ?? [];
 		fileUrls.push(publicUrl);
-		if (
-			publicUrl !== "/" &&
-			(evidence.trailingSlash === "ignore" ||
-				/\/404\/?$/.test(publicUrl))
-		)
+		if (alias && publicUrl !== "/")
 			fileUrls.push(
 				publicUrl.endsWith("/")
 					? publicUrl.slice(0, -1)
 					: `${publicUrl}/`,
 			);
 		urls.set(file, fileUrls);
+	};
+	for (const { pathname } of evidence.pages) {
+		const url = pageUrl(pathname);
+		// An unmatched page fails route reconciliation with its own diagnostic.
+		const file = pageFile(url, files, pageEmitters);
+		if (!file) continue;
+		const publicUrl = publicPageUrl(evidence, url);
+		const emitters = [...(pageEmitters.get(file) ?? [])];
+		add(
+			file,
+			publicUrl,
+			evidence.trailingSlash === "ignore" ||
+				(emitters.length === 1 &&
+					isNotFoundPage(
+						evidence,
+						emitters[0]!.pattern,
+						publicUrl,
+					)),
+		);
+	}
+	for (const route of evidence.resolvedRoutes) {
+		if (route.type !== "endpoint" || !route.isPrerendered)
+			continue;
+		for (const asset of evidence.emittedAssets.get(
+			route.pattern,
+		) ?? []) {
+			const file = clientFile(evidence.clientDirectory, asset);
+			if (!evidence.clientHtml.has(file)) continue;
+			add(
+				file,
+				publicPageUrl(
+					evidence,
+					endpointUrl(route, file, evidence.trailingSlash),
+				),
+				routeTrailingSlash(
+					"endpoint",
+					route.pattern,
+					evidence.trailingSlash,
+				) === "ignore",
+			);
+		}
 	}
 	return [...evidence.clientHtml].map(([file, html]) => ({
 		urls: urls.get(file) ?? [
@@ -223,37 +309,96 @@ export function clientDocuments(
 	}));
 }
 
-/**
- * Splits HTML into comments, raw-text elements with their contents, tags with
- * their quoted attribute values, and text. `<!--` and `<base` inside raw text
- * or a quoted value are literal text, not markup. A tag name ends at
- * whitespace, `/` or `>`, so `<style-card>` is not a `<style>` element.
- */
-const htmlToken =
-	/<!--(?:-?>|[\s\S]*?(?:--!?>|$))|(<(script|style|textarea|title)(?=[\t\n\f\r />])(?:"[^"]*"|'[^']*'|[^"'>])*>[\s\S]*?(?:<\/\2(?:[\t\n\f\r /][^>]*)?>|$))|(<[A-Za-z!?/](?:"[^"]*"|'[^']*'|[^"'>])*>)/gi;
-
-/** Removes HTML comments and keeps every other token. */
-function withoutComments(html: string): string {
-	return html.replace(
-		htmlToken,
-		(_match, raw?: string, _name?: string, tag?: string) =>
-			raw ?? tag ?? " ",
-	);
+/** What a browser reads from an emitted document: its base and the URLs it requests. */
+interface DocumentReferences {
+	/** The `href` of the first `<base>` element in the document tree. */
+	baseHref: string | undefined;
+	/** URL attribute values and CSS `url()` references, with character references decoded. */
+	urls: string[];
+	/** `<link href>` values and `fetch("…")` targets in scripts. */
+	requests: string[];
 }
 
-/** The `href` of the first real `<base>` start tag, outside raw text and attribute values. */
-function baseHref(html: string): string | undefined {
-	for (const [, , , tag] of html.matchAll(htmlToken)) {
-		if (!tag || !/^<base[\s/>]/i.test(tag)) continue;
-		for (const [, name, ...values] of tag
-			.slice("<base".length)
-			.matchAll(
-				/([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g,
-			))
-			if (name?.toLowerCase() === "href")
-				return values.find((value) => value !== undefined) ?? "";
+const urlAttribute =
+	/^(?:src|srcset|href|poster|content|data-.+)$/;
+const cssUrl = /url\(\s*["']?([^"')\s]*)/gi;
+
+function textContent(
+	element: DefaultTreeAdapterTypes.Element,
+): string {
+	return element.childNodes
+		.map((child) => ("value" in child ? child.value : ""))
+		.join("");
+}
+
+const parsedDocuments = new WeakMap<
+	ClientDocument,
+	DocumentReferences
+>();
+
+/**
+ * Parses a document as the HTML standard does, with scripting disabled so
+ * `<noscript>` content counts. Comments and text are not elements, and template
+ * contents are a separate fragment outside the document tree.
+ */
+function documentReferences(
+	document: ClientDocument,
+): DocumentReferences {
+	const cached = parsedDocuments.get(document);
+	if (cached) return cached;
+	const references: DocumentReferences = {
+		baseHref: undefined,
+		urls: [],
+		requests: [],
+	};
+	// Walks in tree order without recursion, so deep markup cannot exhaust the stack.
+	const pending = [
+		...parse(document.html, { scriptingEnabled: false })
+			.childNodes,
+	].reverse();
+	for (let node = pending.pop(); node; node = pending.pop()) {
+		if (!("tagName" in node)) continue;
+		for (const { name, value } of node.attrs) {
+			if (urlAttribute.test(name)) references.urls.push(value);
+			if (name === "style")
+				for (const [, url = ""] of value.matchAll(cssUrl))
+					references.urls.push(url);
+		}
+		if (node.namespaceURI === html.NS.HTML) {
+			const href = node.attrs.find(
+				({ name }) => name === "href",
+			)?.value;
+			if (node.tagName === "base" && href !== undefined)
+				references.baseHref ??= href;
+			if (node.tagName === "link" && href !== undefined)
+				references.requests.push(href);
+			if (node.tagName === "style")
+				for (const [, url = ""] of textContent(node).matchAll(
+					cssUrl,
+				))
+					references.urls.push(url);
+			if (node.tagName === "script")
+				for (const [, literal = ""] of textContent(
+					node,
+				).matchAll(/\bfetch\(\s*"((?:[^"\\]|\\.)*)"/g))
+					try {
+						// Astro writes the fetch URL as a JSON string.
+						references.requests.push(
+							JSON.parse(`"${literal}"`) as string,
+						);
+					} catch {
+						// Not a JSON string, so not Astro's island request.
+					}
+		}
+		for (
+			let index = node.childNodes.length - 1;
+			index >= 0;
+			index--
+		)
+			pending.push(node.childNodes[index]!);
 	}
-	return undefined;
+	parsedDocuments.set(document, references);
+	return references;
 }
 
 /**
@@ -262,10 +407,9 @@ function baseHref(html: string): string | undefined {
  */
 function documentBases(
 	urls: readonly string[],
-	html: string,
+	href: string | undefined,
 	origin: string,
 ): string[] {
-	const href = baseHref(html);
 	return urls.map((url) => {
 		const document = `${origin}${url}`;
 		return href !== undefined && URL.canParse(href, document)
@@ -276,8 +420,8 @@ function documentBases(
 
 /**
  * Matches a request to the application's endpoint in a URL attribute or CSS
- * url(), not in escaped text, a comment or a URL on another origin such as a
- * CDN. References resolve against the document base as a browser resolves them.
+ * url(), not in text, a comment or a URL on another origin such as a CDN.
+ * References resolve against the document base as a browser resolves them.
  */
 function requestsEndpoint(
 	documents: readonly ClientDocument[],
@@ -286,13 +430,13 @@ function requestsEndpoint(
 ): boolean {
 	const origin = site ? new URL(site).origin : unknownOrigin;
 	for (const document of documents) {
-		const html = withoutComments(document.html);
-		const bases = documentBases(document.urls, html, origin);
-		for (const match of html.matchAll(
-			/\b(?:src|srcset|href|poster|content|data-[\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))|url\(\s*["']?([^"')\s]*)/gi,
-		)) {
-			const value =
-				match[1] ?? match[2] ?? match[3] ?? match[4] ?? "";
+		const references = documentReferences(document);
+		const bases = documentBases(
+			document.urls,
+			references.baseHref,
+			origin,
+		);
+		for (const value of references.urls)
 			// A srcset lists candidates separated by commas and descriptors.
 			for (const candidate of value.split(/[\s,]+/)) {
 				const query = candidate.indexOf("?");
@@ -311,7 +455,6 @@ function requestsEndpoint(
 						return true;
 				}
 			}
-		}
 	}
 	return false;
 }
@@ -328,19 +471,13 @@ function requestsServerIsland(
 	const origin = site ? new URL(site).origin : unknownOrigin;
 	const prefix = withBase(base, "/_server-islands/");
 	for (const document of documents) {
-		const html = withoutComments(document.html);
-		const bases = documentBases(document.urls, html, origin);
-		for (const match of html.matchAll(
-			/<link(?=[\t\n\f\r />])[^>]*?\shref="([^"]*)"|\bfetch\(\s*"((?:[^"\\]|\\.)*)"/gi,
-		)) {
-			let target = match[1] ?? "";
-			if (match[2] !== undefined)
-				try {
-					// Astro writes the fetch URL as a JSON string.
-					target = JSON.parse(`"${match[2]}"`) as string;
-				} catch {
-					continue;
-				}
+		const references = documentReferences(document);
+		const bases = documentBases(
+			document.urls,
+			references.baseHref,
+			origin,
+		);
+		for (const target of references.requests)
 			for (const documentBase of bases) {
 				const resolved = URL.canParse(target, documentBase)
 					? new URL(target, documentBase)
@@ -351,7 +488,6 @@ function requestsServerIsland(
 				)
 					return true;
 			}
-		}
 	}
 	return false;
 }
@@ -459,11 +595,6 @@ export function reconcileRoutes(
 		});
 	};
 
-	const clientPath = fileURLToPath(clientDirectory);
-	const assetFile = (asset: URL): string =>
-		relative(clientPath, fileURLToPath(asset))
-			.split(sep)
-			.join("/");
 	const pageEmitters = pageEmitterIndex(evidence);
 
 	for (const { pathname } of pages) {
@@ -489,18 +620,11 @@ export function reconcileRoutes(
 		if (route.type !== "endpoint" || !route.isPrerendered)
 			continue;
 		for (const asset of emittedAssets.get(route.pattern) ?? []) {
-			const file = assetFile(asset);
+			const file = clientFile(clientDirectory, asset);
 			if (!files.has(file)) continue;
-			const url = `/${file.split("/").map(encodeURIComponent).join("/")}`;
 			addPrerendered(
 				route,
-				routeTrailingSlash(
-					"endpoint",
-					route.pattern,
-					evidence.trailingSlash,
-				) === "always"
-					? `${url}/`
-					: url,
+				endpointUrl(route, file, evidence.trailingSlash),
 				file,
 			);
 		}
@@ -547,27 +671,22 @@ export function manifestRoutes(
 	> = [];
 	for (const route of plan.routes) {
 		if (route.kind === "prerendered") {
-			prerendered.push(
-				...route.paths.map((path) => ({
-					kind: route.routeKind,
-					...path,
-				})),
-			);
-			if (
-				route.routeKind === "page" &&
-				/\/404\/?$/.test(route.pattern)
-			) {
-				notFound.push(
-					...route.paths
-						.map((path) => ({
-							scope: path.url.replace(/\/404\/?$/, "") || "/",
+			// Appending one by one keeps a large route below the engine's argument limit.
+			for (const path of route.paths)
+				prerendered.push({ kind: route.routeKind, ...path });
+			if (route.routeKind === "page")
+				for (const path of route.paths)
+					if (
+						isNotFoundPage(
+							{ base: plan.base, recursive404 },
+							route.pattern,
+							path.url,
+						)
+					)
+						notFound.push({
+							scope: notFoundScope(path.url),
 							...path,
-						}))
-						.filter(
-							({ scope }) => recursive404 || scope === plan.base,
-						),
-				);
-			}
+						});
 		} else {
 			onDemand.push({
 				kind: route.routeKind,

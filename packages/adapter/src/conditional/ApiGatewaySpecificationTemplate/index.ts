@@ -492,9 +492,13 @@ export function generateApiGatewaySpecificationTemplate(
 			});
 		}
 	}
+	// The last route written at a path wins it. An Astro-matched route outranks a
+	// spelling Astro only redirects; otherwise Astro's priority decides.
 	const routesByPath = new Map<string, GatewayRoute>();
 	for (const route of routes.sort(
-		(a, b) => b.priority - a.priority,
+		(a, b) =>
+			Number(a.matchedByAstro) - Number(b.matchedByAstro) ||
+			b.priority - a.priority,
 	)) {
 		routesByPath.set(route.path, route);
 	}

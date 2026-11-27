@@ -11,3 +11,9 @@ encode literal braces in recursive 404 scopes, and publish
 prerendered pages at their canonical URL spelling. Image and
 server-island evidence ignores HTML comments, honors the document
 `<base>` element and counts only requests to the application.
+Read emitted HTML with the standards-compliant parse5 parser, so
+template contents, character references and custom elements are
+read as a browser reads them. Scan each document at the URLs the
+Gateway serves it at, let a stored route keep a path that a
+redirect-only alias shares, and project very large prerendered
+routes without exceeding the engine's argument limit.
