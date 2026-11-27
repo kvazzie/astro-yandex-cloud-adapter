@@ -34,6 +34,8 @@ interface GatewayRoute {
 	methods: readonly string[];
 	/** False for a spelling Astro only redirects, so it never competes for a request. */
 	matchedByAstro: boolean;
+	/** Astro's route regex, matched against the pathname without `base`. */
+	astroPattern: RegExp;
 }
 
 type Segment = {
@@ -153,8 +155,42 @@ function gatewayPriority(first: string, second: string): number {
 	return second.length - first.length;
 }
 
-/** Requires every overlap between different Serving Artifacts to keep Astro's winner. */
-function validatePriorities(routes: GatewayRoute[]): void {
+/** Whether Astro's route accepts a Gateway request URL, after removing `base` as Astro does. */
+function astroMatches(
+	route: GatewayRoute,
+	url: string,
+	base: string,
+): boolean {
+	const path =
+		base === "/"
+			? url
+			: url === base
+				? "/"
+				: url.startsWith(`${base}/`)
+					? url.slice(base.length)
+					: undefined;
+	if (path === undefined) return false;
+	let decoded = path;
+	try {
+		decoded = decodeURI(path);
+	} catch {
+		// Astro matches an undecodable path as it is.
+	}
+	// With a base, Astro's root pattern can match the empty pathname.
+	return (
+		route.astroPattern.test(decoded) ||
+		(decoded === "/" && route.astroPattern.test(""))
+	);
+}
+
+/**
+ * Requires every overlap between different Serving Artifacts to keep Astro's
+ * winner. Their order matters only for a URL Astro can match with both routes.
+ */
+function validatePriorities(
+	routes: GatewayRoute[],
+	base: string,
+): void {
 	for (let i = 0; i < routes.length; i++) {
 		for (let j = i + 1; j < routes.length; j++) {
 			const a = routes[i]!;
@@ -168,7 +204,12 @@ function validatePriorities(routes: GatewayRoute[]): void {
 			)
 				continue;
 			const witness = overlappingPath(a.path, b.path);
-			if (!witness) continue;
+			if (
+				!witness ||
+				!astroMatches(a, witness, base) ||
+				!astroMatches(b, witness, base)
+			)
+				continue;
 			const gateway = gatewayPriority(a.path, b.path);
 			const astro = a.priority - b.priority;
 			if (
@@ -224,6 +265,11 @@ function matchesTrailingSlash(
 /** Keeps literal braces in a concrete URL from reading as Gateway path parameters. */
 function literalGatewayPath(url: string): string {
 	return url.replaceAll("{", "%7B").replaceAll("}", "%7D");
+}
+
+/** The recursive 404 fallback path below a scope, with literal braces encoded. */
+function fallbackPath(scope: string): string {
+	return `${scope === "/" ? "" : literalGatewayPath(scope)}/{_+}`;
 }
 
 /** Declares one stable pair of resource variables for each actual Function Artifact. */
@@ -297,7 +343,7 @@ export function generateApiGatewaySpecificationTemplate(
 	const fallbackLength = Math.max(
 		0,
 		...manifest.routes.notFound.map(
-			({ scope }) => `${scope === "/" ? "" : scope}/{_+}`.length,
+			({ scope }) => fallbackPath(scope).length,
 		),
 	);
 	const plannedRoute = (
@@ -337,6 +383,7 @@ export function generateApiGatewaySpecificationTemplate(
 		};
 		const path = literalGatewayPath(route.url);
 		const planned = plannedRoute("", route.url);
+		const astroPattern = new RegExp(planned.patternRegex);
 		routes.push({
 			path,
 			source: route.url,
@@ -345,6 +392,7 @@ export function generateApiGatewaySpecificationTemplate(
 			operation,
 			methods: ["get", "head"],
 			matchedByAstro: true,
+			astroPattern,
 		});
 		// Astro matches both spellings when the route definition's effective policy is "ignore".
 		if (
@@ -368,6 +416,7 @@ export function generateApiGatewaySpecificationTemplate(
 				operation,
 				methods: ["get", "head"],
 				matchedByAstro: true,
+				astroPattern,
 			});
 		}
 	}
@@ -395,6 +444,8 @@ export function generateApiGatewaySpecificationTemplate(
 			route.pattern,
 			routePlan.trailingSlash,
 		);
+		const planned = plannedRoute(route.pattern);
+		const astroPattern = new RegExp(planned.patternRegex);
 		const empty = emptyRestPattern(pattern);
 		const paths = new Set([pattern, ...(empty ? [empty] : [])]);
 		for (const path of [...paths]) {
@@ -416,7 +467,7 @@ export function generateApiGatewaySpecificationTemplate(
 				path,
 				source: route.pattern,
 				artifactId: route.artifactId,
-				priority: plannedRoute(route.pattern).priority,
+				priority: planned.priority,
 				operation: {
 					responses: {
 						default: {
@@ -437,6 +488,7 @@ export function generateApiGatewaySpecificationTemplate(
 					pattern,
 					policy,
 				),
+				astroPattern,
 			});
 		}
 	}
@@ -447,7 +499,7 @@ export function generateApiGatewaySpecificationTemplate(
 		routesByPath.set(route.path, route);
 	}
 	const selectedRoutes = [...routesByPath.values()];
-	validatePriorities(selectedRoutes);
+	validatePriorities(selectedRoutes, routePlan.base);
 	for (const route of selectedRoutes) {
 		template.paths[route.path] = Object.fromEntries(
 			route.methods.map((method) => [method, route.operation]),
@@ -455,8 +507,8 @@ export function generateApiGatewaySpecificationTemplate(
 	}
 	if (recursive404) {
 		for (const scope of manifest.routes.notFound) {
-			const root = scope.scope === "/" ? "" : scope.scope;
-			const path = `${root}/{_+}`;
+			const path = fallbackPath(scope.scope);
+			const root = path.slice(0, -"/{_+}".length);
 			const operation: GatewayOperation = {
 				parameters: [
 					{
@@ -483,7 +535,7 @@ export function generateApiGatewaySpecificationTemplate(
 			template.paths[path] = {
 				"x-yc-apigateway-any-method": operation,
 			};
-			for (const alias of new Set([scope.scope, `${root}/`])) {
+			for (const alias of new Set([root || "/", `${root}/`])) {
 				if (
 					!routes.some((route) =>
 						overlappingPath(alias, route.path),
