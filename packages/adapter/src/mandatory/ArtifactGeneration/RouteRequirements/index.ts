@@ -226,10 +226,11 @@ export function clientDocuments(
 /**
  * Splits HTML into comments, raw-text elements with their contents, tags with
  * their quoted attribute values, and text. `<!--` and `<base` inside raw text
- * or a quoted value are literal text, not markup.
+ * or a quoted value are literal text, not markup. A tag name ends at
+ * whitespace, `/` or `>`, so `<style-card>` is not a `<style>` element.
  */
 const htmlToken =
-	/<!--(?:-?>|[\s\S]*?(?:--!?>|$))|(<(script|style|textarea|title)\b(?:"[^"]*"|'[^']*'|[^"'>])*>[\s\S]*?(?:<\/\2\s*>|$))|(<[A-Za-z!?/](?:"[^"]*"|'[^']*'|[^"'>])*>)/gi;
+	/<!--(?:-?>|[\s\S]*?(?:--!?>|$))|(<(script|style|textarea|title)(?=[\t\n\f\r />])(?:"[^"]*"|'[^']*'|[^"'>])*>[\s\S]*?(?:<\/\2(?:[\t\n\f\r /][^>]*)?>|$))|(<[A-Za-z!?/](?:"[^"]*"|'[^']*'|[^"'>])*>)/gi;
 
 /** Removes HTML comments and keeps every other token. */
 function withoutComments(html: string): string {
@@ -330,7 +331,7 @@ function requestsServerIsland(
 		const html = withoutComments(document.html);
 		const bases = documentBases(document.urls, html, origin);
 		for (const match of html.matchAll(
-			/<link\b[^>]*?\bhref="([^"]*)"|\bfetch\(\s*"((?:[^"\\]|\\.)*)"/gi,
+			/<link(?=[\t\n\f\r />])[^>]*?\shref="([^"]*)"|\bfetch\(\s*"((?:[^"\\]|\\.)*)"/gi,
 		)) {
 			let target = match[1] ?? "";
 			if (match[2] !== undefined)
