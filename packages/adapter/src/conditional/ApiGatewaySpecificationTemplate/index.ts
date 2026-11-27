@@ -191,18 +191,16 @@ function validatePriorities(
 	routes: GatewayRoute[],
 	base: string,
 ): void {
-	for (let i = 0; i < routes.length; i++) {
-		for (let j = i + 1; j < routes.length; j++) {
-			const a = routes[i]!;
-			const b = routes[j]!;
+	// Paths are unique here, so two fixed paths never overlap. Comparing each
+	// templated path with every other path keeps the work linear in fixed paths.
+	const templated = routes.filter(({ path }) =>
+		path.includes("{"),
+	);
+	const fixed = routes.filter(({ path }) => !path.includes("{"));
+	for (const [index, a] of templated.entries()) {
+		for (const b of [...templated.slice(index + 1), ...fixed]) {
 			if (a.artifactId === b.artifactId) continue;
 			if (!a.matchedByAstro || !b.matchedByAstro) continue;
-			if (
-				!a.path.includes("{") &&
-				!b.path.includes("{") &&
-				a.path !== b.path
-			)
-				continue;
 			const witness = overlappingPath(a.path, b.path);
 			if (
 				!witness ||
@@ -346,16 +344,30 @@ export function generateApiGatewaySpecificationTemplate(
 			({ scope }) => fallbackPath(scope).length,
 		),
 	);
+	// Indexes the plan once; a large prerendered route must not be searched per Manifest record.
+	const plannedByPattern = new Map<
+		string,
+		RoutePlan["routes"][number]
+	>();
+	const plannedByUrl = new Map<
+		string,
+		RoutePlan["routes"][number]
+	>();
+	for (const candidate of routePlan.routes) {
+		if (!plannedByPattern.has(candidate.pattern))
+			plannedByPattern.set(candidate.pattern, candidate);
+		if (candidate.kind === "prerendered")
+			for (const { url } of candidate.paths)
+				if (!plannedByUrl.has(url))
+					plannedByUrl.set(url, candidate);
+	}
 	const plannedRoute = (
 		pattern: string,
 		url?: string,
 	): RoutePlan["routes"][number] => {
-		const planned = routePlan.routes.find(
-			(candidate) =>
-				candidate.pattern === pattern ||
-				(candidate.kind === "prerendered" &&
-					candidate.paths.some((path) => path.url === url)),
-		);
+		const planned =
+			plannedByPattern.get(pattern) ??
+			(url === undefined ? undefined : plannedByUrl.get(url));
 		if (!planned)
 			throw new Error(
 				`API Gateway route ${url ?? pattern} has no completed-build route evidence.`,
