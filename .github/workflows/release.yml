@@ -18,7 +18,9 @@ jobs:
       contents: read
       actions: read
     steps:
-      - name: Require public provenance, human approval, and passing CI
+      - name:
+          Require public provenance, human approval, and passing
+          CI
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -35,7 +37,8 @@ jobs:
       contents: read
       id-token: write
     outputs:
-      candidate-ready: ${{ steps.publication.outputs.candidate-ready }}
+      candidate-ready:
+        ${{ steps.publication.outputs.candidate-ready }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -48,7 +51,9 @@ jobs:
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - run: pnpm add --global npm@11.21.0
-      - name: Check and publish the same beta candidate with provenance
+      - name:
+          Check and publish the same beta candidate with
+          provenance
         id: publication
         run: |
           pnpm release:publish
@@ -93,7 +98,10 @@ jobs:
           name: publication-candidate
           path: .artifacts
       - name: Verify the registry package in a clean application
-        run: pnpm release:verify --candidate-report .artifacts/package-check.json --source-commit "$GITHUB_SHA"
+        run:
+          pnpm release:verify --candidate-report
+          .artifacts/package-check.json --source-commit
+          "$GITHUB_SHA"
       - name: Retain registry verification evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
