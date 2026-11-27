@@ -7557,6 +7557,81 @@ console.log(JSON.stringify({ type: globalThis.handlerType, ${expression} }));`,
 		},
 	);
 
+	it("keeps traced paths on another Windows drive", async () => {
+		const { win32 } = await import("node:path");
+		const url = await import("node:url");
+		const fs = await import("node:fs/promises");
+		// nft makes paths relative to its base, and on Windows path.relative
+		// returns a path on another drive unchanged.
+		const traced = win32.relative(
+			"C:\\",
+			"D:\\work\\linked\\index.js",
+		);
+		const tracer =
+			"../../packages/adapter/src/conditional/FunctionArtifact/Dependency/Trace.ts";
+		// Mock the copy that the adapter package resolves.
+		const nft = createRequire(
+			new URL(tracer, import.meta.url),
+		).resolve("@vercel/nft");
+		vi.resetModules();
+		vi.doMock("node:path", () => ({ ...win32, default: win32 }));
+		vi.doMock("node:url", () => ({
+			...url,
+			fileURLToPath: (path: URL) =>
+				url.fileURLToPath(path, { windows: true }),
+		}));
+		vi.doMock("node:fs/promises", () => ({
+			...fs,
+			realpath: () =>
+				Promise.reject(
+					Object.assign(new Error("missing"), {
+						code: "ENOENT",
+					}),
+				),
+		}));
+		vi.doMock(nft, () => ({
+			resolve: vi.fn(),
+			nodeFileTrace: () =>
+				Promise.resolve({
+					fileList: new Set(["build\\server\\index.js", traced]),
+					reasons: new Map([
+						[
+							traced,
+							{
+								type: ["dependency"],
+								parents: new Set(["build\\server\\index.js"]),
+							},
+						],
+					]),
+				}),
+		}));
+		try {
+			const { traceRuntimeDependencies: traceOnWindows } =
+				(await import(tracer)) as {
+					traceRuntimeDependencies: typeof traceRuntimeDependencies;
+				};
+			const trace = await traceOnWindows(
+				[{ path: "index.js", contents: "export {};" }],
+				new URL("file:///C:/build/server/"),
+			);
+			expect([...trace.files]).toEqual([
+				"D:\\work\\linked\\index.js",
+			]);
+			expect(
+				trace.parents.get("D:\\work\\linked\\index.js"),
+			).toEqual(["C:\\build\\server\\index.js"]);
+		} finally {
+			for (const module of [
+				"node:path",
+				"node:url",
+				"node:fs/promises",
+				nft,
+			])
+				vi.doUnmock(module);
+			vi.resetModules();
+		}
+	});
+
 	it("keeps sibling module edges while naming an imports-map binding", async () => {
 		const f = await fixture();
 		await writeFile(
@@ -8480,6 +8555,52 @@ console.log(JSON.stringify({ notFound: m.handler({}, {}).notFound.length, other:
 			},
 			omitted: "native.cjs",
 			required: "native",
+		},
+		{
+			name: "packs the extensionless scope",
+			manifest: { type: "module", exports: "./index.mjs" },
+			files: {
+				"index.mjs": 'export { default } from "./lib/thing";',
+				"lib/package.json": '{"type":"commonjs"}',
+				"lib/thing": 'module.exports = "commonjs";',
+			},
+			required: "commonjs",
+		},
+		{
+			name: "rejects an omitted extensionless scope",
+			manifest: { type: "module", exports: "./index.mjs" },
+			files: {
+				"index.mjs": 'export { default } from "./lib/thing";',
+				"lib/package.json": '{"type":"commonjs"}',
+				"lib/thing": 'module.exports = "commonjs";',
+			},
+			omitted: "lib/package.json",
+			required: "commonjs",
+		},
+		{
+			name: "allows omitting an asset scope",
+			manifest: { type: "module", exports: "./index.mjs" },
+			files: {
+				"index.mjs":
+					'import {readFileSync} from "node:fs"; export default readFileSync(new URL("./data/payload", import.meta.url), "utf8");',
+				"data/package.json": '{"type":"commonjs"}',
+				"data/payload": "runtime data",
+			},
+			omitted: "data/package.json",
+			omissionAllowed: true,
+			required: "runtime data",
+		},
+		{
+			name: "allows omitting a required module scope",
+			manifest: { type: "module" },
+			files: {
+				"index.cjs": 'module.exports = require("./lib/thing");',
+				"lib/package.json": '{"type":"commonjs"}',
+				"lib/thing": 'module.exports = "commonjs";',
+			},
+			omitted: "lib/package.json",
+			omissionAllowed: true,
+			required: "commonjs",
 		},
 		{
 			name: "verifies a nested child package against its own archive",

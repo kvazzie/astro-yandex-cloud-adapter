@@ -4,6 +4,7 @@ import { createRequire, isBuiltin } from "node:module";
 import {
   basename,
   dirname,
+  extname,
   isAbsolute,
   join,
   parse,
@@ -101,6 +102,7 @@ export async function traceRuntimeDependencies(
   const imports: { name: string; parent: string }[] = [];
   // Module loads go through resolve; assets read through new URL() do not.
   const moduleEdges = new Map<string, Set<string>>();
+  const esmTargets = new Set<string>();
   const entries = [...planned.keys()].filter((path) => javaScript.test(path));
   const { fileList, reasons } = await nodeFileTrace(entries, {
     base: root,
@@ -144,6 +146,7 @@ export async function traceRuntimeDependencies(
       if (!targets) moduleEdges.set(parent, (targets = new Set<string>()));
       for (const target of [resolved].flat()) {
         targets.add(target);
+        if (!cjsResolve) esmTargets.add(target);
         // nft resolves a package that an imports map selects without calling this
         // hook again and returns its canonical path, so name the binding that
         // Node's lookup from the importing file reaches it through.
@@ -174,7 +177,8 @@ export async function traceRuntimeDependencies(
       }
     },
   });
-  const absolute = (path: string) => join(root, path);
+  // On Windows nft keeps a path on another drive than its base absolute.
+  const absolute = (path: string) => (isAbsolute(path) ? path : join(root, path));
   const traced = new Set<string>();
   const parentsOf = new Map<string, readonly string[]>();
   for (const path of fileList) {
@@ -197,10 +201,34 @@ export async function traceRuntimeDependencies(
       ...(await Promise.all([...(moduleEdges.get(path) ?? [])].map(canonical))),
     );
   }
+  // Node selects the format of an imported extensionless file from its package
+  // scope, as for .js files, but nft emits that package.json only for .js files.
+  const imported = new Set(await Promise.all([...esmTargets].map(canonical)));
+  for (const path of modules) {
+    if (extname(path) !== "" || !imported.has(path) || !traced.has(path)) continue;
+    const manifest = await packageScope(path);
+    if (manifest === undefined || inServer(manifest)) continue;
+    traced.add(manifest);
+    parentsOf.set(manifest, [...(parentsOf.get(manifest) ?? []), path]);
+  }
   const packages = new Set(
     imports.filter(({ parent }) => modules.has(parent)).map(({ name }) => name),
   );
   return { packages, files: traced, parents: parentsOf };
+}
+
+/** Finds the package.json that Node's package scope lookup selects for a file. */
+async function packageScope(path: string): Promise<string | undefined> {
+  for (let directory = dirname(path); ; directory = dirname(directory)) {
+    if (basename(directory) === "node_modules") return undefined;
+    const manifest = join(directory, "package.json");
+    const stats = await stat(manifest).catch((cause: unknown) => {
+      if (missing(cause)) return undefined;
+      throw cause;
+    });
+    if (stats?.isFile()) return manifest;
+    if (dirname(directory) === directory) return undefined;
+  }
 }
 
 /** Lists the node_modules bindings, nearest first, that resolve to a package path. */
