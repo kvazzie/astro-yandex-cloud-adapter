@@ -52,11 +52,17 @@
 	"dependencies": {
 		"@effect/platform": "^0.97.2",
 		"@effect/platform-node": "^0.108.2",
+		"@vercel/nft": "^1.11.12",
 		"acorn": "^8.18.0",
 		"effect": "^3.22.2",
 		"effectify": "^0.3.1",
+		"libnpmpack": "^9.1.15",
+		"npm-package-arg": "^13.0.2",
+		"npm-pick-manifest": "^11.0.3",
 		"semver": "^7.8.5",
-		"tinyglobby": "^0.2.17"
+		"ssri": "^13.0.1",
+		"tinyglobby": "^0.2.17",
+		"yaml": "^2.9.1"
 	},
 	"scripts": {
 		"build": "pnpm --filter @astro-yandex-cloud/targets build && pnpm --filter @astro-yandex-cloud/deployment-manifest build && pnpm --filter @astro-yandex-cloud/function-runtime-bridge build && pnpm schema:generate && tsdown",
@@ -67,15 +73,17 @@
 		"astro": "^7.1.0"
 	},
 	"devDependencies": {
+		"@astro-yandex-cloud/deployment-manifest": "workspace:*",
 		"@astro-yandex-cloud/function-runtime-bridge": "workspace:*",
 		"@astro-yandex-cloud/package-info": "workspace:*",
+		"@types/npm-package-arg": "^6.1.4",
 		"@types/semver": "^7.8.0",
+		"@types/ssri": "^7.1.5",
 		"astro": "^7.1.0",
 		"pkg-types": "^2.3.3",
 		"tsdown": "^0.15.1",
 		"typescript": "^5.9.2",
-		"vite": "^8.0.13",
-		"@astro-yandex-cloud/deployment-manifest": "workspace:*"
+		"vite": "^8.0.13"
 	},
 	"publishConfig": {
 		"access": "public",
