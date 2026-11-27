@@ -9144,6 +9144,87 @@ console.log(JSON.stringify({ notFound: m.handler({}, {}).notFound.length, other:
 			optionalDependencies: { child: "2.1.0" },
 		});
 	});
+	it.each(["locked", "missing", "registry-only"] as const)(
+		"requires a lock-backed absent variant's regular edge to be locked: %s",
+		async (variant) => {
+			const f = await fixture();
+			await writeFile(
+				new URL("index.js", f.server),
+				`import 'example';\n${f.index}`,
+			);
+			await writeFile(
+				new URL("package.json", f.root),
+				'{"name":"app"}',
+			);
+			await mkdir(new URL("node_modules/example/", f.root), {
+				recursive: true,
+			});
+			await writeFile(
+				new URL("node_modules/example/package.json", f.root),
+				'{"name":"example","version":"1.2.3"}',
+			);
+			await writeFile(
+				new URL("package-lock.json", f.root),
+				JSON.stringify({
+					packages: {
+						"node_modules/example": {
+							version: "1.2.3",
+							optionalDependencies: { child: "^2" },
+						},
+						...(variant === "registry-only"
+							? {}
+							: {
+									"node_modules/child": {
+										version: "2.1.0",
+										os: ["darwin"],
+										dependencies: { leaf: "^1" },
+									},
+								}),
+						...(variant === "locked"
+							? { "node_modules/leaf": { version: "1.0.0" } }
+							: {}),
+					},
+				}),
+			);
+			const planning = Effect.runPromise(
+				FunctionArtifact.planPreparation(
+					f.build,
+					f.routePlan,
+					{ ...settings, dependencyStrategy: "install" },
+					{
+						resolve: (name) =>
+							Promise.resolve(
+								name === "leaf"
+									? { version: "1.5.0" }
+									: {
+											version: "2.2.0",
+											dependencies: { leaf: "^1" },
+										},
+							),
+					},
+				),
+			);
+			if (variant === "missing") {
+				await expect(planning).rejects.toThrow(
+					/"leaf" \(required by "child" as "\^1"\)/,
+				);
+				return;
+			}
+			await Effect.runPromise(
+				FunctionArtifact.applyPreparation(await planning),
+			);
+			const lock = JSON.parse(
+				await readFile(
+					new URL("package-lock.json", f.server),
+					"utf8",
+				),
+			) as { packages: Record<string, unknown> };
+			expect(lock.packages["node_modules/leaf"]).toMatchObject({
+				version: variant === "locked" ? "1.0.0" : "1.5.0",
+				optional: true,
+			});
+		},
+	);
 	it.each([
 		["next", "2.0.0-beta.2"],
 		["npm:real-child@next", "2.0.0-beta.2"],
@@ -9277,6 +9358,100 @@ console.log(JSON.stringify({ notFound: m.handler({}, {}).notFound.length, other:
 			}
 		},
 	);
+	it("pins an absent optional range whose npm view rows would exceed the output buffer", async () => {
+		const f = await fixture();
+		await writeFile(
+			new URL("index.js", f.server),
+			`import 'example';\n${f.index}`,
+		);
+		await writeFile(
+			new URL("package.json", f.root),
+			'{"name":"app"}',
+		);
+		await mkdir(new URL("node_modules/example/", f.root), {
+			recursive: true,
+		});
+		await writeFile(
+			new URL("node_modules/example/package.json", f.root),
+			'{"name":"example","version":"1.2.3"}',
+		);
+		await writeFile(
+			new URL("package-lock.json", f.root),
+			JSON.stringify({
+				packages: {
+					"node_modules/example": {
+						version: "1.2.3",
+						optionalDependencies: { child: "^1" },
+					},
+				},
+			}),
+		);
+		// A fieldless npm view repeats the packument-wide fields in every matching row:
+		// 400 rows of this description alone exceed the 10 MiB output buffer.
+		const versions = Array.from(
+			{ length: 400 },
+			(_, index) => `1.0.${index}`,
+		);
+		const packument = JSON.stringify({
+			name: "child",
+			description: "x".repeat(32 * 1024),
+			"dist-tags": { latest: "1.0.399" },
+			versions: Object.fromEntries(
+				versions.map((version) => [
+					version,
+					{
+						name: "child",
+						version,
+						dist: {
+							tarball: `https://registry.example/child-${version}.tgz`,
+						},
+					},
+				]),
+			),
+		});
+		const registry = createServer((_request, response) => {
+			response.setHeader("content-type", "application/json");
+			response.end(packument);
+		});
+		fixtureRegistries.push(registry);
+		await new Promise<void>((resolve) =>
+			registry.listen(0, "127.0.0.1", resolve),
+		);
+		const address = registry.address();
+		if (!address || typeof address === "string")
+			throw new Error("Expected registry port");
+		const fixtureRegistry = `http://127.0.0.1:${address.port}/`;
+		vi.stubEnv("npm_config_registry", fixtureRegistry);
+		vi.stubEnv("NPM_CONFIG_REGISTRY", fixtureRegistry);
+		vi.stubEnv("npm_config_offline", "false");
+		vi.stubEnv("NPM_CONFIG_OFFLINE", "false");
+		vi.stubEnv("npm_config_tag", "latest");
+		vi.stubEnv("NPM_CONFIG_TAG", "latest");
+		await writeFile(
+			new URL(".npmrc", f.root),
+			`registry=${fixtureRegistry}\n`,
+		);
+		const plan = await Effect.runPromise(
+			FunctionArtifact.planPreparation(f.build, f.routePlan, {
+				...settings,
+				dependencyStrategy: "install",
+			}),
+		);
+		await Effect.runPromise(
+			FunctionArtifact.applyPreparation(plan),
+		);
+		const lock = JSON.parse(
+			await readFile(
+				new URL("package-lock.json", f.server),
+				"utf8",
+			),
+		) as { packages: Record<string, unknown> };
+		expect(lock.packages["node_modules/child"]).toMatchObject({
+			version: "1.0.399",
+			optional: true,
+			resolved: "https://registry.example/child-1.0.399.tgz",
+		});
+	}, 30_000);
 	it.each(["latest", "next", "npm:real-child@next"])(
 		"pins the installed resolution of tagged dependency %s",
 		async (range) => {
@@ -9320,12 +9495,17 @@ console.log(JSON.stringify({ notFound: m.handler({}, {}).notFound.length, other:
 					f.routePlan,
 					{ ...settings, dependencyStrategy: "install" },
 					{
-						resolve: (name) =>
-							Promise.resolve(
-								name === "example"
-									? parent
-									: { version: "2.3.4" },
-							),
+						// Only the installed pin may be read; a tag request would reselect.
+						resolve: (name, version) =>
+							name === "example"
+								? Promise.resolve(parent)
+								: version === "2.3.4"
+									? Promise.resolve({ version: "2.3.4" })
+									: Promise.reject(
+											new Error(
+												`Tag ${version} was reselected.`,
+											),
+										),
 					},
 				),
 			);

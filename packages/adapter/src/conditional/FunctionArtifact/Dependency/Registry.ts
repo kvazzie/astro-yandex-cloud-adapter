@@ -276,67 +276,47 @@ interface PublishedVersion {
 	libc?: string[];
 }
 
+// npm view repeats packument-wide fields in every row, so range reads keep only these.
+const SELECTION_FIELDS = [
+	"version",
+	"dist-tags",
+	"deprecated",
+	"engines",
+] as const;
+
 /** Resolves exact versions and ranges needed by uninstalled optional packages. */
 async function fetchRegistryMetadata(
 	packageName: string,
 	requirement: string,
 	appRoot?: URL,
 ): Promise<RegistryVersionMetadata> {
-	let viewFailure: Error | undefined;
-	// npm view name@* fails when the configured tag does not exist; the stable
-	// versions read below still give npm's selection.
-	const published = await requestMetadata<
-		PublishedVersion | PublishedVersion[]
-	>(packageName, requirement, appRoot).catch(
-		(cause: unknown) => {
-			if (requirement !== "*") throw cause;
-			viewFailure =
-				cause instanceof Error
-					? cause
-					: new Error(String(cause));
-			return [];
-		},
-	);
-	const tag = await configuredTag(appRoot);
-	let versions = [published].flat();
-	// npm view name@* returns only the configured tag; npm install falls back to the
-	// other stable versions when that tag is deprecated or unusable.
-	if (requirement === "*") {
-		const stable = await requestMetadata<
+	const exact = semver.valid(requirement);
+	let version = exact ?? undefined;
+	let metadata: PublishedVersion | undefined;
+	if (exact) {
+		const published = await requestMetadata<
 			PublishedVersion | PublishedVersion[]
-		>(packageName, ">=0.0.0", appRoot)
-			.then((entries) => [entries].flat())
-			.catch(() => undefined);
-		if (stable) {
-			// Tags and manifests come from one read; only a prerelease tag target,
-			// which that read omits, comes from the first, and only if both agree.
-			const tagged = stable.find(
-				(entry) => entry["dist-tags"],
-			)?.["dist-tags"]?.[tag];
-			if (
-				tagged !== undefined &&
-				!stable.some((entry) => entry.version === tagged)
-			) {
-				const head = versions.find(
-					(entry) => entry.version === tagged,
-				);
-				if (!head)
-					throw new Error(
-						`The npm registry changed while the "install" dependency strategy resolved ${packageName}@*. Run the build again.`,
-					);
-				stable.push(head);
-			}
-			versions = stable;
-		} else if (viewFailure) throw viewFailure;
+		>(packageName, requirement, appRoot);
+		metadata = [published]
+			.flat()
+			.find(
+				(entry) => !entry.version || entry.version === exact,
+			);
+	} else {
+		version = await selectRegistryVersion(
+			packageName,
+			requirement,
+			appRoot,
+		);
+		if (version) {
+			const published = await requestMetadata<
+				PublishedVersion | PublishedVersion[]
+			>(packageName, version, appRoot);
+			metadata = [published]
+				.flat()
+				.find((entry) => entry.version === version);
+		}
 	}
-	const version =
-		semver.valid(requirement) ??
-		npmSelection(packageName, requirement, versions, tag);
-	const metadata = versions.find(
-		(entry) =>
-			entry.version === version ||
-			(!entry.version && version === semver.valid(requirement)),
-	);
 	if (!version || !metadata)
 		throw new Error(
 			`The "install" dependency strategy cannot resolve ${packageName}@${requirement} to an exact registry version.`,
@@ -370,6 +350,73 @@ async function fetchRegistryMetadata(
 	};
 }
 
+/** Selects a range or tag from selection fields only. */
+async function selectRegistryVersion(
+	packageName: string,
+	requirement: string,
+	appRoot?: URL,
+): Promise<string | undefined> {
+	const read = (request: string) =>
+		requestMetadata<unknown>(
+			packageName,
+			request,
+			appRoot,
+			SELECTION_FIELDS,
+		).then(selectionRows);
+	let viewFailure: Error | undefined;
+	// npm view name@* fails when the configured tag does not exist; the stable
+	// versions read below still give npm's selection.
+	let versions = await read(requirement).catch(
+		(cause: unknown) => {
+			if (requirement !== "*") throw cause;
+			viewFailure =
+				cause instanceof Error
+					? cause
+					: new Error(String(cause));
+			return [];
+		},
+	);
+	const tag = await configuredTag(appRoot);
+	// npm view name@* returns only the configured tag; npm install falls back to the
+	// other stable versions when that tag is deprecated or unusable.
+	if (requirement === "*") {
+		const stable = await read(">=0.0.0").catch(() => undefined);
+		if (stable) {
+			// Tags and manifests come from one read; only a prerelease tag target,
+			// which that read omits, comes from the first, and only if both agree.
+			const tagged = stable.find(
+				(entry) => entry["dist-tags"],
+			)?.["dist-tags"]?.[tag];
+			if (
+				tagged !== undefined &&
+				!stable.some((entry) => entry.version === tagged)
+			) {
+				const head = versions.find(
+					(entry) => entry.version === tagged,
+				);
+				if (!head)
+					throw new Error(
+						`The npm registry changed while the "install" dependency strategy resolved ${packageName}@*. Run the build again.`,
+					);
+				stable.push(head);
+			}
+			versions = stable;
+		} else if (viewFailure) throw viewFailure;
+	}
+	return npmSelection(packageName, requirement, versions, tag);
+}
+
+/** npm view --json unwraps rows to a bare value when the first row has one field. */
+function selectionRows(value: unknown): PublishedVersion[] {
+	return [value]
+		.flat()
+		.map((entry) =>
+			typeof entry === "string"
+				? { version: entry }
+				: (entry as PublishedVersion),
+		);
+}
+
 /** Reads npm's configured default tag, which npm install prefers for ranges. */
 async function configuredTag(appRoot?: URL): Promise<string> {
 	try {
@@ -387,10 +434,17 @@ async function requestMetadata<T>(
 	packageName: string,
 	requirement: string,
 	appRoot?: URL,
+	fields: readonly string[] = [],
 ): Promise<T> {
 	try {
 		const { stdout } = await runNpm(
-			["view", "--json", "--", `${packageName}@${requirement}`],
+			[
+				"view",
+				"--json",
+				"--",
+				`${packageName}@${requirement}`,
+				...fields,
+			],
 			appRoot,
 		);
 		return JSON.parse(stdout) as T;

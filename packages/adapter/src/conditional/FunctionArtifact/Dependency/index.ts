@@ -88,10 +88,36 @@ export async function resolvePinnedRuntimeDependencies(
 		overrideOwner?.directory ?? appDirectory;
 	const developmentFirst =
 		await readRootRequirementPrecedence(appManifestPath);
+	const shrinkwraps = new Map<string, Promise<boolean>>();
+	// npm's Node.inShrinkwrap: a tree parent owns or is inside a published shrinkwrap.
+	const inPublishedShrinkwrap = async (
+		directory: string,
+	): Promise<boolean> => {
+		const modules = `${sep}node_modules${sep}`;
+		const index = directory.lastIndexOf(modules);
+		const parent =
+			index === -1 ? undefined : directory.slice(0, index);
+		if (
+			!parent ||
+			parent === appDirectory ||
+			!parent.includes(modules)
+		)
+			return false;
+		let result = shrinkwraps.get(parent);
+		if (!result) {
+			result = (async () =>
+				(await existingRealPath(
+					join(parent, "npm-shrinkwrap.json"),
+				)) !== undefined || inPublishedShrinkwrap(parent))();
+			shrinkwraps.set(parent, result);
+		}
+		return result;
+	};
 	const provenance = await readInstalledProvenance(
 		appRoot,
 		developmentFirst,
 		overrides,
+		inPublishedShrinkwrap,
 	);
 	const findInstalledPackage = async (
 		base: string,
@@ -212,31 +238,6 @@ export async function resolvePinnedRuntimeDependencies(
 		source.directory ??
 		source.lockLocation ??
 		`${source.registryName ?? name}@${source.version}${source.overrides?.identity ?? ""}`;
-	const shrinkwraps = new Map<string, Promise<boolean>>();
-	// npm's Node.inShrinkwrap: a tree parent owns or is inside a published shrinkwrap.
-	const inPublishedShrinkwrap = async (
-		directory: string,
-	): Promise<boolean> => {
-		const modules = `${sep}node_modules${sep}`;
-		const index = directory.lastIndexOf(modules);
-		const parent =
-			index === -1 ? undefined : directory.slice(0, index);
-		if (
-			!parent ||
-			parent === appDirectory ||
-			!parent.includes(modules)
-		)
-			return false;
-		let result = shrinkwraps.get(parent);
-		if (!result) {
-			result = (async () =>
-				(await existingRealPath(
-					join(parent, "npm-shrinkwrap.json"),
-				)) !== undefined || inPublishedShrinkwrap(parent))();
-			shrinkwraps.set(parent, result);
-		}
-		return result;
-	};
 	// A lock reference can name a binding whose installed contents were already selected.
 	const reconcileSource = (
 		name: string,
@@ -548,6 +549,10 @@ export async function resolvePinnedRuntimeDependencies(
 								childBase,
 								name,
 							);
+						// npm ci rejects a lock whose package lacks a regular dependency; only
+						// optional and peer edges may be absent from a valid lock.
+						else if (source.lockLocation && !optional && !peer)
+							throw unresolved(name, packageName, range);
 						else {
 							const childMetadata = await registry.resolve(
 								requirement.name,

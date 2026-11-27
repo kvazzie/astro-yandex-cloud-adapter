@@ -192,6 +192,14 @@ describe("runtime dependency regressions", () => {
 				directPeer: false,
 				nested: false,
 			},
+			// The mirror: the later-discovered sibling has the nonmatching peer.
+			{
+				rootPeer: true,
+				matching: false,
+				mismatched: "beta",
+				directPeer: false,
+				nested: false,
+			},
 			{
 				rootPeer: true,
 				matching: true,
@@ -200,6 +208,7 @@ describe("runtime dependency regressions", () => {
 			},
 		].flatMap((options) =>
 			["a-peer", "z-peer"].map((peerName) => ({
+				mismatched: "alpha",
 				...options,
 				peerName,
 			})),
@@ -209,6 +218,7 @@ describe("runtime dependency regressions", () => {
 		async ({
 			rootPeer,
 			matching,
+			mismatched,
 			directPeer,
 			nested,
 			peerName,
@@ -284,7 +294,7 @@ describe("runtime dependency regressions", () => {
 				}
 				for (const parent of ["alpha", "beta"]) {
 					const context =
-						parent === "alpha" && !matching ? "b" : "a";
+						parent === mismatched && !matching ? "b" : "a";
 					const directory = join(parents, parent);
 					await mkdir(join(directory, "node_modules"), {
 						recursive: true,
@@ -353,7 +363,7 @@ describe("runtime dependency regressions", () => {
 							graph.find(
 								({ location }) =>
 									location ===
-									"node_modules/alpha/node_modules/a-shared",
+									`node_modules/${mismatched}/node_modules/a-shared`,
 							),
 						).toBeDefined();
 					// Node resolves each consumer's binding from its own location upward.
@@ -375,7 +385,7 @@ describe("runtime dependency regressions", () => {
 						effective(consumer, peerName);
 					for (const parent of ["alpha", "beta"]) {
 						const context =
-							parent === "alpha" && !matching ? "b" : "a";
+							parent === mismatched && !matching ? "b" : "a";
 						const parentLocation = `${nested ? "node_modules/container/" : ""}node_modules/${parent}`;
 						const expected = await realpath(
 							join(root, "installed", `peer-${context}`),
@@ -545,6 +555,133 @@ describe("runtime dependency regressions", () => {
 					graph.find(({ name }) => name === "carrier")
 						?.dependencies,
 				).toEqual({ leaf: "1.0.0" });
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
+	it.each([
+		{ shrinkwrap: true, accepted: true },
+		{ shrinkwrap: false, accepted: false },
+	])(
+		"keeps a published shrinkwrap's registry binding out of a local override's provenance: %j",
+		async ({ shrinkwrap, accepted }) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-shrinkwrap-provenance-"),
+			);
+			try {
+				for (const [directory, manifest] of [
+					[
+						"",
+						{
+							name: "app",
+							version: "1.0.0",
+							dependencies: { carrier: "1.0.0" },
+							overrides: { leaf: "file:./fork.tgz" },
+						},
+					],
+					[
+						"node_modules/carrier",
+						{
+							name: "carrier",
+							version: "1.0.0",
+							dependencies: { leaf: "^1.0.0" },
+						},
+					],
+					[
+						"node_modules/carrier/node_modules/leaf",
+						{ name: "leaf", version: "1.0.0" },
+					],
+				] as const) {
+					await mkdir(join(root, directory), {
+						recursive: true,
+					});
+					await writeFile(
+						join(root, directory, "package.json"),
+						JSON.stringify(manifest),
+					);
+				}
+				if (shrinkwrap)
+					await writeFile(
+						join(
+							root,
+							"node_modules/carrier/npm-shrinkwrap.json",
+						),
+						JSON.stringify({
+							lockfileVersion: 3,
+							packages: {
+								"": { name: "carrier", version: "1.0.0" },
+								"node_modules/leaf": { version: "1.0.0" },
+							},
+						}),
+					);
+				const planning = resolvePinnedRuntimeDependencies(
+					pathToFileURL(`${root}/`),
+					new Set(["carrier"]),
+					{ resolve: () => Promise.resolve({}) },
+				);
+				if (!accepted) {
+					await expect(planning).rejects.toThrow(
+						/local runtime package "leaf"/i,
+					);
+					return;
+				}
+				const graph = await planning;
+				const leaf = graph.find(({ name }) => name === "leaf");
+				expect(leaf).toMatchObject({ version: "1.0.0" });
+				expect(leaf?.localDirectory).toBeUndefined();
+				expect(
+					graph.find(({ name }) => name === "carrier")
+						?.dependencies,
+				).toEqual({ leaf: "1.0.0" });
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
+	it.each([".vendor", "file:.vendor"])(
+		"requires includeLocal for the dot-prefixed directory requirement %s",
+		async (requirement) => {
+			const root = await mkdtemp(
+				join(tmpdir(), "yandex-dot-directory-"),
+			);
+			try {
+				for (const [directory, manifest] of [
+					[
+						"",
+						{
+							name: "app",
+							version: "1.0.0",
+							dependencies: { renderer: requirement },
+						},
+					],
+					[
+						"node_modules/renderer",
+						{ name: "renderer", version: "1.0.0" },
+					],
+				] as const) {
+					await mkdir(join(root, directory), {
+						recursive: true,
+					});
+					await writeFile(
+						join(root, directory, "package.json"),
+						JSON.stringify(manifest),
+					);
+				}
+				await expect(
+					resolvePinnedRuntimeDependencies(
+						pathToFileURL(`${root}/`),
+						new Set(["renderer"]),
+						{
+							resolve: () =>
+								Promise.reject(
+									new Error("registry metadata requested"),
+								),
+						},
+					),
+				).rejects.toThrow(/local runtime package "renderer"/i);
 			} finally {
 				await rm(root, { recursive: true, force: true });
 			}

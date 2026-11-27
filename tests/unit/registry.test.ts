@@ -24,6 +24,13 @@ vi.mock("node:child_process", () => {
 import { resolvePinnedRuntimeDependencies } from "../../packages/adapter/src/conditional/FunctionArtifact/Dependency";
 import { npmRegistry } from "../../packages/adapter/src/conditional/FunctionArtifact/Dependency/Registry.ts";
 
+const selectionFields = [
+	"version",
+	"dist-tags",
+	"deprecated",
+	"engines",
+];
+
 afterEach(() => {
 	command.mockReset();
 	vi.unstubAllEnvs();
@@ -41,7 +48,7 @@ function metadata(value: unknown, tag = "latest") {
 	);
 }
 
-/** Answers npm view by requested spec. */
+/** Answers npm view by requested spec; an exact request reads its version from any answer. */
 function views(
 	byRequest: Record<string, unknown>,
 	tag = "latest",
@@ -49,10 +56,16 @@ function views(
 	command.mockImplementation((_file: string, args: string[]) => {
 		if (args.includes("config"))
 			return Promise.resolve({ stdout: `${tag}\n`, stderr: "" });
-		const spec = args.at(-1)!;
+		const spec = args[args.indexOf("--") + 1]!;
 		const request = spec.slice(spec.lastIndexOf("@") + 1);
+		const exact = Object.values(byRequest)
+			.flat()
+			.find(
+				(entry) =>
+					(entry as { version?: string }).version === request,
+			);
 		return Promise.resolve({
-			stdout: JSON.stringify(byRequest[request] ?? []),
+			stdout: JSON.stringify(byRequest[request] ?? exact ?? []),
 			stderr: "",
 		});
 	});
@@ -209,10 +222,14 @@ describe("install registry metadata", () => {
 			const root = pathToFileURL(
 				(await realpath(directory)) + sep,
 			);
-			for (const spec of ["renderer@1.0.0", "native@^1.0.0"])
+			for (const args of [
+				["renderer@1.0.0"],
+				["native@^1.0.0", ...selectionFields],
+				["native@1.0.0"],
+			])
 				expect(command).toHaveBeenCalledWith(
 					"npm",
-					["view", "--json", "--", spec],
+					["view", "--json", "--", ...args],
 					expect.objectContaining({ cwd: root }),
 				);
 			expect(
@@ -337,6 +354,28 @@ describe("install registry metadata", () => {
 		});
 	});
 
+	it("selects a range from version-only rows, then reads that version's metadata", async () => {
+		// npm view --json unwraps rows to bare values when the first row has one field.
+		views({
+			"^1": ["1.0.0", "1.1.0"],
+			"1.1.0": {
+				version: "1.1.0",
+				dependencies: { leaf: "^2" },
+			},
+		});
+		expect(
+			await npmRegistry.resolve("child", "^1"),
+		).toMatchObject({
+			version: "1.1.0",
+			dependencies: { leaf: "^2" },
+		});
+		expect(command).toHaveBeenCalledWith(
+			"npm",
+			["view", "--json", "--", "child@^1", ...selectionFields],
+			expect.anything(),
+		);
+	});
+
 	it("skips a version whose engines exclude the function runtime", async () => {
 		const tags = { latest: "1.1.0" };
 		metadata([
@@ -363,7 +402,7 @@ describe("install registry metadata", () => {
 						stderr: "",
 					});
 				// npm view child@* fails when the configured tag is missing.
-				if (args.at(-1) === "child@*")
+				if (args.includes("child@*"))
 					return Promise.reject(new Error("E404 no such tag"));
 				return Promise.resolve({
 					stdout: JSON.stringify([

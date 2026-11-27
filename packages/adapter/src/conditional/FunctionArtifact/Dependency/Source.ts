@@ -285,6 +285,7 @@ export async function readInstalledProvenance(
 	applicationRoot: URL,
 	developmentFirst: (installedLocation: string) => boolean,
 	overrides: ApplicationOverrides,
+	inPublishedShrinkwrap: (directory: string) => Promise<boolean>,
 ): Promise<ReadonlyMap<string, BindingProvenance>> {
 	const applicationDirectory = fileURLToPath(applicationRoot);
 	const bindings = new Map<string, BindingProvenance>();
@@ -378,9 +379,12 @@ export async function readInstalledProvenance(
 				(bundled?.includes(name) === true ||
 					(inBundle && insideBundle));
 			const override = context.forDependency(name, requested);
-			const requirement = childInBundle
-				? requested
-				: override.spec;
+			// The resolver checks these edges against the raw range, so their provenance must too.
+			const requirement =
+				childInBundle ||
+				(!root && (await inPublishedShrinkwrap(selected)))
+					? requested
+					: override.spec;
 			if (!childInBundle && (!peer || root)) {
 				const provenance = bindings.get(selected) ?? {
 					local: false,
@@ -544,9 +548,12 @@ export function parseRuntimeRequirement(
 			`Unsupported workspace requirement for runtime package "${name}": ${value}`,
 		);
 	}
+	// npm-package-arg reads any leading "." as a directory or file spec.
 	if (
 		!isRegistryAlias(value) &&
-		(/[\\/:]/.test(value) || /\.(?:tgz|tar\.gz)$/i.test(value))
+		(value.startsWith(".") ||
+			/[\\/:]/.test(value) ||
+			/\.(?:tgz|tar\.gz)$/i.test(value))
 	)
 		return { name, local: true };
 	return {
