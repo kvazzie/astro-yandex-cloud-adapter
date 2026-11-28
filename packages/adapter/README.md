@@ -161,6 +161,51 @@ The passthrough image service in the example avoids runtime Sharp transformation
 Static image processing happens during the build. Dependency installation follows
 [Yandex's Node.js documentation](https://yandex.cloud/en/docs/functions/lang/nodejs/dependencies).
 
+#### How runtime dependencies are discovered
+
+> [!NOTE]
+> This describes the native Function Artifact preparation, which the adapter
+> entry activates in [#113](https://github.com/kvazzie/astro-yandex-cloud-adapter/pull/113).
+> Until then, `includeDependencies` is not applied.
+
+The adapter traces the emitted server with
+[`@vercel/nft`](https://github.com/vercel/nft), the file tracer used by Astro's
+Vercel and Netlify adapters. It finds fixed `import`, `import()`, `require()`,
+`createRequire(import.meta.url)` loaders, and files read through
+`new URL(…, import.meta.url)`. This is a deliberate trade-off, recorded in
+[ADR 0011](https://github.com/kvazzie/astro-yandex-cloud-adapter/blob/72dc3cdc405fd8f0ea845b07c52660bed0df9802/docs/adr/0011-discover-runtime-dependencies-with-vercel-nft.md):
+loads that static tracing cannot follow are not discovered and are not rejected at
+build time. The deployed function then fails with `Cannot find module`. Known
+cases:
+
+- `process.getBuiltinModule("module").createRequire(…)` loads;
+- an inline `createRequire(import.meta.url)("pkg")` call;
+- `import()` or `require()` with a computed specifier, such as
+  `import(process.env.PLUGIN)`;
+- files reached only through `require.resolve` or `import.meta.resolve`;
+- a loader chosen at runtime, such as `flag ? moduleA : moduleB`.
+- a package reached through an `imports` pattern such as
+  `"#lib/*": "pkg/*"`, or through an `imports` fallback array.
+- a local package export target with percent-encoded characters, such as
+  `./my%20entry.mjs`, whose actual file tracing does not check.
+
+With `dependencyStrategy: "install"`, list such packages in
+`includeDependencies` so they are pinned in the lockfile:
+
+```js
+adapter: yandexCloud({
+  target: "object-storage-functions",
+  dependencyStrategy: "install",
+  includeDependencies: ["my-runtime-plugin"],
+}),
+```
+
+With `bundle`, import the package with a fixed specifier so Vite bundles it.
+
+`includeDependencies` pins packages, not files. When a read fails with `ENOENT`
+because tracing missed a file, include that file in the deployed output (or in a
+local package's npm `files`) and verify the read from a clean artifact.
+
 ## Build, inspect, and preview
 
 Run these commands in your application:

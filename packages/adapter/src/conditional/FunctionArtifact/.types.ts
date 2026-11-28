@@ -1,0 +1,85 @@
+import type { RoutePlan } from "../../mandatory/ArtifactGeneration/RouteRequirements";
+
+export interface FunctionArtifactBuild {
+	readonly config: {
+		readonly root: URL;
+		readonly outDir: URL;
+		readonly base: string;
+		readonly build: {
+			readonly server: URL;
+			readonly client: URL;
+		};
+	};
+}
+export interface PreparationSettings {
+	readonly dependencyStrategy: "bundle" | "install";
+	readonly recursive404: boolean;
+	readonly includeLocal?: boolean;
+	/** Extra runtime packages to pin that dependency tracing cannot see; see ADR 0011. */
+	readonly includeDependencies?: readonly string[];
+}
+export interface FunctionArtifactDescriptor {
+	readonly id: string;
+	readonly path: string;
+	readonly directory: URL;
+	readonly runtime: "nodejs22";
+	readonly entrypoint: "index.handler";
+}
+export interface PreparationOutput {
+	readonly routePlan: RoutePlan;
+	readonly functions: readonly FunctionArtifactDescriptor[];
+}
+/** File and directory mutations stay within `root`, the Function Artifact directory. */
+export type Mutation =
+	| {
+			readonly kind: "writeBinaryFile";
+			readonly root: URL;
+			readonly path: URL;
+			readonly contents: Uint8Array;
+	  }
+	| {
+			readonly kind: "writeFile";
+			readonly root: URL;
+			readonly path: URL;
+			readonly contents: string;
+	  }
+	| {
+			readonly kind: "copyFile";
+			readonly root: URL;
+			readonly from: URL;
+			readonly to: URL;
+	  }
+	| {
+			readonly kind: "mkdir";
+			readonly root: URL;
+			readonly path: URL;
+	  }
+	| { readonly kind: "removeDirectory"; readonly path: URL };
+export interface PreparationPlan {
+	readonly mutations: readonly Mutation[];
+	readonly plannedOutput: PreparationOutput;
+}
+/** Contents are computed in memory; from records an unchanged source when present. */
+export type PlannedFile = { readonly path: string } & (
+	| {
+			readonly contents: string;
+			readonly from?: URL;
+			readonly binaryContents?: never;
+	  }
+	| {
+			readonly from: URL;
+			readonly contents?: never;
+			readonly binaryContents?: never;
+	  }
+	| {
+			readonly binaryContents: Uint8Array;
+			readonly from?: never;
+			readonly contents?: never;
+	  }
+);
+
+/** Completed-build routing and static error assets owned by one Function. */
+export interface FunctionArtifactPolicy {
+	notFound?: Array<{ scope: string; url: string; file: string }>;
+	artifactDirectory?: URL;
+}
