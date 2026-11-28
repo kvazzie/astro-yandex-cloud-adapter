@@ -1597,6 +1597,19 @@ describe("completed-build route requirements", () => {
 		).toThrow(/exceeding the 3.5 MB limit/);
 	});
 
+	it("counts a recursive 404 page's base element when bounding fallback depths", () => {
+		expect(
+			scanEvidence({
+				pattern: "/404",
+				file: "404/index.html",
+				pathname: "404/",
+				html: '<base href="../../../../"><img src="_image?href=x">',
+				base: "/docs",
+				recursive404: true,
+			}),
+		).toBe(true);
+	});
+
 	it.each([
 		{ recursive404: true, required: true },
 		{ recursive404: false, required: false },
