@@ -1898,6 +1898,10 @@ describe("completed-build route requirements", () => {
 			name: "a relative reference under an ignored data: base",
 			html: '<base href="data:text/plain,test"><img src="../../_image?href=x">',
 		},
+		{
+			name: "a relative reference that starts with a no-break space",
+			html: '<img src="&#160;/../../../_image?href=x">',
+		},
 	])(
 		"samples recursive 404 fallback depths for $name",
 		({ html }) => {

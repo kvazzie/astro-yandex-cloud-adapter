@@ -631,6 +631,19 @@ function matchesRoute(
 }
 
 /**
+ * A URL as the URL parser reads it: without leading and trailing C0 controls
+ * and spaces, and without any tab or newline. Unlike `trim()`, it keeps other
+ * whitespace such as U+00A0, which the parser encodes as part of the path.
+ */
+function urlInput(value: string): string {
+	let start = 0;
+	let end = value.length;
+	while (start < end && value.charCodeAt(start) <= 0x20) start++;
+	while (end > start && value.charCodeAt(end - 1) <= 0x20) end--;
+	return value.slice(start, end).replace(/[\t\n\r]/g, "");
+}
+
+/**
  * The URLs a document answers when resolving `reference`. A recursive 404 page
  * also answers every missing URL below its scope, so a relative reference can
  * resolve from any depth there. One URL per depth that the reference and the
@@ -646,7 +659,7 @@ function servedUrls(
 	// scheme, resolves the same from every depth. A same-scheme `https:x`
 	// stays relative to the document path.
 	const pathIndependent = (value: string) => {
-		const trimmed = value.trim();
+		const trimmed = urlInput(value);
 		if (/^[\\/]/.test(trimmed)) return true;
 		const scheme = /^([A-Za-z][A-Za-z\d+.-]*):(.*)$/s.exec(
 			trimmed,
@@ -661,7 +674,7 @@ function servedUrls(
 	const baseIndependent =
 		baseHref !== undefined &&
 		pathIndependent(baseHref) &&
-		!/^\s*(?:data|javascript):/i.test(baseHref) &&
+		!/^(?:data|javascript):/i.test(urlInput(baseHref)) &&
 		URL.canParse(baseHref, unknownOrigin);
 	if (pathIndependent(reference) || baseIndependent)
 		return document.urls;
