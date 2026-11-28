@@ -1847,4 +1847,70 @@ describe("completed-build route requirements", () => {
 			}),
 		).toBe(false);
 	}, 2_000);
+
+	it("leaves out both 404 scope spellings that an on-demand route's Gateway paths take", () => {
+		const clientDirectory = new URL("file:///build/client/");
+		const help = {
+			type: "page",
+			origin: "project",
+			pattern: "/help",
+			isPrerendered: false,
+			patternRegex: /^\/help\/$/,
+		} as unknown as IntegrationResolvedRoute;
+		const notFound = {
+			type: "page",
+			origin: "project",
+			pattern: "/help/404",
+			isPrerendered: true,
+			patternRegex: /^.*$/,
+		} as unknown as IntegrationResolvedRoute;
+		const [document] = clientDocuments({
+			base: "/",
+			clientDirectory,
+			clientFiles: ["help/404/index.html"],
+			clientHtml: new Map([
+				["help/404/index.html", "<p>Not found</p>"],
+			]),
+			pages: [{ pathname: "help/404/" }],
+			resolvedRoutes: [help, notFound],
+			emittedAssets: new Map([
+				[
+					notFound.pattern,
+					[new URL("help/404/index.html", clientDirectory)],
+				],
+			]),
+			hasFunction: true,
+			trailingSlash: "always",
+			recursive404: true,
+			hasServerIslands: false,
+			hasRuntimeImages: false,
+			imageEndpoint: "/_image",
+		});
+		expect(document?.urls).toEqual(["/help/404/", "/help/404"]);
+	});
+
+	it.each([
+		{
+			name: "a same-scheme relative reference",
+			html: '<img src="https:../../_image?href=x">',
+		},
+		{
+			name: "a relative reference under an ignored data: base",
+			html: '<base href="data:text/plain,test"><img src="../../_image?href=x">',
+		},
+	])(
+		"samples recursive 404 fallback depths for $name",
+		({ html }) => {
+			expect(
+				scanEvidence({
+					pattern: "/404",
+					file: "404/index.html",
+					pathname: "404/",
+					html,
+					base: "/docs",
+					recursive404: true,
+				}),
+			).toBe(true);
+		},
+	);
 });

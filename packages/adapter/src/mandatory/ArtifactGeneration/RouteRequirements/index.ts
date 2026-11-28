@@ -340,8 +340,21 @@ export function clientDocuments(
 		]))
 			if (
 				!servedByRoutes.has(alias) &&
+				// The Gateway sends both slash spellings of an on-demand path to the
+				// function, including the one Astro only redirects.
 				!onDemand.some((route) =>
-					matchesRoute(alias, evidence.base, route.patternRegex),
+					[
+						alias,
+						alias.endsWith("/")
+							? alias.slice(0, -1)
+							: `${alias}/`,
+					].some((spelling) =>
+						matchesRoute(
+							spelling,
+							evidence.base,
+							route.patternRegex,
+						),
+					),
 				)
 			)
 				urls.get(file)?.push(alias);
@@ -629,14 +642,28 @@ function servedUrls(
 	baseHref: string | undefined,
 ): readonly string[] {
 	if (document.fallbackScope === undefined) return document.urls;
-	// An absolute or root-relative URL, or one under an absolute or
-	// root-relative base, resolves the same from every depth.
-	const pathRelative = (value: string) =>
-		!/^(?:[A-Za-z][A-Za-z\d+.-]*:|[\\/])/.test(value.trim());
-	if (
-		!pathRelative(reference) ||
-		(baseHref !== undefined && !pathRelative(baseHref))
-	)
+	// A root-relative URL, or an absolute one with an authority or another
+	// scheme, resolves the same from every depth. A same-scheme `https:x`
+	// stays relative to the document path.
+	const pathIndependent = (value: string) => {
+		const trimmed = value.trim();
+		if (/^[\\/]/.test(trimmed)) return true;
+		const scheme = /^([A-Za-z][A-Za-z\d+.-]*):(.*)$/s.exec(
+			trimmed,
+		);
+		if (!scheme) return false;
+		return (
+			!/^https?$/i.test(scheme[1]!) || /^[\\/]/.test(scheme[2]!)
+		);
+	};
+	// A browser ignores a data:, javascript: or unparsable base and uses the
+	// document URL, so only a base it applies can make the depth irrelevant.
+	const baseIndependent =
+		baseHref !== undefined &&
+		pathIndependent(baseHref) &&
+		!/^\s*(?:data|javascript):/i.test(baseHref) &&
+		URL.canParse(baseHref, unknownOrigin);
+	if (pathIndependent(reference) || baseIndependent)
 		return document.urls;
 	const scope =
 		document.fallbackScope === "/" ? "" : document.fallbackScope;
