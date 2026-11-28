@@ -621,6 +621,14 @@ describe("completed-build route requirements", () => {
 			required: true,
 		},
 		{
+			html: '<img srcset="https://cdn.example/a.png?x=1,/_image?href=x 1x">',
+			required: false,
+		},
+		{
+			html: '<img src="/_image&#9;?href=x">',
+			required: true,
+		},
+		{
 			html: '<template><style-card></style-card></template><base href="/"><img src="_image?href=x">',
 			url: "/guide/",
 			required: true,
@@ -701,6 +709,12 @@ describe("completed-build route requirements", () => {
 		{
 			name: "a request to another origin",
 			html: '<script type="module">let response = await fetch("https://cdn.example/_server-islands/Card/", { method: \'POST\' });</script>',
+			hasServerIslands: false,
+			required: false,
+		},
+		{
+			name: "a canonical link",
+			html: '<link rel="canonical" href="/_server-islands/Card">',
 			hasServerIslands: false,
 			required: false,
 		},
@@ -805,6 +819,13 @@ describe("completed-build route requirements", () => {
 			trailingSlash: "always",
 			url: "/guide.html/",
 		},
+		// Astro escapes `#` in the parameter of the request URL and the emitted name.
+		{
+			file: "api/a%23b.txt",
+			pattern: "/api/[slug].txt",
+			trailingSlash: "always",
+			url: "/api/a%23b.txt",
+		},
 	] as const)(
 		"projects a prerendered endpoint $file under trailingSlash $trailingSlash",
 		(entry) => {
@@ -825,7 +846,10 @@ describe("completed-build route requirements", () => {
 				pages: [],
 				resolvedRoutes: [route],
 				emittedAssets: new Map([
-					[route.pattern, [new URL(file, clientDirectory)]],
+					[
+						route.pattern,
+						[pathToFileURL(`/build/client/${file}`)],
+					],
 				]),
 				hasFunction: false,
 				trailingSlash,
@@ -1426,4 +1450,169 @@ describe("completed-build route requirements", () => {
 			template.paths["/b/0/404"]?.get?.responses["200"],
 		).toMatchObject({ "x-yc-status-mapping": 404 });
 	});
+
+	it("serves both root spellings of a 404 scope without a page from the 404 object", () => {
+		const artifactId = "client:primary" as Extract<
+			RoutePlan["routes"][number],
+			{ kind: "prerendered" }
+		>["paths"][number]["artifactId"];
+		const page = {
+			url: "/b/0",
+			objectKey: "b/0/index.html",
+			artifactId,
+		};
+		const pageNotFound = {
+			url: "/b/0/404",
+			objectKey: "b/0/404/index.html",
+			artifactId,
+		};
+		const orphanNotFound = {
+			url: "/c/404",
+			objectKey: "c/404/index.html",
+			artifactId,
+		};
+		const manifest = defineDeploymentManifest({
+			schemaVersion: 1,
+			adapter: { version: "0.1.0-beta.0" },
+			target: Targets.ObjectStorageCloudFunctionsTarget,
+			modifiers: { apiGateway: true, recursive404: true },
+			gatewayTemplate: { path: "api-gateway.yaml" },
+			base: "/",
+			artifacts: {
+				client: { id: "client:primary", path: "client" },
+				functions: [
+					{
+						id: "function:shared",
+						path: "function",
+						runtime: "nodejs22",
+						entrypoint: "index.handler",
+					},
+				],
+			},
+			routes: {
+				prerendered: [page, pageNotFound, orphanNotFound].map(
+					(path) => ({ kind: "page", ...path }),
+				),
+				onDemand: [],
+				notFound: [
+					{ scope: "/b/0", ...pageNotFound },
+					{ scope: "/c", ...orphanNotFound },
+				],
+			},
+		});
+		const template = generateApiGatewaySpecificationTemplate(
+			manifest,
+			{
+				base: "/",
+				trailingSlash: "ignore",
+				routes: [
+					{
+						kind: "prerendered",
+						routeKind: "page",
+						pattern: "/b/[id]",
+						priority: 2,
+						patternRegex: "^.*$",
+						paths: [page],
+					},
+					{
+						kind: "prerendered",
+						routeKind: "page",
+						pattern: "/[section]/404",
+						priority: 1,
+						patternRegex: "^.*$",
+						paths: [pageNotFound, orphanNotFound],
+					},
+				],
+			},
+		);
+		for (const path of ["/c", "/c/"]) {
+			const operation =
+				template.paths[path]?.["x-yc-apigateway-any-method"];
+			expect(
+				operation?.["x-yc-apigateway-integration"],
+				path,
+			).toMatchObject({
+				object: "c/404/index.html",
+			});
+			expect(operation?.responses["200"], path).toMatchObject({
+				"x-yc-status-mapping": 404,
+			});
+		}
+		for (const path of ["/b/0", "/b/0/"])
+			expect(
+				template.paths[path]?.get?.[
+					"x-yc-apigateway-integration"
+				],
+				path,
+			).toMatchObject({ object: "b/0/index.html" });
+	});
+
+	it("measures the longest 404 fallback without passing every scope as an argument", () => {
+		const count = 200_000;
+		const artifactId = "client:primary" as Extract<
+			RoutePlan["routes"][number],
+			{ kind: "prerendered" }
+		>["paths"][number]["artifactId"];
+		const notFoundPages = Array.from(
+			{ length: count },
+			(_, index) => ({
+				url: `/s/${index}/404`,
+				objectKey: `s/${index}/404/index.html`,
+				artifactId,
+			}),
+		);
+		const manifest = defineDeploymentManifest({
+			schemaVersion: 1,
+			adapter: { version: "0.1.0-beta.0" },
+			target: Targets.ObjectStorageCloudFunctionsTarget,
+			modifiers: { apiGateway: true, recursive404: true },
+			gatewayTemplate: { path: "api-gateway.yaml" },
+			base: "/",
+			artifacts: {
+				client: { id: "client:primary", path: "client" },
+				functions: [
+					{
+						id: "function:shared",
+						path: "function",
+						runtime: "nodejs22",
+						entrypoint: "index.handler",
+					},
+				],
+			},
+			routes: {
+				prerendered: [],
+				onDemand: [],
+				notFound: notFoundPages.map((path, index) => ({
+					scope: `/s/${index}`,
+					...path,
+				})),
+			},
+		});
+		expect(() =>
+			generateApiGatewaySpecificationTemplate(manifest, {
+				base: "/",
+				trailingSlash: "ignore",
+				routes: [],
+			}),
+		).toThrow(/exceeding the 3.5 MB limit/);
+	});
+
+	it.each([
+		{ recursive404: true, required: true },
+		{ recursive404: false, required: false },
+	])(
+		"resolves a recursive 404 page's relative image request from any missing URL below its scope: recursive404 $recursive404",
+		({ recursive404, required }) => {
+			expect(
+				scanEvidence({
+					pattern: "/404",
+					file: "404/index.html",
+					pathname: "404/",
+					html: '<img src="../../_image?href=x">',
+					base: "/docs",
+					recursive404,
+				}),
+			).toBe(required);
+		},
+	);
 });
