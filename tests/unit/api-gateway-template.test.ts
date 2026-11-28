@@ -629,6 +629,18 @@ describe("completed-build route requirements", () => {
 			required: true,
 		},
 		{
+			html: '<img srcset="/_image?href=x 0w">',
+			required: false,
+		},
+		{
+			html: '<img srcset="/_image?href=x 100w 2x">',
+			required: false,
+		},
+		{
+			html: '<img srcset="/_image?href=x 100w 50h">',
+			required: true,
+		},
+		{
 			html: '<template><style-card></style-card></template><base href="/"><img src="_image?href=x">',
 			url: "/guide/",
 			required: true,
@@ -1639,7 +1651,8 @@ describe("completed-build route requirements", () => {
 			name: "a nested 404 page with recursive 404 scopes",
 			pattern: "/help/404",
 			recursive404: true,
-			urls: ["/help/404/", "/help/404"],
+			// The Gateway also serves the page at its scope's own URLs.
+			urls: ["/help/404/", "/help/404", "/help", "/help/"],
 		},
 		{
 			name: "a nested 404 page without recursive 404 scopes",
@@ -1763,4 +1776,75 @@ describe("completed-build route requirements", () => {
 			["/guide/index/", "guide/index.html"],
 		]);
 	});
+
+	it("scans a recursive 404 page at its scope's own URLs when no route takes them", () => {
+		expect(
+			scanEvidence({
+				pattern: "/help/404",
+				file: "help/404/index.html",
+				pathname: "help/404/",
+				html: '<img src="_image?href=x">',
+				base: "/docs",
+				recursive404: true,
+			}),
+		).toBe(true);
+	});
+
+	it("leaves out a 404 scope URL that a prerendered page serves", () => {
+		const clientDirectory = new URL("file:///build/client/");
+		const page = (pattern: string) =>
+			({
+				type: "page",
+				origin: "project",
+				pattern,
+				isPrerendered: true,
+				patternRegex: /^.*$/,
+			}) as unknown as IntegrationResolvedRoute;
+		const help = page("/help");
+		const notFound = page("/help/404");
+		const documents = clientDocuments({
+			base: "/",
+			clientDirectory,
+			clientFiles: ["help/index.html", "help/404/index.html"],
+			clientHtml: new Map([
+				["help/index.html", "<p>Help</p>"],
+				["help/404/index.html", "<p>Not found</p>"],
+			]),
+			pages: [{ pathname: "help/" }, { pathname: "help/404/" }],
+			resolvedRoutes: [help, notFound],
+			emittedAssets: new Map([
+				[
+					help.pattern,
+					[new URL("help/index.html", clientDirectory)],
+				],
+				[
+					notFound.pattern,
+					[new URL("help/404/index.html", clientDirectory)],
+				],
+			]),
+			hasFunction: true,
+			trailingSlash: "always",
+			recursive404: true,
+			hasServerIslands: false,
+			hasRuntimeImages: false,
+			imageEndpoint: "/_image",
+		});
+		expect(
+			documents.find(({ html }) => html.includes("Not found"))
+				?.urls,
+		).toEqual(["/help/404/", "/help/404", "/help"]);
+	});
+
+	it("does not sample fallback depths for a data URL in a recursive 404 page", () => {
+		expect(
+			scanEvidence({
+				pattern: "/404",
+				file: "404/index.html",
+				pathname: "404/",
+				html: `<img src="data:image/png;base64,${"/".repeat(30_000)}">`,
+				base: "/docs",
+				recursive404: true,
+			}),
+		).toBe(false);
+	}, 2_000);
 });

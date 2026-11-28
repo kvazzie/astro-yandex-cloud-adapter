@@ -258,6 +258,8 @@ export function clientDocuments(
 	const pageEmitters = pageEmitterIndex(evidence);
 	const urls = new Map<string, string[]>();
 	const fallbackScopes = new Map<string, string>();
+	// Every URL a prerendered route serves, which a 404 scope alias cannot take.
+	const servedByRoutes = new Set<string>();
 	const add = (
 		file: string,
 		publicUrl: string,
@@ -265,12 +267,14 @@ export function clientDocuments(
 	) => {
 		const fileUrls = urls.get(file) ?? [];
 		fileUrls.push(publicUrl);
-		if (alias && publicUrl !== "/")
-			fileUrls.push(
-				publicUrl.endsWith("/")
-					? publicUrl.slice(0, -1)
-					: `${publicUrl}/`,
-			);
+		servedByRoutes.add(publicUrl);
+		if (alias && publicUrl !== "/") {
+			const other = publicUrl.endsWith("/")
+				? publicUrl.slice(0, -1)
+				: `${publicUrl}/`;
+			fileUrls.push(other);
+			servedByRoutes.add(other);
+		}
 		urls.set(file, fileUrls);
 	};
 	for (const { pathname } of evidence.pages) {
@@ -298,7 +302,15 @@ export function clientDocuments(
 			route.pattern,
 		) ?? []) {
 			const file = clientFile(evidence.clientDirectory, asset);
-			if (!evidence.clientHtml.has(file)) continue;
+			if (!evidence.clientHtml.has(file)) {
+				servedByRoutes.add(
+					publicPageUrl(
+						evidence,
+						endpointUrl(route, file, evidence.trailingSlash),
+					),
+				);
+				continue;
+			}
 			add(
 				file,
 				publicPageUrl(
@@ -313,6 +325,26 @@ export function clientDocuments(
 			);
 		}
 	}
+	// The Gateway also serves a recursive 404 page at its scope's own URLs when no
+	// route takes them.
+	const onDemand = evidence.resolvedRoutes.filter(
+		(route) =>
+			(route.type === "page" || route.type === "endpoint") &&
+			!route.isPrerendered &&
+			route.origin !== "internal",
+	);
+	for (const [file, scope] of fallbackScopes)
+		for (const alias of new Set([
+			scope,
+			scope === "/" ? "/" : `${scope}/`,
+		]))
+			if (
+				!servedByRoutes.has(alias) &&
+				!onDemand.some((route) =>
+					matchesRoute(alias, evidence.base, route.patternRegex),
+				)
+			)
+				urls.get(file)?.push(alias);
 	return [...evidence.clientHtml].map(([file, html]) => {
 		const fallbackScope = fallbackScopes.get(file);
 		return {
@@ -353,6 +385,48 @@ function attribute(
 const asciiWhitespace = /[\t\n\f\r ]/;
 
 /**
+ * Whether a `srcset` candidate's descriptors are valid, as the HTML standard
+ * parses them: at most one positive width or one non-negative density, and a
+ * positive height only beside a width. A browser drops an invalid candidate.
+ */
+function validDescriptors(descriptors: string): boolean {
+	let width: number | undefined;
+	let density: number | undefined;
+	let height: number | undefined;
+	for (const descriptor of descriptors
+		.split(/[\t\n\f\r ]+/)
+		.filter(Boolean)) {
+		const value = descriptor.slice(0, -1);
+		const unit = descriptor.slice(-1);
+		if ((unit === "w" || unit === "h") && /^\d+$/.test(value)) {
+			const number = Number(value);
+			if (number === 0) return false;
+			if (unit === "w") {
+				if (width !== undefined || density !== undefined)
+					return false;
+				width = number;
+			} else {
+				if (height !== undefined) return false;
+				height = number;
+			}
+		} else if (
+			unit === "x" &&
+			/^-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)
+		) {
+			const number = Number(value);
+			if (
+				number < 0 ||
+				width !== undefined ||
+				density !== undefined
+			)
+				return false;
+			density = number;
+		} else return false;
+	}
+	return height === undefined || width !== undefined;
+}
+
+/**
  * The image candidate URLs of a `srcset`, split by the HTML parsing rules: a URL
  * ends at whitespace, and descriptors run to the next comma outside parentheses.
  */
@@ -374,17 +448,19 @@ function srcsetUrls(value: string): string[] {
 			end++;
 		let url = value.slice(position, end);
 		position = end;
+		let descriptors = "";
 		if (url.endsWith(",")) url = url.replace(/,+$/, "");
 		else {
 			let parenthesized = false;
 			while (position < value.length) {
-				const character = value[position++];
+				const character = value[position++]!;
 				if (character === "(") parenthesized = true;
 				else if (character === ")") parenthesized = false;
 				else if (character === "," && !parenthesized) break;
+				descriptors += character;
 			}
 		}
-		if (url) urls.push(url);
+		if (url && validDescriptors(descriptors)) urls.push(url);
 	}
 	return urls;
 }
@@ -553,12 +629,22 @@ function servedUrls(
 	baseHref: string | undefined,
 ): readonly string[] {
 	if (document.fallbackScope === undefined) return document.urls;
+	// An absolute or root-relative URL, or one under an absolute or
+	// root-relative base, resolves the same from every depth.
+	const pathRelative = (value: string) =>
+		!/^(?:[A-Za-z][A-Za-z\d+.-]*:|[\\/])/.test(value.trim());
+	if (
+		!pathRelative(reference) ||
+		(baseHref !== undefined && !pathRelative(baseHref))
+	)
+		return document.urls;
 	const scope =
 		document.fallbackScope === "/" ? "" : document.fallbackScope;
-	// The reference and a relative <base href> can each climb segments.
-	// URL parsing treats a backslash as a path separator for HTTP(S) URLs.
+	// The reference and a relative <base href> can each climb path segments.
+	// URL parsing treats a backslash as a path separator for HTTP(S) URLs, and
+	// separators in a query or fragment do not navigate.
 	const segments = (value: string) =>
-		value.split(/[\\/]/).length;
+		(value.split(/[?#]/, 1)[0] ?? "").split(/[\\/]/).length;
 	const climb =
 		segments(reference) +
 		(baseHref === undefined ? 0 : segments(baseHref));
