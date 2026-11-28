@@ -1313,4 +1313,117 @@ describe("completed-build route requirements", () => {
 			}),
 		).toThrow(/exceeding the 3.5 MB limit/);
 	}, 5_000);
+
+	const recursive404Template = (count: number) => {
+		const artifactId = "client:primary" as Extract<
+			RoutePlan["routes"][number],
+			{ kind: "prerendered" }
+		>["paths"][number]["artifactId"];
+		const pages = Array.from({ length: count }, (_, index) => ({
+			url: `/b/${index}`,
+			objectKey: `b/${index}/index.html`,
+			artifactId,
+		}));
+		const notFoundPages = Array.from(
+			{ length: count },
+			(_, index) => ({
+				url: `/b/${index}/404`,
+				objectKey: `b/${index}/404/index.html`,
+				artifactId,
+			}),
+		);
+		const manifest = defineDeploymentManifest({
+			schemaVersion: 1,
+			adapter: { version: "0.1.0-beta.0" },
+			target: Targets.ObjectStorageCloudFunctionsTarget,
+			modifiers: { apiGateway: true, recursive404: true },
+			gatewayTemplate: { path: "api-gateway.yaml" },
+			base: "/",
+			artifacts: {
+				client: { id: "client:primary", path: "client" },
+				functions: [
+					{
+						id: "function:shared",
+						path: "function",
+						runtime: "nodejs22",
+						entrypoint: "index.handler",
+					},
+				],
+			},
+			routes: {
+				prerendered: [...pages, ...notFoundPages].map(
+					(path) => ({
+						kind: "page",
+						...path,
+					}),
+				),
+				onDemand: [
+					{
+						kind: "endpoint",
+						pattern: "/api/[id]",
+						artifactId: "function:shared",
+					},
+				],
+				notFound: notFoundPages.map((path, index) => ({
+					scope: `/b/${index}`,
+					...path,
+				})),
+			},
+		});
+		return () =>
+			generateApiGatewaySpecificationTemplate(manifest, {
+				base: "/",
+				trailingSlash: "ignore",
+				routes: [
+					{
+						kind: "prerendered",
+						routeKind: "page",
+						pattern: "/b/[id]",
+						priority: 2,
+						patternRegex: "^.*$",
+						paths: pages,
+					},
+					{
+						kind: "prerendered",
+						routeKind: "page",
+						pattern: "/b/[id]/404",
+						priority: 1,
+						patternRegex: "^.*$",
+						paths: notFoundPages,
+					},
+					{
+						kind: "on-demand",
+						routeKind: "endpoint",
+						pattern: "/api/[id]",
+						priority: 0,
+						patternRegex: "^.*$",
+						origin: "project",
+						artifactId: "function:shared" as Extract<
+							RoutePlan["routes"][number],
+							{ kind: "on-demand" }
+						>["artifactId"],
+					},
+				],
+			});
+	};
+
+	it("rejects an oversized template with many recursive 404 scopes without comparing every scope with every route", () => {
+		expect(recursive404Template(3_000)).toThrow(
+			/exceeding the 3.5 MB limit/,
+		);
+	}, 5_000);
+
+	it("keeps each recursive 404 scope's exact paths when no route takes them", () => {
+		const template = recursive404Template(2)();
+		for (const path of ["/b/0", "/b/0/"])
+			expect(Object.keys(template.paths)).toContain(path);
+		expect(
+			template.paths["/b/0/{_+}"]?.[
+				"x-yc-apigateway-any-method"
+			]?.["x-yc-apigateway-integration"],
+		).toMatchObject({ object: "b/0/404/index.html" });
+		expect(
+			template.paths["/b/0/404"]?.get?.responses["200"],
+		).toMatchObject({ "x-yc-status-mapping": 404 });
+	});
 });
