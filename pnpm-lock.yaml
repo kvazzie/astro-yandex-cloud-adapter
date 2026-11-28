@@ -118,6 +118,9 @@ importers:
       effectify:
         specifier: ^0.3.1
         version: 0.3.1(5e9b8d4674ee703a1075090569e2e79f)
+      parse5:
+        specifier: ^7.3.0
+        version: 7.3.0
       semver:
         specifier: ^7.8.5
         version: 7.8.5
