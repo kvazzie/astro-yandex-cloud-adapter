@@ -510,20 +510,25 @@ function documentBases(
 /**
  * The URLs a document answers when resolving `reference`. A recursive 404 page
  * also answers every missing URL below its scope, so a relative reference can
- * resolve from any depth there. One URL per depth the reference can climb out of
- * covers every distinct result.
+ * resolve from any depth there. One URL per depth that the reference and the
+ * document's base can climb out of covers every distinct result.
  */
 function servedUrls(
 	document: ClientDocument,
 	reference: string,
+	baseHref: string | undefined,
 ): readonly string[] {
 	if (document.fallbackScope === undefined) return document.urls;
 	const scope =
 		document.fallbackScope === "/" ? "" : document.fallbackScope;
+	// The reference and a relative <base href> can each climb segments.
+	const climb =
+		reference.split("/").length +
+		(baseHref?.split("/").length ?? 0);
 	return [
 		...document.urls,
 		...Array.from(
-			{ length: reference.split("/").length + 2 },
+			{ length: climb + 2 },
 			(_, depth) => `${scope}/${"_/".repeat(depth)}_`,
 		),
 	];
@@ -545,7 +550,7 @@ function requestsEndpoint(
 		const references = documentReferences(document);
 		for (const reference of references.urls)
 			for (const base of documentBases(
-				servedUrls(document, reference),
+				servedUrls(document, reference, references.baseHref),
 				references.baseHref,
 				origin,
 			)) {
@@ -578,7 +583,7 @@ function requestsServerIsland(
 		const references = documentReferences(document);
 		for (const target of references.requests)
 			for (const documentBase of documentBases(
-				servedUrls(document, target),
+				servedUrls(document, target, references.baseHref),
 				references.baseHref,
 				origin,
 			)) {
