@@ -1001,7 +1001,7 @@ describe("completed-build route requirements", () => {
 		},
 	);
 
-	const scanEvidence = ({
+	const scanInput = ({
 		pattern,
 		type = "page",
 		file,
@@ -1028,7 +1028,7 @@ describe("completed-build route requirements", () => {
 			isPrerendered: true,
 			patternRegex: /^.*$/,
 		} as unknown as IntegrationResolvedRoute;
-		const evidence = {
+		return {
 			base,
 			clientDirectory,
 			clientFiles: [file],
@@ -1045,6 +1045,11 @@ describe("completed-build route requirements", () => {
 			hasRuntimeImages: false,
 			imageEndpoint: "/_image",
 		};
+	};
+	const scanEvidence = (
+		input: Parameters<typeof scanInput>[0],
+	) => {
+		const evidence = scanInput(input);
 		return requiredOnDemandRoutes({
 			...evidence,
 			clientDocuments: clientDocuments(evidence),
@@ -1628,4 +1633,134 @@ describe("completed-build route requirements", () => {
 			).toBe(required);
 		},
 	);
+
+	it.each([
+		{
+			name: "a nested 404 page with recursive 404 scopes",
+			pattern: "/help/404",
+			recursive404: true,
+			urls: ["/help/404/", "/help/404"],
+		},
+		{
+			name: "a nested 404 page without recursive 404 scopes",
+			pattern: "/help/404",
+			recursive404: false,
+			urls: ["/help/404/"],
+		},
+		{
+			name: "a catch-all page emitted at a 404 path",
+			pattern: "/[...slug]",
+			recursive404: true,
+			urls: ["/help/404/"],
+		},
+	])(
+		"pairs a 404 document with the URLs the Gateway serves directly: $name",
+		({ pattern, recursive404, urls }) => {
+			const [document] = clientDocuments(
+				scanInput({
+					pattern,
+					file: "help/404/index.html",
+					pathname: "help/404/",
+					html: "<p>Not found</p>",
+					recursive404,
+				}),
+			);
+			expect(document?.urls).toEqual(urls);
+		},
+	);
+
+	it("counts backslash separators when bounding recursive 404 fallback depths", () => {
+		expect(
+			scanEvidence({
+				pattern: "/404",
+				file: "404/index.html",
+				pathname: "404/",
+				html: '<img src="..\\..\\..\\_image?href=x">',
+				base: "/docs",
+				recursive404: true,
+			}),
+		).toBe(true);
+	});
+
+	it.each([
+		{ patternRegex: /^\/_image\/?$/, required: true },
+		{ patternRegex: /^\/_image$/, required: false },
+	])(
+		"accepts the image endpoint's slash spelling only where its route matches it: $patternRegex",
+		({ patternRegex, required }) => {
+			const route = {
+				...imageRoute,
+				patternRegex,
+			} as IntegrationResolvedRoute;
+			expect(
+				requiredOnDemandRoutes({
+					base: "/",
+					resolvedRoutes: [route],
+					clientDocuments: [
+						{ urls: ["/"], html: '<img src="/_image/?href=x">' },
+					],
+					hasServerIslands: false,
+					hasRuntimeImages: false,
+					imageEndpoint: "/_image",
+				}),
+			).toEqual(required ? [route] : []);
+		},
+	);
+
+	it("assigns each page the file whose route matches its URL under build.format file", () => {
+		const clientDirectory = new URL("file:///build/client/");
+		const guide = {
+			type: "page",
+			origin: "project",
+			pattern: "/guide",
+			isPrerendered: true,
+			patternRegex: /^\/guide\/$/,
+		} as unknown as IntegrationResolvedRoute;
+		const guideIndex = {
+			type: "page",
+			origin: "project",
+			pattern: "/guide/index",
+			isPrerendered: true,
+			patternRegex: /^\/guide\/index\/$/,
+		} as unknown as IntegrationResolvedRoute;
+		const plan = reconcileRoutes({
+			base: "/",
+			clientDirectory,
+			clientFiles: ["guide.html", "guide/index.html"],
+			clientHtml: new Map(),
+			pages: [
+				{ pathname: "guide/" },
+				{ pathname: "guide/index/" },
+			],
+			resolvedRoutes: [guide, guideIndex],
+			emittedAssets: new Map([
+				[
+					guide.pattern,
+					[new URL("guide.html", clientDirectory)],
+				],
+				[
+					guideIndex.pattern,
+					[new URL("guide/index.html", clientDirectory)],
+				],
+			]),
+			hasFunction: false,
+			trailingSlash: "always",
+			hasServerIslands: false,
+			hasRuntimeImages: false,
+			imageEndpoint: "/_image",
+		});
+		expect(
+			plan.routes.flatMap((route) =>
+				route.kind === "prerendered"
+					? route.paths.map(({ url, objectKey }) => [
+							url,
+							objectKey,
+						])
+					: [],
+			),
+		).toEqual([
+			["/guide/", "guide.html"],
+			["/guide/index/", "guide/index.html"],
+		]);
+	});
 });
