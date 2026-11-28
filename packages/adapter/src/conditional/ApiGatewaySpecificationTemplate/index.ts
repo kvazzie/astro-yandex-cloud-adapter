@@ -338,12 +338,13 @@ export function generateApiGatewaySpecificationTemplate(
 	}
 	const routes: GatewayRoute[] = [];
 	const recursive404 = manifest.modifiers.recursive404 === true;
-	const fallbackLength = Math.max(
-		0,
-		...manifest.routes.notFound.map(
-			({ scope }) => fallbackPath(scope).length,
-		),
-	);
+	// A loop, not a spread: a large 404 route can have more scopes than call arguments allow.
+	let fallbackLength = 0;
+	for (const { scope } of manifest.routes.notFound)
+		fallbackLength = Math.max(
+			fallbackLength,
+			fallbackPath(scope).length,
+		);
 	// Indexes the plan once; a large prerendered route must not be searched per Manifest record.
 	const plannedByPattern = new Map<
 		string,

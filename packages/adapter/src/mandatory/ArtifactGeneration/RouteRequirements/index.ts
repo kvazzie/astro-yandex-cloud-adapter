@@ -57,6 +57,8 @@ export interface ClientDocument {
 	/** Relative references in the HTML resolve against each of these URLs. */
 	urls: readonly string[];
 	html: string;
+	/** For a recursive 404 page, the scope below which it answers every missing URL. */
+	fallbackScope?: string;
 }
 
 interface RouteEvidence {
@@ -207,7 +209,8 @@ function endpointUrl(
 	file: string,
 	trailingSlash: RoutePlan["trailingSlash"],
 ): string {
-	const url = `/${file.split("/").map(encodeURIComponent).join("/")}`;
+	// Astro already escaped the emitted name, so `publicPageUrl` canonicalizes it as is.
+	const url = `/${file}`;
 	return routeTrailingSlash(
 		"endpoint",
 		route.pattern,
@@ -247,6 +250,7 @@ export function clientDocuments(
 	const files = new Set(evidence.clientFiles);
 	const pageEmitters = pageEmitterIndex(evidence);
 	const urls = new Map<string, string[]>();
+	const fallbackScopes = new Map<string, string>();
 	const add = (
 		file: string,
 		publicUrl: string,
@@ -269,16 +273,15 @@ export function clientDocuments(
 		if (!file) continue;
 		const publicUrl = publicPageUrl(evidence, url);
 		const emitters = [...(pageEmitters.get(file) ?? [])];
+		const notFound =
+			emitters.length === 1 &&
+			isNotFoundPage(evidence, emitters[0]!.pattern, publicUrl);
+		if (notFound && evidence.recursive404 === true)
+			fallbackScopes.set(file, notFoundScope(publicUrl));
 		add(
 			file,
 			publicUrl,
-			evidence.trailingSlash === "ignore" ||
-				(emitters.length === 1 &&
-					isNotFoundPage(
-						evidence,
-						emitters[0]!.pattern,
-						publicUrl,
-					)),
+			evidence.trailingSlash === "ignore" || notFound,
 		);
 	}
 	for (const route of evidence.resolvedRoutes) {
@@ -303,15 +306,19 @@ export function clientDocuments(
 			);
 		}
 	}
-	return [...evidence.clientHtml].map(([file, html]) => ({
-		urls: urls.get(file) ?? [
-			withBase(
-				evidence.base,
-				file.split("/").map(encodeURIComponent).join("/"),
-			),
-		],
-		html,
-	}));
+	return [...evidence.clientHtml].map(([file, html]) => {
+		const fallbackScope = fallbackScopes.get(file);
+		return {
+			urls: urls.get(file) ?? [
+				withBase(
+					evidence.base,
+					file.split("/").map(encodeURIComponent).join("/"),
+				),
+			],
+			html,
+			...(fallbackScope === undefined ? {} : { fallbackScope }),
+		};
+	});
 }
 
 /** What a browser reads from an emitted document: its base and the URLs it requests. */
@@ -324,9 +331,56 @@ interface DocumentReferences {
 	requests: string[];
 }
 
-const urlAttribute =
-	/^(?:src|srcset|href|poster|content|data-.+)$/;
+const urlAttribute = /^(?:src|href|poster|content|data-.+)$/;
 const cssUrl = /url\(\s*["']?([^"')\s]*)/gi;
+
+function attribute(
+	element: DefaultTreeAdapterTypes.Element,
+	name: string,
+): string | undefined {
+	return element.attrs.find(
+		(candidate) => candidate.name === name,
+	)?.value;
+}
+
+const asciiWhitespace = /[\t\n\f\r ]/;
+
+/**
+ * The image candidate URLs of a `srcset`, split by the HTML parsing rules: a URL
+ * ends at whitespace, and descriptors run to the next comma outside parentheses.
+ */
+function srcsetUrls(value: string): string[] {
+	const urls: string[] = [];
+	let position = 0;
+	while (position < value.length) {
+		while (
+			position < value.length &&
+			(asciiWhitespace.test(value[position]!) ||
+				value[position] === ",")
+		)
+			position++;
+		let end = position;
+		while (
+			end < value.length &&
+			!asciiWhitespace.test(value[end]!)
+		)
+			end++;
+		let url = value.slice(position, end);
+		position = end;
+		if (url.endsWith(",")) url = url.replace(/,+$/, "");
+		else {
+			let parenthesized = false;
+			while (position < value.length) {
+				const character = value[position++];
+				if (character === "(") parenthesized = true;
+				else if (character === ")") parenthesized = false;
+				else if (character === "," && !parenthesized) break;
+			}
+		}
+		if (url) urls.push(url);
+	}
+	return urls;
+}
 
 function textContent(
 	element: DefaultTreeAdapterTypes.Element,
@@ -369,7 +423,9 @@ function documentReferences(
 			node.namespaceURI === html.NS.HTML;
 		for (const { name, value } of node.attrs) {
 			// A base URL only resolves other references; it is not itself a request.
-			if (
+			if (name === "srcset" || name === "imagesrcset")
+				references.urls.push(...srcsetUrls(value));
+			else if (
 				urlAttribute.test(name) &&
 				!(isBase && name === "href")
 			)
@@ -384,7 +440,16 @@ function documentReferences(
 			)?.value;
 			if (node.tagName === "base" && href !== undefined)
 				references.baseHref ??= href;
-			if (node.tagName === "link" && href !== undefined)
+			// Astro preloads an island with `<link rel="preload" as="fetch">`.
+			if (
+				node.tagName === "link" &&
+				href !== undefined &&
+				attribute(node, "rel")
+					?.toLowerCase()
+					.split(/[\t\n\f\r ]+/)
+					.includes("preload") &&
+				attribute(node, "as")?.toLowerCase() === "fetch"
+			)
 				references.requests.push(href);
 			if (node.tagName === "style")
 				for (const [, url = ""] of textContent(node).matchAll(
@@ -443,9 +508,32 @@ function documentBases(
 }
 
 /**
- * Matches a request to the application's endpoint in a URL attribute or CSS
- * url(), not in text, a comment or a URL on another origin such as a CDN.
- * References resolve against the document base as a browser resolves them.
+ * The URLs a document answers when resolving `reference`. A recursive 404 page
+ * also answers every missing URL below its scope, so a relative reference can
+ * resolve from any depth there. One URL per depth the reference can climb out of
+ * covers every distinct result.
+ */
+function servedUrls(
+	document: ClientDocument,
+	reference: string,
+): readonly string[] {
+	if (document.fallbackScope === undefined) return document.urls;
+	const scope =
+		document.fallbackScope === "/" ? "" : document.fallbackScope;
+	return [
+		...document.urls,
+		...Array.from(
+			{ length: reference.split("/").length + 2 },
+			(_, depth) => `${scope}/${"_/".repeat(depth)}_`,
+		),
+	];
+}
+
+/**
+ * Matches a request to the application's endpoint in a URL attribute, a
+ * `srcset` candidate or CSS url(), not in text, a comment or a URL on another
+ * origin such as a CDN. Each reference resolves against the document base as a
+ * browser resolves it, and a request has a query.
  */
 function requestsEndpoint(
 	documents: readonly ClientDocument[],
@@ -455,29 +543,21 @@ function requestsEndpoint(
 	const origin = site ? new URL(site).origin : unknownOrigin;
 	for (const document of documents) {
 		const references = documentReferences(document);
-		const bases = documentBases(
-			document.urls,
-			references.baseHref,
-			origin,
-		);
-		for (const value of references.urls)
-			// A srcset lists candidates separated by commas and descriptors.
-			for (const candidate of value.split(/[\s,]+/)) {
-				const query = candidate.indexOf("?");
-				if (query === -1) continue;
-				const location = candidate.slice(0, query);
-				// A `?` after `#` belongs to the fragment, so the request has no query.
-				if (location.includes("#")) continue;
-				for (const base of bases) {
-					const resolved = URL.canParse(location, base)
-						? new URL(location, base)
-						: undefined;
-					if (
-						resolved?.origin === origin &&
-						resolved.pathname === endpoint
-					)
-						return true;
-				}
+		for (const reference of references.urls)
+			for (const base of documentBases(
+				servedUrls(document, reference),
+				references.baseHref,
+				origin,
+			)) {
+				const resolved = URL.canParse(reference, base)
+					? new URL(reference, base)
+					: undefined;
+				if (
+					resolved?.origin === origin &&
+					resolved.pathname === endpoint &&
+					resolved.search !== ""
+				)
+					return true;
 			}
 	}
 	return false;
@@ -496,13 +576,12 @@ function requestsServerIsland(
 	const prefix = withBase(base, "/_server-islands/");
 	for (const document of documents) {
 		const references = documentReferences(document);
-		const bases = documentBases(
-			document.urls,
-			references.baseHref,
-			origin,
-		);
 		for (const target of references.requests)
-			for (const documentBase of bases) {
+			for (const documentBase of documentBases(
+				servedUrls(document, target),
+				references.baseHref,
+				origin,
+			)) {
 				const resolved = URL.canParse(target, documentBase)
 					? new URL(target, documentBase)
 					: undefined;
