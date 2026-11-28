@@ -122,7 +122,14 @@ function pageFile(
 	const existing = candidates.filter((candidate) =>
 		files.has(candidate),
 	);
+	// Under build.format "file", `/guide/` and `/guide/index/` can emit `guide.html`
+	// and `guide/index.html`; the file whose page route matches the URL owns it.
 	return (
+		existing.find((candidate) =>
+			[...(pageEmitters.get(candidate) ?? [])].some(
+				({ patternRegex }) => patternRegex.test(url),
+			),
+		) ??
 		existing.find((candidate) => pageEmitters.has(candidate)) ??
 		existing[0]
 	);
@@ -508,6 +515,33 @@ function documentBases(
 }
 
 /**
+ * Whether Astro's route regex accepts a request pathname, matched as Astro
+ * matches it: below `base` and decoded. Under "ignore" it accepts both slash
+ * spellings of the endpoint.
+ */
+function matchesRoute(
+	pathname: string,
+	appBase: string,
+	routePattern: RegExp | undefined,
+): boolean {
+	if (!routePattern) return false;
+	const path =
+		appBase === "/"
+			? pathname
+			: pathname === appBase
+				? "/"
+				: pathname.startsWith(`${appBase}/`)
+					? pathname.slice(appBase.length)
+					: undefined;
+	if (path === undefined) return false;
+	try {
+		return routePattern.test(decodeURI(path));
+	} catch {
+		return routePattern.test(path);
+	}
+}
+
+/**
  * The URLs a document answers when resolving `reference`. A recursive 404 page
  * also answers every missing URL below its scope, so a relative reference can
  * resolve from any depth there. One URL per depth that the reference and the
@@ -522,9 +556,12 @@ function servedUrls(
 	const scope =
 		document.fallbackScope === "/" ? "" : document.fallbackScope;
 	// The reference and a relative <base href> can each climb segments.
+	// URL parsing treats a backslash as a path separator for HTTP(S) URLs.
+	const segments = (value: string) =>
+		value.split(/[\\/]/).length;
 	const climb =
-		reference.split("/").length +
-		(baseHref?.split("/").length ?? 0);
+		segments(reference) +
+		(baseHref === undefined ? 0 : segments(baseHref));
 	return [
 		...document.urls,
 		...Array.from(
@@ -544,6 +581,8 @@ function requestsEndpoint(
 	documents: readonly ClientDocument[],
 	endpoint: string,
 	site: string | undefined,
+	appBase: string,
+	routePattern: RegExp | undefined,
 ): boolean {
 	const origin = site ? new URL(site).origin : unknownOrigin;
 	for (const document of documents) {
@@ -559,8 +598,13 @@ function requestsEndpoint(
 					: undefined;
 				if (
 					resolved?.origin === origin &&
-					resolved.pathname === endpoint &&
-					resolved.search !== ""
+					resolved.search !== "" &&
+					(resolved.pathname === endpoint ||
+						matchesRoute(
+							resolved.pathname,
+							appBase,
+							routePattern,
+						))
 				)
 					return true;
 			}
@@ -634,6 +678,8 @@ function isActiveInternalRoute(
 				// Astro builds image URLs as `joinPaths(BASE_URL, endpoint.route)`.
 				withBase(evidence.base, imageEndpoint),
 				evidence.site,
+				evidence.base,
+				route.patternRegex,
 			)
 		);
 	return false;
