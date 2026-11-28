@@ -374,14 +374,15 @@ export function generateApiGatewaySpecificationTemplate(
 			);
 		return planned;
 	};
+	const notFoundUrls = new Set(
+		manifest.routes.notFound.map(({ url }) => url),
+	);
 	for (const route of manifest.routes.prerendered) {
 		const operation: GatewayOperation = {
 			responses: {
 				"200": {
 					description: "Prerendered response.",
-					...(manifest.routes.notFound.some(
-						({ url }) => url === route.url,
-					)
+					...(notFoundUrls.has(route.url)
 						? { "x-yc-status-mapping": 404 }
 						: {}),
 				},
@@ -522,6 +523,16 @@ export function generateApiGatewaySpecificationTemplate(
 		);
 	}
 	if (recursive404) {
+		// A scope alias is a fixed path: it overlaps a fixed route only at the same
+		// path, so only templated routes need the overlap search.
+		const fixedPaths = new Set(
+			routes
+				.filter(({ path }) => !path.includes("{"))
+				.map(({ path }) => path),
+		);
+		const templatedRoutes = routes.filter(({ path }) =>
+			path.includes("{"),
+		);
 		for (const scope of manifest.routes.notFound) {
 			const path = fallbackPath(scope.scope);
 			const root = path.slice(0, -"/{_+}".length);
@@ -553,7 +564,8 @@ export function generateApiGatewaySpecificationTemplate(
 			};
 			for (const alias of new Set([root || "/", `${root}/`])) {
 				if (
-					!routes.some((route) =>
+					!fixedPaths.has(alias) &&
+					!templatedRoutes.some((route) =>
 						overlappingPath(alias, route.path),
 					)
 				) {
